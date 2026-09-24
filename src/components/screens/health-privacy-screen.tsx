@@ -9,9 +9,7 @@ export function HealthPrivacyScreen() {
       <Text className="text-foreground">{t("healthPrivacy")}</Text>
       <Text className="text-muted">{t("syncHelp")}</Text>
       <Text className="text-muted">{t("localPhotos")}</Text>
-      <SystemButton onPress={() => router.replace("/(tabs)/settings")}>
-        {t("settings")}
-      </SystemButton>
+      <SystemButton onPress={() => router.replace("/settings")}>{t("settings")}</SystemButton>
     </Screen>
   );
 }

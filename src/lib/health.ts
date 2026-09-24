@@ -27,7 +27,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
       installation = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       db.insert(preferences).values({ key: "installation", value: installation }).run();
     }
-    const prefix = `body-track:${installation}:`;
+    const prefix = `macro-track:${installation}:`;
     let imported = 0;
     let exported = 0;
     const localRecords = () => [

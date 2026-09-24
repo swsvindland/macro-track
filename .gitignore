@@ -3,6 +3,9 @@
 # Dependencies
 node_modules/
 .pnpm-store
+__pycache__/
+*.pyc
+assets/food/*.pending.db
 
 # Expo
 .expo/

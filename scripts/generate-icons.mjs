@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import sharp from "sharp";
 
 const root = new URL("../", import.meta.url);
-const source = await readFile(new URL("assets/branding/ruler.svg", root), "utf8");
+const source = await readFile(new URL("assets/branding/macros.svg", root), "utf8");
 const blue = "#22d3ee";
 const dark = "#071017";
 

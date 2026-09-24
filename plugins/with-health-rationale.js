@@ -17,7 +17,7 @@ module.exports = function withHealthRationale(config) {
     if (incoming?.action == "androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" ||
         incoming?.action == "android.intent.action.VIEW_PERMISSION_USAGE") {
       incoming.action = android.content.Intent.ACTION_VIEW
-      incoming.data = android.net.Uri.parse("bodytrack://health-privacy")
+      incoming.data = android.net.Uri.parse("macrotrack://health-privacy")
     }
   }
 

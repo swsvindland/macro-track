@@ -10,6 +10,7 @@ import { useMigrations } from "drizzle-orm/expo-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
 import { StoreProvider } from "@/lib/store";
 import { db } from "@/db";
+import { NutritionProvider } from "@/lib/nutrition-store";
 
 import "../global.css";
 
@@ -45,9 +46,11 @@ export default function RootLayout(): JSX.Element {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <HeroUINativeProvider>
         <StoreProvider>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" />
-          </Stack>
+          <NutritionProvider>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+          </NutritionProvider>
         </StoreProvider>
         <ThemedStatusBar />
       </HeroUINativeProvider>

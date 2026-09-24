@@ -1,4 +1,5 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import type { DayState, Food, Meal, Nutrients, Targets } from "@/lib/nutrition";
 
 export const counterLogs = sqliteTable("counter_logs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -49,4 +50,47 @@ export const healthLinks = sqliteTable("health_links", {
   remoteId: text("remote_id").notNull(),
   fingerprint: text("fingerprint").notNull(),
   origin: text("origin", { enum: ["local", "health"] }).notNull(),
+});
+
+export const foodEntries = sqliteTable(
+  "food_entries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    day: text("day").notNull(),
+    meal: text("meal").$type<Meal>().notNull(),
+    food: text("food", { mode: "json" }).$type<Food>().notNull(),
+    amount: real("amount").notNull(),
+    portionLabel: text("portion_label").notNull(),
+    nutrients: text("nutrients", { mode: "json" }).$type<Nutrients>().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("food_entries_day_idx").on(table.day)]
+);
+export type FoodEntry = typeof foodEntries.$inferSelect;
+
+export const customFoods = sqliteTable(
+  "custom_foods",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    barcode: text("barcode"),
+    food: text("food", { mode: "json" }).$type<Food>().notNull(),
+  },
+  (table) => [index("custom_foods_barcode_idx").on(table.barcode)]
+);
+
+export const savedFoods = sqliteTable("saved_foods", {
+  id: text("id").primaryKey(),
+  food: text("food", { mode: "json" }).$type<Food>().notNull(),
+  savedAt: integer("saved_at").notNull(),
+});
+
+export const diaryDays = sqliteTable("diary_days", {
+  day: text("day").primaryKey(),
+  status: text("status").$type<DayState>().notNull(),
+});
+
+export const nutritionTargets = sqliteTable("nutrition_targets", {
+  effectiveDay: text("effective_day").primaryKey(),
+  targets: text("targets", { mode: "json" }).$type<Targets>().notNull(),
 });

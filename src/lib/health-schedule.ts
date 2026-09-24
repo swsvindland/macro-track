@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { db, preferences } from "@/db";
 import { syncHealth } from "./health";
 
-const TASK = "body-track-daily-health-sync";
+const TASK = "macro-track-daily-health-sync";
 const DAY = 24 * 60 * 60 * 1000;
 const get = (key: string) =>
   db.select().from(preferences).where(eq(preferences.key, key)).get()?.value;

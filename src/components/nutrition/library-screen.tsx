@@ -1,0 +1,110 @@
+import { useState } from "react";
+import { Linking, View } from "react-native";
+import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import { Screen } from "@/components/ui";
+import { favoriteFoods, personalFoods, recentFoods } from "@/lib/diary";
+import { catalogManifest } from "@/lib/food-catalog";
+import { useNutritionQuery } from "@/lib/nutrition-store";
+import { useStore } from "@/lib/store";
+import type { Food } from "@/lib/nutrition";
+import { FoodEditor, FoodRow } from "./food-editor";
+
+export function LibraryScreen() {
+  const sections = useNutritionQuery(
+    () =>
+      [
+        ["Saved foods", favoriteFoods()],
+        ["My foods", personalFoods()],
+        ["Recently logged", recentFoods()],
+      ] as [string, Food[]][]
+  );
+  const { number } = useStore();
+  const [editor, setEditor] = useState<{ food?: Food } | null>(null);
+  const [sourceError, setSourceError] = useState("");
+  async function openSource(url: string) {
+    try {
+      await Linking.openURL(url);
+      setSourceError("");
+    } catch {
+      setSourceError("Source links require an internet connection.");
+    }
+  }
+  return (
+    <>
+      <Screen title="Library" subtitle="Foods you know. Ready to log again.">
+        <SystemButton onPress={() => setEditor({})}>Find or create a food</SystemButton>
+        {sections.map(([title, foods]) => (
+          <View key={title} className="gap-2">
+            <Text className="text-xl font-semibold">{title}</Text>
+            {foods.length ? (
+              foods.map((food) => (
+                <FoodRow key={food.id} food={food} onPress={() => setEditor({ food })} />
+              ))
+            ) : (
+              <Text className="text-sm text-muted">
+                {title === "Saved foods"
+                  ? "Save a food while logging to keep it here."
+                  : title === "My foods"
+                    ? "Foods you create from a label will appear here."
+                    : "Your recent foods will appear after you log a meal."}
+              </Text>
+            )}
+          </View>
+        ))}
+        <SystemPanel>
+          <SystemPanel.Body className="gap-3">
+            <Text className="text-lg font-semibold">Your offline food catalog</Text>
+            <Text className="text-muted">
+              {number(catalogManifest.usda.included, 0)} USDA foods ·{" "}
+              {number(catalogManifest.off.included, 0)} US packaged foods
+            </Text>
+            <Text className="text-sm text-muted">
+              {number((catalogManifest.usda.bytes + catalogManifest.off.bytes) / 1000000, 1)} MB of
+              food data. Bundled with the app; no account or connection needed for food search.
+            </Text>
+            {catalogManifest.off.developmentSample && (
+              <Text className="text-sm text-muted">
+                The packaged catalog is a development sample. Create a custom food when a barcode is
+                missing.
+              </Text>
+            )}
+            <Text className="text-sm text-muted">
+              USDA FoodData Central · SR Legacy 2018 · CC0. Packaged foods from Open Food Facts ·
+              ODbL 1.0. Check package labels; database records may be incomplete or outdated.
+            </Text>
+            <SystemButton
+              variant="ghost"
+              onPress={() => {
+                void openSource("https://fdc.nal.usda.gov/");
+              }}
+            >
+              USDA FoodData Central
+            </SystemButton>
+            <SystemButton
+              variant="ghost"
+              onPress={() => {
+                void openSource("https://world.openfoodfacts.org");
+              }}
+            >
+              Open Food Facts
+            </SystemButton>
+            <SystemButton
+              variant="ghost"
+              onPress={() => {
+                void openSource("https://opendatacommons.org/licenses/odbl/1-0/");
+              }}
+            >
+              Database license
+            </SystemButton>
+            {!!sourceError && (
+              <Text accessibilityRole="alert" className="text-sm text-muted">
+                {sourceError}
+              </Text>
+            )}
+          </SystemPanel.Body>
+        </SystemPanel>
+      </Screen>
+      {editor && <FoodEditor initialFood={editor.food} close={() => setEditor(null)} />}
+    </>
+  );
+}

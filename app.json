@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "VECTOR BODY",
-    "slug": "vector-body",
+    "name": "Macro Track",
+    "slug": "macro-track",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "bodytrack",
+    "scheme": "macrotrack",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": {
@@ -14,7 +14,7 @@
         "tinted": "./assets/images/icon-tinted.png"
       },
       "supportsTablet": false,
-      "bundleIdentifier": "dev.svindland.vector.body",
+      "bundleIdentifier": "dev.svindland.macrotrack",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -34,7 +34,7 @@
         "android.permission.health.WRITE_BODY_FAT",
         "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
       ],
-      "package": "dev.svindland.vector.body"
+      "package": "dev.svindland.macrotrack"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -59,8 +59,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Choose progress photos to save privately in VECTOR BODY.",
-          "cameraPermission": "Take progress photos to save privately in VECTOR BODY.",
+          "photosPermission": "Choose progress photos to save privately in Macro Track.",
+          "cameraPermission": "Take progress photos to save privately in Macro Track.",
           "microphonePermission": false
         }
       ],
@@ -69,8 +69,8 @@
         "@kingstinct/react-native-healthkit",
         {
           "background": false,
-          "NSHealthShareUsageDescription": "Import your weight and height into VECTOR BODY when you choose to sync.",
-          "NSHealthUpdateUsageDescription": "Save your VECTOR BODY weight, height, waist circumference and recorded body fat to Apple Health when you choose to sync."
+          "NSHealthShareUsageDescription": "Import your weight and height into Macro Track when you choose to sync.",
+          "NSHealthUpdateUsageDescription": "Save your Macro Track weight, height, waist circumference and recorded body fat to Apple Health when you choose to sync."
         }
       ],
       "react-native-health-connect",
@@ -83,17 +83,21 @@
           }
         }
       ],
-      "expo-background-task"
+      "expo-background-task",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan food barcodes with Macro Track.",
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
     "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "f81cc066-e20b-4ef3-ba94-273f069fc935"
-      }
+      "router": {}
     }
   }
 }

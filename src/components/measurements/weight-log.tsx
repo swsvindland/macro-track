@@ -12,8 +12,8 @@ export function WeightLog() {
   const { launch } = log;
   return (
     <>
-      <Screen title={t("home")} subtitle={`${t("cadence")}: ${t("daily")}`}>
-        <Dashboard />
+      <Screen title="Progress" subtitle="Follow your weight over time.">
+        <Dashboard weightOnly />
 
         <SystemButton onPress={() => launch(null)}>
           {t("add")} · {t("weight")}

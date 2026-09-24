@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "usda": {
+    "version": "usda-v1-0fe8ae486a2c-ae18bf83",
+    "sourceUrl": "https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_sr_legacy_food_json_2018-04.zip",
+    "recipeSha256": "ae18bf83ccaf50a4f1f080443f73ce5fd56e04674a3468dddeeef9c2ce3275d6",
+    "sourceSha256": "0fe8ae486a2c8eb42cb96413f058deb51863a46c8fb8eeb4b1fb45006dd338ef",
+    "sha256": "73bea73269ab4268a61727613c104ba69e1735491a4d782743c1ebd906623408",
+    "bytes": 4292608,
+    "license": "CC0-1.0",
+    "developmentSample": false,
+    "sourceRecords": 7793,
+    "included": 7793
+  },
+  "off": {
+    "version": "off-v1-f72687ee8bc6-ae18bf83",
+    "sourceUrl": "https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.csv.gz",
+    "recipeSha256": "ae18bf83ccaf50a4f1f080443f73ce5fd56e04674a3468dddeeef9c2ce3275d6",
+    "sourceSha256": "f72687ee8bc6522054fe69dbfda6b91902c16af1ec2e043cde27bc6c29ad8176",
+    "sha256": "95302d2681363eb808a8b93127c42711dc2ff6f4d133fb2c020361e1a973dc9e",
+    "bytes": 46596096,
+    "license": "ODbL-1.0",
+    "developmentSample": false,
+    "sourceRecords": 4532767,
+    "excludedMarket": 3622635,
+    "excludedIdentity": 76540,
+    "excludedNutrition": 737365,
+    "included": 82937,
+    "excludedAmbiguousBasis": 13288,
+    "excludedMalformedRows": 2
+  }
+}

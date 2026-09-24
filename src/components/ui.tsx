@@ -29,11 +29,13 @@ export function Screen({
   subtitle,
   children,
   nativeHeader = false,
+  action,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   nativeHeader?: boolean;
+  action?: ReactNode;
 }) {
   const { width } = useWindowDimensions();
   return (
@@ -55,9 +57,15 @@ export function Screen({
       >
         {!nativeHeader && (
           <View className="gap-2 border-b border-border pb-6">
-            <Text accessibilityRole="header" className="text-4xl font-semibold text-foreground">
-              {title}
-            </Text>
+            <View className="flex-row items-center justify-between gap-3">
+              <Text
+                accessibilityRole="header"
+                className="flex-1 text-4xl font-semibold text-foreground"
+              >
+                {title}
+              </Text>
+              {action}
+            </View>
             {subtitle && <Text className="mt-2 text-muted">{subtitle}</Text>}
           </View>
         )}

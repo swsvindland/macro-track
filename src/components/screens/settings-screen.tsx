@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { RadioGroup, Switch } from "heroui-native";
+import { Switch } from "heroui-native";
+import { router } from "expo-router";
 import { Platform, View } from "react-native";
-import { SystemPanel, SystemText as Text } from "@/components/system";
+import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { SettingsSelect, ErrorText, Screen } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { languages, type LanguagePreference } from "@/lib/translations";
@@ -10,7 +11,6 @@ import { enableHealthSync, disableHealthSync } from "@/lib/health-schedule";
 export function SettingsScreen() {
   const {
     units,
-    formula,
     languagePreference,
     theme,
     healthSyncEnabled,
@@ -56,7 +56,14 @@ export function SettingsScreen() {
     }
   }
   return (
-    <Screen title={t("settings")}>
+    <Screen
+      title={t("settings")}
+      action={
+        <SystemButton variant="ghost" onPress={() => router.back()}>
+          Done
+        </SystemButton>
+      }
+    >
       <SystemPanel>
         <SystemPanel.Body className="gap-3">
           <SystemPanel.Title>{t("theme")}</SystemPanel.Title>
@@ -93,20 +100,6 @@ export function SettingsScreen() {
             onChange={(value) => preference("language", value)}
             label={(value) => (value === "system" ? t("system") : languages[value])}
           />
-        </SystemPanel.Body>
-      </SystemPanel>
-      <SystemPanel>
-        <SystemPanel.Body className="gap-3">
-          <SystemPanel.Title>{t("formula")}</SystemPanel.Title>
-          <RadioGroup
-            accessibilityLabel={t("formula")}
-            value={formula}
-            onValueChange={(value) => preference("formula", value)}
-          >
-            <RadioGroup.Item value="male">{t("male")}</RadioGroup.Item>
-            <RadioGroup.Item value="female">{t("female")}</RadioGroup.Item>
-          </RadioGroup>
-          <Text className="text-sm text-muted">{t("bodyHelp")}</Text>
         </SystemPanel.Body>
       </SystemPanel>
       <SystemPanel>
