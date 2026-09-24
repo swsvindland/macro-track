@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788211183485,
+      "tag": "0000_bitter_mister_fear",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788213118528,
+      "tag": "0001_fuzzy_mulholland_black",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788789541517,
+      "tag": "0002_curious_raza",
+      "breakpoints": true
+    }
+  ]
+}

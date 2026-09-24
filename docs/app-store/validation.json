@@ -1,0 +1,93 @@
+{
+  "metadata": {
+    "name": {
+      "length": 11,
+      "limit": 30
+    },
+    "subtitle": {
+      "length": 29,
+      "limit": 30
+    },
+    "promotionalText": {
+      "length": 154,
+      "limit": 170
+    },
+    "keywords": {
+      "length": 96,
+      "limit": 100
+    },
+    "description": {
+      "length": 2021,
+      "limit": 4000
+    }
+  },
+  "screenshots": [
+    {
+      "file": "01-weight-trends.png",
+      "width": 1320,
+      "height": 2868,
+      "alpha": false,
+      "format": "png",
+      "colorSpace": "srgb",
+      "channels": 3,
+      "acceptedDimensions": true,
+      "source": "overview-dark.png"
+    },
+    {
+      "file": "02-measurements.png",
+      "width": 1320,
+      "height": 2868,
+      "alpha": false,
+      "format": "png",
+      "colorSpace": "srgb",
+      "channels": 3,
+      "acceptedDimensions": true,
+      "source": "body-dark.png"
+    },
+    {
+      "file": "03-progress-photos.png",
+      "width": 1320,
+      "height": 2868,
+      "alpha": false,
+      "format": "png",
+      "colorSpace": "srgb",
+      "channels": 3,
+      "acceptedDimensions": true,
+      "source": "photos-dark.png"
+    },
+    {
+      "file": "04-your-units.png",
+      "width": 1320,
+      "height": 2868,
+      "alpha": false,
+      "format": "png",
+      "colorSpace": "srgb",
+      "channels": 3,
+      "acceptedDimensions": true,
+      "source": "overview-light-imperial.png"
+    },
+    {
+      "file": "05-personal-settings.png",
+      "width": 1320,
+      "height": 2868,
+      "alpha": false,
+      "format": "png",
+      "colorSpace": "srgb",
+      "channels": 3,
+      "acceptedDimensions": true,
+      "source": "settings-dark.png"
+    },
+    {
+      "file": "06-health.png",
+      "width": 1320,
+      "height": 2868,
+      "alpha": false,
+      "format": "png",
+      "colorSpace": "srgb",
+      "channels": 3,
+      "acceptedDimensions": true,
+      "source": "health-dark.png"
+    }
+  ],
+  "photosIncluded": true
+}

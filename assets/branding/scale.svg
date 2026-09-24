@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <mask id="dial" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <path d="M354 438a158 158 0 0 1 316 0v12a24 24 0 0 1-24 24H378a24 24 0 0 1-24-24Z" fill="black"/>
+    </mask>
+  </defs>
+  <g fill="#000000">
+    <rect x="220" y="230" width="584" height="564" rx="120" mask="url(#dial)"/>
+    <path d="M499 452 551 361a13 13 0 0 1 23 13l-39 98Z"/>
+    <circle cx="512" cy="466" r="27"/>
+  </g>
+</svg>

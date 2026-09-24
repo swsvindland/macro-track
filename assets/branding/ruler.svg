@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <mask id="ticks" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <g fill="black">
+        <rect x="288" y="378" width="26" height="98" rx="13"/>
+        <rect x="358" y="378" width="26" height="68" rx="13"/>
+        <rect x="428" y="378" width="26" height="98" rx="13"/>
+        <rect x="498" y="378" width="26" height="68" rx="13"/>
+        <rect x="568" y="378" width="26" height="98" rx="13"/>
+        <rect x="638" y="378" width="26" height="68" rx="13"/>
+        <rect x="708" y="378" width="26" height="98" rx="13"/>
+      </g>
+    </mask>
+  </defs>
+  <g transform="rotate(-45 512 512)">
+    <rect x="190" y="392" width="644" height="240" rx="44" fill="#000000" mask="url(#ticks)"/>
+  </g>
+</svg>
