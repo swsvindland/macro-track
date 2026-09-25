@@ -13,9 +13,10 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
 - Manual targets with effective dates; later revisions preserve earlier days.
 - Inherited weight history, smoothed trend, and opt-in HealthKit / Health Connect integration.
+- Password-protected local backup and restore in Settings, with an automatic encrypted recovery copy before replacement. See [backup scope and recovery](docs/backups.md).
 - Distinct `dev.svindland.macrotrack` application IDs, `macrotrack://` scheme, private `macro_track.db`, and app icon.
 
-Adaptive coaching/check-ins, label OCR, meal-photo AI, portable backup/restore, and downloadable catalog updates are not implemented yet. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
+Adaptive coaching/check-ins, label OCR, meal-photo AI, and downloadable catalog updates are not implemented yet. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
 The September 25 update adds reusable meals and refreshes the diary, meal cards, food results, shared controls and light/dark surfaces. Reload a running development app after pulling this update so the new saved-meals migration runs. The saved-meal flow supports half/double quantities, retains existing destination entries, and never changes past logs when a saved meal is removed.
 

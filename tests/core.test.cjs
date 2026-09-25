@@ -500,3 +500,75 @@ test("Health Connect requests body-fat write permission and uses percentage poin
   assert.equal(saved[0].percentage, 20);
   await assert.rejects(adapter.write({ kind: "waist", value: 80 }), /healthUnavailable/);
 });
+
+test("restore maintenance excludes health sync and releases the lock after failure", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  const adapter = {
+    authorize: async () => {},
+    read: async () => [],
+    write: async () => "remote",
+    remove: async () => {},
+  };
+  await health.withHealthPaused(async () => {
+    await assert.rejects(() => health.syncHealth(adapter), /syncing/);
+    await assert.rejects(() => health.withHealthPaused(async () => {}), /Wait for health sync/);
+  });
+  await assert.rejects(
+    () =>
+      health.withHealthPaused(async () => {
+        throw new Error("disk full");
+      }),
+    /disk full/
+  );
+  await health.syncHealth(adapter);
+  let unblock;
+  const gate = new Promise((resolve) => (unblock = resolve));
+  const pending = health.syncHealth({ ...adapter, authorize: () => gate });
+  await assert.rejects(() => health.withHealthPaused(async () => {}), /Wait for health sync/);
+  unblock();
+  await pending;
+  sqlite.close();
+});
+
+test("restored weight IDs use a new health namespace without changing other exports", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  db.insert(schema.preferences).values({ key: "installation", value: "test-phone" }).run();
+  db.insert(schema.preferences).values({ key: "weightSyncEpoch", value: "restore-1" }).run();
+  db.insert(schema.weightEntries).values({ weightKg: 80, measuredAt: "2024-01-01" }).run();
+  db.insert(schema.measurements)
+    .values({ kind: "height", measuredAt: "2024-01-01", values: { height: 180 }, updatedAt: 1 })
+    .run();
+  const writes = [];
+  await health.syncHealth({
+    authorize: async () => {},
+    read: async () => [],
+    write: async (record) => {
+      writes.push(record);
+      return record.clientId;
+    },
+    remove: async () => {},
+  });
+  assert.ok(
+    writes
+      .find((row) => row.kind === "weight")
+      .clientId.startsWith("macro-track:test-phone:restored-restore-1:weight:")
+  );
+  assert.ok(
+    writes
+      .find((row) => row.kind === "height")
+      .clientId.startsWith("macro-track:test-phone:height:")
+  );
+  sqlite.close();
+});

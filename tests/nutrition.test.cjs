@@ -173,7 +173,11 @@ function diaryDatabase() {
     "./metrics": metrics,
     "./nutrition": nutrition,
   });
-  return { sqlite, diary };
+  const backup = load("src/lib/backup-data.ts", {
+    "@/db": { db, ...schema },
+    "./nutrition": nutrition,
+  });
+  return { sqlite, diary, backup, db };
 }
 
 test("barcode identity preserves leading zeroes and validates check digits", () => {
@@ -616,3 +620,165 @@ test("ingredient picker returns the chosen amount without adding diary food", ()
   sqlite.close();
 });
 
+test("portable backup round-trips nutrition and weights while preserving excluded data", () => {
+  const { diary, sqlite, backup } = diaryDatabase();
+  diary.saveCustomFood(food);
+  diary.saveEntry({ day: "2024-01-01", meal: "Breakfast", food, amount: 50, portionLabel: "50 g" });
+  diary.toggleFavorite(food);
+  diary.saveMeal("Breakfast", "2024-01-01", "Breakfast");
+  diary.saveRecipe({ name: "Batch", servings: 4, ingredients: [{ food, amount: 100 }] });
+  diary.saveTargets("2024-01-01", { calories: 2200, protein: 100, carbs: 250, fat: 75 });
+  diary.setDayStatus("2024-01-01", "complete");
+  sqlite.exec(
+    "INSERT INTO weight_entries (weight_kg, measured_at, created_at, updated_at) VALUES (80, '2024-01-01T12:00:00.000Z', 1704110400, 1704110400)"
+  );
+  const original = backup.createBackup();
+  diary.deleteEntry(diary.entriesForDay("2024-01-01")[0]);
+  sqlite.exec(
+    "INSERT INTO preferences VALUES ('theme', 'dark'); INSERT INTO preferences VALUES ('healthSyncEnabled', 'true'); INSERT INTO photos VALUES (1, 'private-photo.jpg', 'front', '2024-01-01');"
+  );
+  backup.restoreBackup(backup.parseBackup(JSON.stringify(original)));
+  assert.deepEqual(backup.createBackup().data, original.data);
+  assert.equal(
+    sqlite.prepare("SELECT value FROM preferences WHERE key='theme'").get().value,
+    "dark"
+  );
+  assert.equal(
+    sqlite.prepare("SELECT value FROM preferences WHERE key='healthSyncEnabled'").get().value,
+    "false"
+  );
+  assert.ok(
+    sqlite.prepare("SELECT value FROM preferences WHERE key='weightSyncEpoch'").get().value
+  );
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM photos").get().n, 1);
+  sqlite.close();
+});
+
+test("invalid backup and failed restore preserve every existing record", () => {
+  const { diary, sqlite, backup } = diaryDatabase();
+  diary.saveEntry({ day: "2024-01-01", meal: "Breakfast", food, amount: 50, portionLabel: "50 g" });
+  const original = backup.createBackup();
+  for (const invalid of [
+    { ...original, version: 99 },
+    {
+      ...original,
+      data: { ...original.data, entries: [...original.data.entries, ...original.data.entries] },
+    },
+    {
+      ...original,
+      data: { ...original.data, entries: [{ ...original.data.entries[0], amount: -1 }] },
+    },
+    { ...original, data: { ...original.data, recipes: [{ id: "broken" }] } },
+  ]) {
+    assert.throws(() => backup.restoreBackup(invalid));
+    assert.deepEqual(backup.createBackup().data, original.data);
+  }
+  sqlite.exec(
+    "CREATE TRIGGER fail_restore BEFORE INSERT ON food_entries BEGIN SELECT RAISE(ABORT, 'No storage'); END;"
+  );
+  assert.throws(() => backup.restoreBackup(original));
+  assert.deepEqual(backup.createBackup().data, original.data);
+  sqlite.close();
+});
+
+test("backup encryption authenticates the password and rejects tampering", async () => {
+  const crypto = load("src/lib/backup-crypto.ts");
+  const random = async (length) => new Uint8Array(require("node:crypto").randomBytes(length));
+  const password = "correct horse battery staple";
+  const encrypted = await crypto.encryptBackupText('{"private":"food diary"}', password, random);
+  assert.ok(!encrypted.includes("food diary"));
+  assert.equal(await crypto.decryptBackupText(encrypted, password), '{"private":"food diary"}');
+  await assert.rejects(
+    () => crypto.decryptBackupText(encrypted, "wrong password"),
+    /Wrong password/
+  );
+  const damaged = JSON.parse(encrypted);
+  damaged.ciphertext = (damaged.ciphertext[0] === "0" ? "1" : "0") + damaged.ciphertext.slice(1);
+  await assert.rejects(
+    () => crypto.decryptBackupText(JSON.stringify(damaged), password),
+    /damaged backup/
+  );
+  damaged.iterations = 1e9;
+  await assert.rejects(
+    () => crypto.decryptBackupText(JSON.stringify(damaged), password),
+    /not a supported/
+  );
+});
+
+test("restore requires a readable recovery file before any replacement", async () => {
+  const { db, diary, sqlite, backup } = diaryDatabase();
+  diary.saveEntry({ day: "2024-01-01", meal: "Breakfast", food, amount: 50, portionLabel: "50 g" });
+  const previous = backup.createBackup();
+  const incoming = structuredClone(previous);
+  incoming.data.entries[0].amount = 100;
+  incoming.data.entries[0].nutrients = nutrition.scaleNutrients(food, 100);
+  const files = new Map();
+  let sharedUri;
+  let writeFails = false;
+  let readFails = false;
+  class Directory {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    create() {}
+  }
+  class File {
+    constructor(parent, name) {
+      this.uri = name ? `${parent.uri}/${name}` : parent;
+    }
+    get exists() {
+      return files.has(this.uri);
+    }
+    write(text) {
+      if (writeFails) throw new Error("disk full");
+      files.set(this.uri, text);
+    }
+    async text() {
+      return readFails ? "corrupted" : files.get(this.uri);
+    }
+    delete() {
+      files.delete(this.uri);
+    }
+  }
+  const service = load("src/lib/backup-files.ts", {
+    "@/db": { db, ...schema },
+    "./backup-data": backup,
+    "expo-file-system": {
+      File,
+      Directory,
+      Paths: { document: { uri: "file:///documents" }, cache: { uri: "file:///cache" } },
+    },
+    "expo-document-picker": {},
+    "expo-sharing": {
+      isAvailableAsync: async () => true,
+      shareAsync: async (uri) => {
+        sharedUri = uri;
+      },
+    },
+    "expo-crypto": {},
+    "./backup-crypto": {
+      encryptBackupText: async (text) => text,
+      decryptBackupText: async (text) => text,
+    },
+    "./health": { withHealthPaused: async (work) => work() },
+    "./health-schedule": { configureHealthSchedule: async () => {} },
+  });
+  writeFails = true;
+  await assert.rejects(() => service.restoreWithRecovery(incoming, "password"), /disk full/);
+  assert.deepEqual(backup.createBackup().data, previous.data);
+  writeFails = false;
+  readFails = true;
+  await assert.rejects(() => service.restoreWithRecovery(incoming, "password"));
+  assert.deepEqual(backup.createBackup().data, previous.data);
+  readFails = false;
+  await service.restoreWithRecovery(incoming, "password");
+  assert.deepEqual(backup.createBackup().data, incoming.data);
+  const recoveryUri = service.recoveryBackupUri();
+  assert.deepEqual(JSON.parse(files.get(recoveryUri)).data, previous.data);
+  await service.exportBackup("password");
+  assert.ok(
+    files.has(sharedUri),
+    "Shared encrypted file must remain available to the receiving app"
+  );
+  sqlite.close();
+});

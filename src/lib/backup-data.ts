@@ -1,0 +1,266 @@
+import { z } from "zod";
+import { eq } from "drizzle-orm";
+import {
+  db,
+  customFoods,
+  diaryDays,
+  foodEntries,
+  nutritionTargets,
+  savedFoods,
+  savedMeals,
+  recipes,
+  weightEntries,
+  preferences,
+  healthLinks,
+} from "@/db";
+import { recipeFood, validateFood, type Food, type Recipe } from "./nutrition";
+
+export const MAX_BACKUP_TEXT = 20 * 1024 * 1024;
+const text = z.string().max(20000);
+const positive = z.number().finite().positive();
+const id = z.number().int().positive();
+const timestamp = z.number().int().nonnegative().max(8640000000000000);
+const day = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((value) => {
+    const parsed = new Date(`${value}T12:00:00Z`);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  });
+const nutrients = z.strictObject({
+  calories: z.number().finite().min(0).max(1e12),
+  protein: z.number().finite().min(0).max(1e12),
+  carbs: z.number().finite().min(0).max(1e12),
+  fat: z.number().finite().min(0).max(1e12),
+  fiber: z.number().finite().min(0).max(1e12).nullable(),
+  sodium: z.number().finite().min(0).max(1e12).nullable(),
+});
+const food = z
+  .strictObject({
+    id: text.min(1),
+    name: text.min(1),
+    brand: text,
+    barcode: text.nullable(),
+    basis: z.enum(["g", "ml", "serving"]),
+    nutrients,
+    portions: z.array(z.strictObject({ label: text, amount: positive.max(100000) })).max(100),
+    source: z.enum(["usda", "off", "custom", "recipe"]),
+    sourceVersion: text,
+  })
+  .refine((value) => {
+    try {
+      validateFood(value as Food);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Invalid food");
+const meal = z.enum(["Breakfast", "Lunch", "Dinner", "Snacks"]);
+const item = z.strictObject({
+  food,
+  amount: positive.max(100000),
+  portionLabel: text.min(1),
+  nutrients,
+});
+const iso = z.iso.datetime();
+const dataSchema = z.strictObject({
+  entries: z.array(item.extend({ id, day, meal, createdAt: timestamp })).max(100000),
+  customFoods: z
+    .array(
+      z
+        .strictObject({ id: text.min(1), name: text.min(1), barcode: text.nullable(), food })
+        .refine(
+          (row) =>
+            row.id === row.food.id &&
+            row.food.source === "custom" &&
+            row.barcode === row.food.barcode
+        )
+    )
+    .max(10000),
+  favorites: z
+    .array(
+      z
+        .strictObject({ id: text.min(1), food, savedAt: timestamp })
+        .refine((row) => row.id === row.food.id)
+    )
+    .max(10000),
+  savedMeals: z
+    .array(
+      z.strictObject({
+        id,
+        name: text.min(1).max(80),
+        items: z.array(item).min(1).max(10000),
+        createdAt: timestamp,
+      })
+    )
+    .max(10000),
+  recipes: z
+    .array(
+      z
+        .strictObject({
+          id: text.min(1),
+          name: text.min(1).max(80),
+          servings: positive.max(1000),
+          ingredients: z
+            .array(z.strictObject({ food, amount: positive.max(100000) }))
+            .min(1)
+            .max(100),
+          revision: id,
+        })
+        .refine((row) => {
+          try {
+            recipeFood(row as Recipe);
+            return true;
+          } catch {
+            return false;
+          }
+        })
+    )
+    .max(10000),
+  days: z
+    .array(
+      z.strictObject({ day, status: z.enum(["in-progress", "complete", "partial", "fasting"]) })
+    )
+    .max(100000),
+  targets: z
+    .array(
+      z.strictObject({
+        effectiveDay: day,
+        targets: z.strictObject({
+          calories: positive.max(10000),
+          protein: z.number().finite().min(0).max(1500),
+          carbs: z.number().finite().min(0).max(1500),
+          fat: z.number().finite().min(0).max(1500),
+        }),
+      })
+    )
+    .max(100000),
+  weights: z
+    .array(
+      z.strictObject({
+        id,
+        weightKg: positive.max(1000),
+        measuredAt: z
+          .string()
+          .max(100)
+          .refine((value) => Number.isFinite(Date.parse(value))),
+        createdAt: iso.nullable(),
+        updatedAt: iso.nullable(),
+      })
+    )
+    .max(100000),
+});
+const schema = z
+  .strictObject({
+    format: z.literal("macro-track-backup"),
+    version: z.literal(1),
+    createdAt: iso,
+    data: dataSchema,
+  })
+  .superRefine((backup, context) => {
+    for (const [name, rows] of Object.entries(backup.data)) {
+      const keys = rows.map((row) =>
+        "id" in row
+          ? row.id
+          : "day" in row
+            ? row.day
+            : "effectiveDay" in row
+              ? row.effectiveDay
+              : ""
+      );
+      if (new Set(keys).size !== keys.length)
+        context.addIssue({ code: "custom", message: `Duplicate keys in ${name}` });
+    }
+    const logged = new Set(backup.data.entries.map((entry) => entry.day));
+    if (
+      backup.data.days.some(
+        (row) =>
+          (row.status === "fasting" && logged.has(row.day)) ||
+          (row.status === "complete" && !logged.has(row.day))
+      )
+    )
+      context.addIssue({ code: "custom", message: "Inconsistent logging status" });
+  });
+export type Backup = z.infer<typeof schema>;
+
+export function validateBackup(value: unknown): Backup {
+  const result = schema.safeParse(value);
+  if (!result.success)
+    throw new Error("This backup is invalid or uses an unsupported version. Nothing was restored.");
+  return result.data;
+}
+export function parseBackup(json: string): Backup {
+  if (json.length > MAX_BACKUP_TEXT) throw new Error("This backup exceeds the 20 MB data limit.");
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error("This backup could not be read.");
+  }
+  return validateBackup(value);
+}
+export function createBackup(): Backup {
+  const snapshot = db.transaction((tx) => ({
+    format: "macro-track-backup",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    data: {
+      entries: tx.select().from(foodEntries).all(),
+      customFoods: tx.select().from(customFoods).all(),
+      favorites: tx.select().from(savedFoods).all(),
+      savedMeals: tx.select().from(savedMeals).all(),
+      recipes: tx.select().from(recipes).all(),
+      days: tx.select().from(diaryDays).all(),
+      targets: tx.select().from(nutritionTargets).all(),
+      weights: tx.select().from(weightEntries).all(),
+    },
+  }));
+  return parseBackup(JSON.stringify(snapshot));
+}
+
+// Caller holds the health-sync maintenance lock. All replacement writes roll back
+// together if storage fails; catalog files, photos and measurements are untouched.
+export function restoreBackup(value: unknown, recoveryUri?: string) {
+  const { data } = validateBackup(value);
+  db.transaction((tx) => {
+    tx.delete(foodEntries).run();
+    tx.delete(customFoods).run();
+    tx.delete(savedFoods).run();
+    tx.delete(savedMeals).run();
+    tx.delete(recipes).run();
+    tx.delete(diaryDays).run();
+    tx.delete(nutritionTargets).run();
+    tx.delete(weightEntries).run();
+    for (const row of data.entries) tx.insert(foodEntries).values(row).run();
+    for (const row of data.customFoods) tx.insert(customFoods).values(row).run();
+    for (const row of data.favorites) tx.insert(savedFoods).values(row).run();
+    for (const row of data.savedMeals) tx.insert(savedMeals).values(row).run();
+    for (const row of data.recipes) tx.insert(recipes).values(row).run();
+    for (const row of data.days) tx.insert(diaryDays).values(row).run();
+    for (const row of data.targets) tx.insert(nutritionTargets).values(row).run();
+    for (const row of data.weights)
+      tx.insert(weightEntries)
+        .values({
+          ...row,
+          createdAt: row.createdAt ? new Date(row.createdAt) : null,
+          updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,
+        })
+        .run();
+    if (recoveryUri)
+      tx.insert(preferences)
+        .values({ key: "recoveryBackupUri", value: recoveryUri })
+        .onConflictDoUpdate({ target: preferences.key, set: { value: recoveryUri } })
+        .run();
+    tx.delete(healthLinks).where(eq(healthLinks.localKind, "weight")).run();
+    for (const [key, value] of [
+      ["healthSyncEnabled", "false"],
+      ["weightSyncEpoch", `${Date.now()}-${Math.random().toString(36).slice(2)}`],
+      ["healthSyncError", ""],
+      ["lastSync", ""],
+    ])
+      tx.insert(preferences)
+        .values({ key, value })
+        .onConflictDoUpdate({ target: preferences.key, set: { value } })
+        .run();
+  });
+}

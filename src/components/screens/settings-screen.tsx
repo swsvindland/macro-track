@@ -1,3 +1,4 @@
+import { BackupPanel } from "@/components/nutrition/backup-panel";
 import { useState } from "react";
 import { Switch } from "heroui-native";
 import { router } from "expo-router";
@@ -134,6 +135,7 @@ export function SettingsScreen() {
           )}
         </SystemPanel.Body>
       </SystemPanel>
+      <BackupPanel />
       <ErrorText message={error || healthSyncError ? t(error || healthSyncError) : ""} />
     </Screen>
   );

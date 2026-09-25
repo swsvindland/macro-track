@@ -79,6 +79,7 @@ export function Field({
   value,
   onChange,
   numeric = false,
+  secure = false,
   placeholder,
   disabled = false,
 }: {
@@ -86,6 +87,7 @@ export function Field({
   value: string;
   onChange: (value: string) => void;
   numeric?: boolean;
+  secure?: boolean;
   placeholder?: string;
   disabled?: boolean;
 }) {
@@ -100,6 +102,8 @@ export function Field({
         onChangeText={onChange}
         keyboardType={numeric ? "decimal-pad" : "default"}
         autoCapitalize="none"
+        secureTextEntry={secure}
+        autoCorrect={!secure}
         placeholder={placeholder}
       />
     </TextField>

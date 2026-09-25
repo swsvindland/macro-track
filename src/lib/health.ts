@@ -6,8 +6,20 @@ import type { HealthAdapter, HealthKind, HealthRecord } from "./health-types";
 import { validDay, dayOf } from "./metrics";
 
 let running = false;
+let maintenance = false;
+export async function withHealthPaused<T>(work: () => Promise<T>): Promise<T> {
+  if (running || maintenance)
+    throw new Error("Wait for health sync to finish, then try restoring again.");
+  maintenance = true;
+  try {
+    return await work();
+  } finally {
+    maintenance = false;
+  }
+}
+
 export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
-  if (running) throw new Error("syncing");
+  if (running || maintenance) throw new Error("syncing");
   if (!adapter && Constants.appOwnership === "expo") throw new Error("healthUnavailable");
   running = true;
   try {
@@ -28,6 +40,13 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
       db.insert(preferences).values({ key: "installation", value: installation }).run();
     }
     const prefix = `macro-track:${installation}:`;
+    const weightEpoch = db
+      .select()
+      .from(preferences)
+      .where(eq(preferences.key, "weightSyncEpoch"))
+      .get()?.value;
+    // Restored local IDs must never overwrite unrelated pre-restore health records.
+    const weightPrefix = weightEpoch ? `${prefix}restored-${weightEpoch}:` : prefix;
     let imported = 0;
     let exported = 0;
     const localRecords = () => [
@@ -79,7 +98,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
         )
       )
         continue;
-      const key = `${prefix}${record.kind}:${record.id}`;
+      const key = `${record.kind === "weight" ? weightPrefix : prefix}${record.kind}:${record.id}`;
       const link = links.find((l) => l.key === key);
       const hash = fingerprint(record);
       if (link?.fingerprint === hash) continue;
