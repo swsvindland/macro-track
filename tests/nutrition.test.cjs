@@ -192,7 +192,14 @@ function diaryDatabase() {
     "./nutrition": nutrition,
     "./food-time": foodTime,
   });
-  return { sqlite, diary, backup, db };
+  const fastLog = load("src/lib/fast-log.ts", {
+    "@/db": { db, ...schema },
+    "./diary": diary,
+    "./nutrition": nutrition,
+    "./metrics": metrics,
+    "./food-time": foodTime,
+  });
+  return { sqlite, diary, backup, db, fastLog };
 }
 
 test("barcode identity preserves leading zeroes and validates check digits", () => {
@@ -1220,5 +1227,65 @@ test("compiled guided setup previews generated targets and starts the program on
   assert.equal(closed, 1);
   assert.equal(db.select().from(schema.coachingGoals).all().length, 1);
   assert.ok(diary.targetsForDay(metrics.localDay()).calories > 1500);
+  sqlite.close();
+});
+
+test("batch logging is atomic and undo restores prior diary completeness without touching other logs", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const item = fastLog.portionFor(food);
+  const first = fastLog.logBatch([item], { day: "2024-01-01", time: "08:00", complete: true });
+  const receipt = fastLog.logBatch([item, { ...item, portionLabel: "Second food" }], {
+    day: "2024-01-01",
+    time: "13:10",
+  });
+  assert.equal(diary.entriesForDay("2024-01-01").length, 3);
+  assert.equal(diary.dayStatus("2024-01-01"), "in-progress");
+  fastLog.undoLog(receipt);
+  assert.deepEqual(diary.entriesForDay("2024-01-01"), first.entries);
+  assert.equal(diary.dayStatus("2024-01-01"), "complete");
+  assert.throws(() => fastLog.undoLog(receipt));
+  const newer = fastLog.logBatch([item], { day: "2024-01-01", time: "19:00" });
+  diary.saveEntry({ ...newer.entries[0], amount: 200 });
+  assert.throws(() => fastLog.undoLog(newer));
+  assert.equal(diary.entriesForDay("2024-01-01").length, 2);
+  sqlite.exec(
+    "CREATE TRIGGER fail_batch BEFORE INSERT ON food_entries WHEN NEW.portion_label = 'Second food' BEGIN SELECT RAISE(ABORT, 'disk failure'); END"
+  );
+  assert.throws(() =>
+    fastLog.logBatch([item, { ...item, portionLabel: "Second food" }], {
+      day: "2024-01-02",
+      time: "12:00",
+    })
+  );
+  assert.equal(diary.entriesForDay("2024-01-02").length, 0);
+  sqlite.close();
+});
+test("remembered portions follow current food definitions and quick choices favor similar meal times", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    loggedTime: "08:30",
+    food,
+    amount: 75,
+    portionLabel: "75 g",
+  });
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Dinner",
+    loggedTime: "19:30",
+    food: { ...food, id: "other", name: "Dinner food" },
+    amount: 200,
+    portionLabel: "200 g",
+  });
+  const choices = fastLog.loggingChoices("08:00");
+  assert.equal(choices.quick[0].title, food.name);
+  assert.equal(choices.quick[0].items[0].amount, 75);
+  const previous = diary.entriesForDay("2024-01-01")[0];
+  assert.equal(fastLog.portionFor({ ...food, basis: "serving", portions: [] }, previous).amount, 1);
+  assert.equal(
+    fastLog.portionFor({ ...food, source: "recipe", sourceVersion: "2" }, previous).amount,
+    30
+  );
   sqlite.close();
 });
