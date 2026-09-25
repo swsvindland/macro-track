@@ -1,4 +1,5 @@
 import { useFonts } from "expo-font";
+import { Ionicons } from "@expo/vector-icons";
 import { useUniwind } from "uniwind";
 import type { JSX } from "react";
 import { Stack } from "expo-router";
@@ -23,6 +24,8 @@ export default function RootLayout(): JSX.Element {
   const [fontsLoaded, fontError] = useFonts({
     Inter: require("../../assets/fonts/Inter.ttf"),
     IBMPlexMono: require("../../assets/fonts/IBMPlexMono-Regular.ttf"),
+    // Home's icon-only controls must not render blank on a cold start.
+    ...Ionicons.font,
   });
   const { success, error } = useMigrations(db, migrations);
 

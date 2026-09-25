@@ -145,3 +145,51 @@ export function recipeFood(recipe: Recipe): Food {
   validateFood(food);
   return food;
 }
+
+export type DayProjection =
+  | { status: "no-target"; eaten: number }
+  | { status: "over"; eaten: number; target: number; over: number }
+  | { status: "under"; eaten: number; target: number; left: number }
+  | {
+      status: "on-pace" | "heading-over";
+      eaten: number;
+      target: number;
+      left: number;
+      projected: number;
+    };
+
+/** Rounds an estimate to the nearest 50 kcal so it reads as an estimate. */
+export const roughly = (value: number) => Math.max(50, Math.round(value / 50) * 50);
+
+/**
+ * Where today is heading. Food already eaten counts once; food planned for later
+ * today replaces the usual rest of the day rather than adding to it. A projection
+ * needs targets, at least one entry and a typical rest-of-day from history.
+ */
+export function projectDay(input: {
+  entries: { loggedTime: string | null; calories: number }[];
+  target: number | null;
+  typical: number | null;
+  now: string;
+}): DayProjection {
+  const eaten = input.entries.reduce((sum, row) => sum + row.calories, 0);
+  const target = input.target;
+  if (target === null) return { status: "no-target", eaten };
+  if (eaten > target) return { status: "over", eaten, target, over: eaten - target };
+  const left = target - eaten;
+  if (input.typical === null || !input.entries.length)
+    return { status: "under", eaten, target, left };
+  let soFar = 0,
+    planned = 0;
+  for (const row of input.entries)
+    if (row.loggedTime && row.loggedTime > input.now) planned += row.calories;
+    else soFar += row.calories;
+  const projected = soFar + Math.max(planned, input.typical);
+  return {
+    status: projected - target > Math.max(100, target * 0.05) ? "heading-over" : "on-pace",
+    eaten,
+    target,
+    left,
+    projected,
+  };
+}

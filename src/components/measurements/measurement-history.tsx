@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useThemeColor } from "heroui-native";
 import { Timeline } from "heroui-native-pro";
 import { View } from "react-native";
-import { SystemButton, SystemText as Text } from "@/components/system";
+import { SystemButton, SystemLabel, SystemText as Text } from "@/components/system";
 import { useStore } from "@/lib/store";
 import type { MeasurementLogState } from "./use-measurement-log";
 
@@ -13,9 +13,9 @@ export function MeasurementHistory({ log }: { log: MeasurementLogState }) {
 
   return (
     <>
-      <Text accessibilityRole="header" className="text-xl font-semibold text-foreground">
+      <SystemLabel accessibilityRole="header" className="-mb-2 px-1">
         {t("history")} · {number(rows.length, 0)}
-      </Text>
+      </SystemLabel>
       {!rows.length ? (
         <Text className="py-8 text-center text-muted">{t("empty")}</Text>
       ) : (

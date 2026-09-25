@@ -31,10 +31,6 @@ export function DataPanel() {
     <SystemPanel>
       <SystemPanel.Body className="gap-3">
         <Text className="text-xl font-semibold">Your data</Text>
-        <Text className="text-muted">
-          CSV exports are readable spreadsheets and are not encrypted. Use an encrypted backup above
-          to transfer your complete nutrition history.
-        </Text>
         <SystemButton
           variant="secondary"
           isDisabled={busy}

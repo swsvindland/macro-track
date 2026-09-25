@@ -11,11 +11,7 @@ export default function TabsLayout() {
       labelVisibilityMode="labeled"
       backBehavior="initialRoute"
     >
-      <NativeTabs.Trigger
-        name="index"
-        disableAutomaticContentInsets
-        contentStyle={{ backgroundColor: background }}
-      >
+      <NativeTabs.Trigger name="index" contentStyle={{ backgroundColor: background }}>
         <NativeTabs.Trigger.Label>Today</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="fork.knife" md="restaurant" />
       </NativeTabs.Trigger>
@@ -30,6 +26,10 @@ export default function TabsLayout() {
       <NativeTabs.Trigger name="library" contentStyle={{ backgroundColor: background }}>
         <NativeTabs.Trigger.Label>Library</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="books.vertical" md="bookmarks" />
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="settings" contentStyle={{ backgroundColor: background }}>
+        <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="gearshape" md="settings" />
       </NativeTabs.Trigger>
     </NativeTabs>
   );

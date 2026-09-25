@@ -1,4 +1,4 @@
-import { createContext, useContext, useId, useState, type ReactNode } from "react";
+import { createContext, useContext, useId, useState, type ReactNode, type Ref } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -7,15 +7,23 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView as NativeSafeAreaView } from "react-native-safe-area-context";
-import { SafeAreaView as TabsSafeAreaView } from "react-native-screens/experimental";
+import {
+  SafeAreaView as NativeSafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { withUniwind } from "uniwind";
-import { Input, InputGroup, Label, Select, TextField } from "heroui-native";
+import { Input, InputGroup, Label, Menu, SearchField, Select, TextField } from "heroui-native";
 import { PortalHost } from "heroui-native/portal";
 import { Calendar, DateField } from "heroui-native-pro";
 import { parseDate } from "@internationalized/date";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SystemButton, SystemText as Text } from "./system";
+import {
+  SystemButton,
+  SystemIcon,
+  SystemIconButton,
+  SystemText as Text,
+  type IconName,
+} from "./system";
 import { localDay } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 
@@ -31,36 +39,43 @@ export function Screen({
   children,
   nativeHeader = false,
   action,
-  footer,
   compact = false,
+  header,
+  scrollRef,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   nativeHeader?: boolean;
   action?: ReactNode;
-  footer?: ReactNode;
   compact?: boolean;
+  /** Replaces the large title with a fixed row that stays put while content scrolls. */
+  header?: ReactNode;
+  scrollRef?: Ref<ScrollView>;
 }) {
   const { width } = useWindowDimensions();
-  const content = (
+  return (
     <SafeAreaView
       className="flex-1 bg-background"
       edges={nativeHeader ? ["bottom", "left", "right"] : ["top"]}
     >
+      {header && <View className="min-h-12 justify-center px-2">{header}</View>}
       <ScrollView
+        ref={scrollRef}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={{
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
-          paddingTop: compact ? 12 : 24,
-          paddingBottom: footer ? 16 : 40,
+          paddingTop: header ? 4 : compact ? 12 : 24,
+          paddingBottom: 40,
           gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,
           alignSelf: "center",
         }}
       >
-        {!nativeHeader && (
+        {!nativeHeader && !header && (
           <View className="gap-2 pb-1">
             <View className="flex-row items-center justify-between gap-3">
               <Text
@@ -76,17 +91,7 @@ export function Screen({
         )}
         {children}
       </ScrollView>
-      {footer && <View className="bg-background px-4 pt-2 pb-2">{footer}</View>}
     </SafeAreaView>
-  );
-  // A fixed footer must respect the native tab bar, not just the device's
-  // home indicator. Today disables the tab's automatic scroll-only insets.
-  return footer ? (
-    <TabsSafeAreaView edges={{ bottom: true, left: true, right: true }} style={{ flex: 1 }}>
-      {content}
-    </TabsSafeAreaView>
-  ) : (
-    content
   );
 }
 export function Field({
@@ -98,6 +103,7 @@ export function Field({
   placeholder,
   disabled = false,
   autoFocus = false,
+  selectTextOnFocus = false,
 }: {
   label: string;
   value: string;
@@ -107,6 +113,8 @@ export function Field({
   autoFocus?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  /** Select a prefilled amount so typing replaces it instead of appending. */
+  selectTextOnFocus?: boolean;
 }) {
   return (
     <TextField isDisabled={disabled}>
@@ -114,6 +122,7 @@ export function Field({
       <Input
         accessibilityLabel={label}
         autoFocus={autoFocus}
+        selectTextOnFocus={selectTextOnFocus}
         variant="primary"
         className={numeric ? "font-mono focus:border-focus" : "font-sans focus:border-focus"}
         value={value}
@@ -287,6 +296,7 @@ export function Editor({
   compact?: boolean;
 }) {
   const { t } = useStore();
+  const insets = useSafeAreaInsets();
   const portalHost = useId();
   return (
     <Modal
@@ -298,9 +308,12 @@ export function Editor({
       <GestureHandlerRootView style={{ flex: 1 }}>
         <EditorPortalContext.Provider value={portalHost}>
           <SafeAreaView className="flex-1 bg-background">
+            {/* A page sheet starts below the status bar; without this offset the
+                footer action sits under the keyboard. */}
             <KeyboardAvoidingView
               style={{ flex: 1 }}
               behavior={Platform.OS === "ios" ? "padding" : undefined}
+              keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
             >
               {compact && (
                 <View className="flex-row items-center justify-between px-4 py-2">
@@ -314,6 +327,7 @@ export function Editor({
               )}
               <ScrollView
                 keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
                 contentContainerStyle={{
                   padding: compact ? 16 : 24,
                   gap: compact ? 12 : 20,
@@ -357,4 +371,180 @@ export function ErrorText({ message }: { message: string }) {
       {message}
     </Text>
   ) : null;
+}
+
+export type MenuAction = {
+  key: string;
+  label: string;
+  icon?: IconName;
+  onPress: () => void;
+  disabled?: boolean;
+  /** Shows a checkmark; use for the current choice in a single-select section. */
+  selected?: boolean;
+  destructive?: boolean;
+};
+
+/** A compact popover of actions behind a single trigger. */
+export function ActionMenu({
+  accessibilityLabel,
+  sections,
+  icon = "ellipsis-horizontal",
+  trigger,
+}: {
+  accessibilityLabel: string;
+  sections: { title?: string; actions: MenuAction[] }[];
+  icon?: IconName;
+  /** Custom trigger content; defaults to an icon button. */
+  trigger?: ReactNode;
+}) {
+  const { width } = useWindowDimensions();
+  return (
+    <Menu>
+      <Menu.Trigger asChild accessibilityLabel={trigger ? accessibilityLabel : undefined}>
+        {trigger ?? <SystemIconButton icon={icon} accessibilityLabel={accessibilityLabel} />}
+      </Menu.Trigger>
+      <Menu.Portal unstable_accessibilityContainerViewIsModal>
+        <Menu.Overlay />
+        <Menu.Content
+          presentation="popover"
+          placement="bottom"
+          align="end"
+          width={Math.min(280, width - 32)}
+          insets={{ left: 16, right: 16, top: 16, bottom: 16 }}
+          className="p-1.5"
+        >
+          {sections.map((section, i) => (
+            <View
+              key={section.title ?? i}
+              className={i ? "mt-1 border-t border-separator pt-1" : ""}
+            >
+              {section.title && <Menu.Label className="px-3 pt-1">{section.title}</Menu.Label>}
+              {section.actions.map((action) => (
+                <Menu.Item
+                  key={action.key}
+                  className="min-h-11"
+                  isDisabled={action.disabled}
+                  variant={action.destructive ? "danger" : "default"}
+                  accessibilityState={{
+                    disabled: action.disabled,
+                    ...(action.selected !== undefined ? { selected: action.selected } : {}),
+                  }}
+                  onPress={action.onPress}
+                >
+                  {action.icon && (
+                    <SystemIcon
+                      name={action.icon}
+                      size={18}
+                      color={action.destructive ? "danger" : "muted"}
+                    />
+                  )}
+                  <Menu.ItemTitle className="flex-1">{action.label}</Menu.ItemTitle>
+                  {action.selected && (
+                    <SystemIcon name="checkmark" size={18} color="accent-soft-foreground" />
+                  )}
+                </Menu.Item>
+              ))}
+            </View>
+          ))}
+        </Menu.Content>
+      </Menu.Portal>
+    </Menu>
+  );
+}
+
+/** Search box with a leading icon and a clear button; no visible label. */
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  accessibilityLabel,
+  autoFocus = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  accessibilityLabel: string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <SearchField value={value} onChange={onChange}>
+      <SearchField.Group>
+        <SearchField.SearchIcon />
+        <SearchField.Input
+          autoFocus={autoFocus}
+          placeholder={placeholder}
+          accessibilityLabel={accessibilityLabel}
+          returnKeyType="search"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <SearchField.ClearButton hitSlop={10} accessibilityLabel="Clear search" />
+      </SearchField.Group>
+    </SearchField>
+  );
+}
+
+/** A date label that opens a calendar dialog; used by the compact Home header. */
+export function DayPicker({
+  value,
+  max,
+  label,
+  onChange,
+}: {
+  value: string;
+  /** Latest selectable day; passed in so a long-lived screen doesn't keep a stale "today". */
+  max: string;
+  label: string;
+  onChange: (day: string) => void;
+}) {
+  const { language, date } = useStore();
+  const hostName = useContext(EditorPortalContext);
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <DateField
+      className="min-w-0 shrink"
+      value={{ value, label: date(value) }}
+      onValueChange={(option) => option?.value && onChange(option.value)}
+      isOpen={isOpen}
+      onOpenChange={setIsOpen}
+      locale={language === "zh" ? "zh-CN" : language}
+    >
+      <DateField.Select presentation="dialog">
+        <DateField.Trigger asChild accessibilityLabel={`${label}. Choose a date`}>
+          <SystemButton variant="ghost" className="min-w-0 flex-shrink gap-1 px-2">
+            <Text
+              accessibilityRole="header"
+              numberOfLines={1}
+              className="flex-shrink text-lg font-semibold"
+            >
+              {label}
+            </Text>
+            <SystemIcon name="chevron-down" size={16} color="muted" />
+          </SystemButton>
+        </DateField.Trigger>
+        <DateField.Portal hostName={hostName} disableFullWindowOverlay>
+          <DateField.Overlay />
+          <DateField.Content presentation="dialog">
+            <DateField.Calendar
+              accessibilityLabel="Diary date"
+              minValue={parseDate("1900-01-01")}
+              maxValue={parseDate(max)}
+            >
+              <Calendar.Header>
+                <Calendar.Heading />
+                <Calendar.NavButton slot="previous" />
+                <Calendar.NavButton slot="next" />
+              </Calendar.Header>
+              <Calendar.Grid>
+                <Calendar.GridHeader>
+                  {(day) => <Calendar.HeaderCell day={day} />}
+                </Calendar.GridHeader>
+                <Calendar.GridBody>{(date) => <Calendar.Cell date={date} />}</Calendar.GridBody>
+              </Calendar.Grid>
+            </DateField.Calendar>
+          </DateField.Content>
+        </DateField.Portal>
+      </DateField.Select>
+    </DateField>
+  );
 }

@@ -44,13 +44,6 @@ export function BackupPanel() {
     <SystemPanel>
       <SystemPanel.Body className="gap-4">
         <Text className="text-xl font-semibold">Backup & restore</Text>
-        <Text className="text-sm text-muted">
-          Password-protected copies of your food diary, recipes, saved meals, targets and weight
-          history. No account needed.
-        </Text>
-        <Text className="text-sm text-muted">
-          Excludes food catalogs, progress photos, body measurements and appearance settings.
-        </Text>
         {!busy && (
           <Choices
             values={["Create backup", "Restore backup"] as const}
@@ -85,7 +78,7 @@ export function BackupPanel() {
               />
             )}
             <Text className="text-sm text-muted">
-              Use at least 10 characters. Keep the password somewhere safe; we can’t recover it.
+              At least 10 characters. It can’t be recovered.
             </Text>
             <SystemButton
               isDisabled={busy}
@@ -128,13 +121,8 @@ export function BackupPanel() {
               {preview.data.recipes.length} recipes · {preview.data.savedMeals.length} saved meals
             </Text>
             <Text className="text-sm text-muted">
-              Restore replaces your current nutrition records and weights; it does not merge them.
-              Photos, body measurements and appearance settings stay as they are.
-            </Text>
-            <Text className="text-sm text-muted">
-              Health sync will be turned off. Apple Health and Health Connect data will not be
-              changed. Your current records will first be saved as an encrypted recovery copy using
-              this backup’s password.
+              Replaces your current food and weight records and turns off Health sync. A recovery
+              copy is saved first.
             </Text>
             <SystemButton
               variant="danger-soft"

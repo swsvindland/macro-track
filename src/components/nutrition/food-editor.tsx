@@ -1,5 +1,5 @@
 import { TimeField } from "./time-field";
-import { currentFoodTime, mealAtTime } from "@/lib/food-time";
+import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Linking, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -192,6 +192,7 @@ export function FoodEditor({
   initialAmount,
   onPick,
   pickerTitle,
+  pickLabel,
   initialMode = "search",
 }: {
   close: () => void;
@@ -203,6 +204,8 @@ export function FoodEditor({
   initialAmount?: number;
   onPick?: (food: Food, amount: number) => void;
   pickerTitle?: string;
+  /** Confirm label when picking, e.g. "Log" when the pick is saved straight away. */
+  pickLabel?: string;
   initialMode?: "search" | "barcode" | "custom";
 }) {
   const { refresh } = useNutrition();
@@ -342,6 +345,23 @@ export function FoodEditor({
       }
       open
       close={close}
+      compact={!!onPick}
+      footer={
+        mode === "portion" && food ? (
+          <View className="gap-2">
+            <ErrorText message={error} />
+            <SystemButton onPress={save}>
+              {onPick
+                ? (pickLabel ?? (pickerTitle ? "Add to meal" : "Use ingredient"))
+                : entry
+                  ? "Save changes"
+                  : diaryLayout === "timeline"
+                    ? `Log at ${validFoodTime(loggedTime) ? formatClock(loggedTime) : loggedTime}`
+                    : `Add to ${meal.toLowerCase()}`}
+            </SystemButton>
+          </View>
+        ) : undefined
+      }
     >
       {mode !== "search" && !entry && (
         <SystemButton
@@ -495,17 +515,20 @@ export function FoodEditor({
             value={amount}
             onChange={setAmount}
             numeric
+            autoFocus={!entry}
+            selectTextOnFocus
           />
           {!!food.portions.length && (
-            <View className="gap-2">
-              <Text className="text-sm text-muted">Common portions</Text>
+            <View className="flex-row flex-wrap gap-2">
               {food.portions.slice(0, 6).map((portion, i) => (
                 <SystemButton
                   key={i}
                   variant="secondary"
+                  className={`px-3 ${parseNumber(amount) === portion.amount ? "bg-accent-soft" : ""}`}
+                  accessibilityState={{ selected: parseNumber(amount) === portion.amount }}
                   onPress={() => setAmount(String(portion.amount))}
                 >
-                  {portion.label} · {number(portion.amount)} {food.basis}
+                  {`${portion.label} · ${number(portion.amount, Number.isInteger(portion.amount) ? 0 : 1)} ${food.basis}`}
                 </SystemButton>
               ))}
             </View>
@@ -523,18 +546,6 @@ export function FoodEditor({
               </SystemPanel.Body>
             </SystemPanel>
           )}
-          <ErrorText message={error} />
-          <SystemButton onPress={save}>
-            {onPick
-              ? pickerTitle
-                ? "Add to meal"
-                : "Use ingredient"
-              : entry
-                ? "Save changes"
-                : diaryLayout === "timeline"
-                  ? `Log at ${loggedTime}`
-                  : `Add to ${meal.toLowerCase()}`}
-          </SystemButton>
           {entry && (
             <SystemButton
               variant="danger-soft"

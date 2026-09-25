@@ -29,7 +29,7 @@
     "@shopify/react-native-skia": "^2.11.1",
     "babel-plugin-inline-import": "^3.0.0",
     "drizzle-orm": "^0.45.2",
-    "expo": "~57.0.0",
+    "expo": "~57.0.25",
     "expo-asset": "~57.0.15",
     "expo-background-task": "~57.0.16",
     "expo-build-properties": "~57.0.17",

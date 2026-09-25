@@ -6,13 +6,14 @@
 @source '../node_modules/heroui-native/lib';
 @source '../node_modules/heroui-native-pro/lib';
 
-/* Calm surfaces with a shared cyan accent in light and dark modes. */
+/* Calm surfaces with a shared cyan accent in light and dark modes.
+   HeroUI slots read --font-normal/medium/semibold/bold as family names. --font-normal
+   stays in @theme because HeroUI text always carries font-normal and needs Inter from
+   it; the others live with the theme variables so Tailwind's font-medium/semibold/bold
+   utilities keep emitting a real font-weight. */
 @theme {
   --font-sans: "Inter";
   --font-normal: "Inter";
-  --font-medium: "Inter";
-  --font-semibold: "Inter";
-  --font-bold: "Inter";
   --font-mono: "IBMPlexMono";
   --radius: 12px;
   --radius-xs: 2px;
@@ -45,15 +46,18 @@
 @layer theme {
   :root {
     @variant light {
+      --font-medium: "Inter";
+      --font-semibold: "Inter";
+      --font-bold: "Inter";
       --background: #f3f6f8;
       --foreground: #15212b;
       --surface: #ffffff;
-      --surface-secondary: #f7f9fa;
-      --surface-tertiary: #f1f6f9;
+      --surface-secondary: #e8eef2;
+      --surface-tertiary: #e3e9ed;
       --overlay: #ffffff;
       --backdrop: rgba(20, 40, 50, 0.14);
       --muted: #64727d;
-      --default: #f7f9fa;
+      --default: #e8eef2;
       --accent: #22d3ee;
       --accent-foreground: #071017;
       --accent-soft: #ecfeff;
@@ -90,15 +94,18 @@
       --overlay-shadow: 0 16px 48px rgba(20, 40, 50, 0.14);
     }
     @variant dark {
+      --font-medium: "Inter";
+      --font-semibold: "Inter";
+      --font-bold: "Inter";
       --background: #071017;
       --foreground: #f3f6f7;
       --surface: #0d171e;
-      --surface-secondary: #14232d;
-      --surface-tertiary: #102029;
+      --surface-secondary: #182a35;
+      --surface-tertiary: #1b2d38;
       --overlay: #0d171e;
       --backdrop: rgba(0, 0, 0, 0.45);
       --muted: #87939b;
-      --default: #102029;
+      --default: #1b2d38;
       --accent: #22d3ee;
       --accent-foreground: #071017;
       --accent-soft: #083344;

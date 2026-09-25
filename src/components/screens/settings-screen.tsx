@@ -2,9 +2,9 @@ import { DataPanel } from "@/components/nutrition/data-panel";
 import { BackupPanel } from "@/components/nutrition/backup-panel";
 import { useState } from "react";
 import { Switch } from "heroui-native";
-import { router } from "expo-router";
 import { Platform, View } from "react-native";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import { router } from "expo-router";
+import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
 import { SettingsSelect, ErrorText, Screen } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { languages, type LanguagePreference } from "@/lib/translations";
@@ -60,66 +60,66 @@ export function SettingsScreen() {
     }
   }
   return (
-    <Screen
-      title={t("settings")}
-      action={
-        <SystemButton variant="ghost" onPress={() => router.back()}>
-          Done
-        </SystemButton>
-      }
-    >
-      <SystemPanel>
-        <SystemPanel.Body className="gap-3">
-          <SystemPanel.Title>{t("theme")}</SystemPanel.Title>
-          <SettingsSelect
-            title={t("theme")}
-            values={["dark", "light", "system"] as const}
-            value={theme}
-            onChange={(value) => preference("theme", value)}
-            label={t}
-          />
+    <Screen title={t("settings")}>
+      <SystemPanel className="p-4">
+        <SystemPanel.Body className="gap-4">
+          {(
+            [
+              [
+                t("theme"),
+                <SettingsSelect
+                  key="theme"
+                  title={t("theme")}
+                  values={["dark", "light", "system"] as const}
+                  value={theme}
+                  onChange={(value) => preference("theme", value)}
+                  label={t}
+                />,
+              ],
+              [
+                t("units"),
+                <SettingsSelect
+                  key="units"
+                  title={t("units")}
+                  values={["metric", "imperial", "stone"] as const}
+                  value={units}
+                  onChange={(value) => preference("units", value)}
+                  label={(value) =>
+                    `${t(value)} · ${value === "metric" ? "kg / cm" : value === "imperial" ? "lb / in" : "st / in"}`
+                  }
+                />,
+              ],
+              [
+                t("language"),
+                <SettingsSelect
+                  key="language"
+                  title={t("language")}
+                  values={["system", ...Object.keys(languages)] as LanguagePreference[]}
+                  value={languagePreference}
+                  onChange={(value) => preference("language", value)}
+                  label={(value) => (value === "system" ? t("system") : languages[value])}
+                />,
+              ],
+            ] as const
+          ).map(([title, control]) => (
+            <View key={title} className="gap-2">
+              <SystemLabel>{title}</SystemLabel>
+              {control}
+            </View>
+          ))}
         </SystemPanel.Body>
       </SystemPanel>
-      <SystemPanel>
-        <SystemPanel.Body className="gap-3">
-          <SystemPanel.Title>{t("units")}</SystemPanel.Title>
-          <SettingsSelect
-            title={t("units")}
-            values={["metric", "imperial", "stone"] as const}
-            value={units}
-            onChange={(value) => preference("units", value)}
-            label={(value) =>
-              `${t(value)} · ${value === "metric" ? "kg / cm" : value === "imperial" ? "lb / in" : "st / in"}`
-            }
-          />
-        </SystemPanel.Body>
-      </SystemPanel>
-      <SystemPanel>
-        <SystemPanel.Body className="gap-3">
-          <SystemPanel.Title>{t("language")}</SystemPanel.Title>
-          <SettingsSelect
-            title={t("language")}
-            values={["system", ...Object.keys(languages)] as LanguagePreference[]}
-            value={languagePreference}
-            onChange={(value) => preference("language", value)}
-            label={(value) => (value === "system" ? t("system") : languages[value])}
-          />
-        </SystemPanel.Body>
-      </SystemPanel>
-      <SystemPanel>
-        <SystemPanel.Body className="gap-3">
-          <SystemPanel.Title>
-            {Platform.OS === "ios" ? "Apple Health" : "Health Connect"}
-          </SystemPanel.Title>
-          <Text className="text-muted">{t("healthPrivacy")}</Text>
-          <Text className="text-sm text-muted">{t("syncHelp")}</Text>
-          {lastSync && (
-            <Text className="text-sm text-muted">
-              {t("lastSync")}: {date(lastSync)}
-            </Text>
-          )}
+      <SystemPanel className="p-4">
+        <SystemPanel.Body className="gap-2">
           <View className="flex-row items-center justify-between gap-4">
-            <Text className="flex-1">{t(busy ? "syncing" : "sync")}</Text>
+            <View className="flex-1 gap-0.5">
+              <Text className="font-semibold">
+                {Platform.OS === "ios" ? "Apple Health" : "Health Connect"}
+              </Text>
+              <Text className="text-sm text-muted">
+                {busy ? t("syncing") : lastSync ? `${t("lastSync")}: ${date(lastSync)}` : t("sync")}
+              </Text>
+            </View>
             <Switch
               accessibilityLabel={t("sync")}
               isSelected={healthSyncEnabled}
@@ -127,20 +127,24 @@ export function SettingsScreen() {
               onSelectedChange={toggleSync}
             />
           </View>
-          <Text className="text-sm text-muted">{t("syncSchedule")}</Text>
           {message && (
-            <Text
-              accessibilityLiveRegion="polite"
-              className="border-l-2 border-success pl-3 text-success"
-            >
+            <Text accessibilityLiveRegion="polite" className="text-sm text-success">
               {t(message)}
             </Text>
           )}
+          <SystemButton
+            variant="ghost"
+            className="self-start px-0"
+            labelClassName="text-accent-soft-foreground"
+            onPress={() => router.push("/health-privacy")}
+          >
+            What syncs
+          </SystemButton>
         </SystemPanel.Body>
       </SystemPanel>
-      <SystemPanel>
-        <SystemPanel.Body className="gap-3">
-          <Text className="text-xl font-semibold">Food diary</Text>
+      <SystemPanel className="p-4">
+        <SystemPanel.Body className="gap-2">
+          <SystemLabel>Food diary</SystemLabel>
           <SettingsSelect
             title="Diary layout"
             values={["timeline", "meals"] as const}
@@ -155,10 +159,6 @@ export function SettingsScreen() {
             onChange={(value) => preference("hideEmptyHours", String(value === "hidden"))}
             label={(value) => (value === "hidden" ? "Hide empty hours" : "Show all 24 hours")}
           />
-          <Text className="text-sm text-muted">
-            Times stay with entries when you switch layouts. Older foods without a recorded time
-            remain visible.
-          </Text>
         </SystemPanel.Body>
       </SystemPanel>
       <BackupPanel />

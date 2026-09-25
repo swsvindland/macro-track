@@ -43,16 +43,17 @@ export function loggingChoices(time = currentFoodTime()) {
   const recent = new Map<string, FoodEntry>();
   for (const entry of history) if (!recent.has(entry.food.id)) recent.set(entry.food.id, entry);
   const hour = Number(time.slice(0, 2));
+  const distance = (row: FoodEntry | undefined) => {
+    if (!row) return 24;
+    const h = row.loggedTime ? Number(row.loggedTime.slice(0, 2)) : hour + 6;
+    const d = Math.abs(hour - h);
+    return Math.min(d, 24 - d);
+  };
+  // Quick-add estimates are one-offs, not foods to pick again.
   const ranked = [...recent.values()]
+    .filter((row) => !row.food.id.startsWith("quick:"))
     .filter((row) => row.food.source !== "recipe" || current.has(row.food.id))
-    .sort((a, b) => {
-      const distance = (row: FoodEntry) => {
-        const h = row.loggedTime ? Number(row.loggedTime.slice(0, 2)) : hour + 6;
-        const d = Math.abs(hour - h);
-        return Math.min(d, 24 - d);
-      };
-      return distance(a) - distance(b) || b.createdAt - a.createdAt || b.id - a.id;
-    });
+    .sort((a, b) => distance(a) - distance(b) || b.createdAt - a.createdAt || b.id - a.id);
   const foods = [
     ...new Map(
       [
@@ -66,20 +67,20 @@ export function loggingChoices(time = currentFoodTime()) {
     const item = portionFor(food, recent.get(food.id));
     return { key: `food:${food.id}`, title: food.name, detail: item.portionLabel, items: [item] };
   });
-  const meals: LogChoice[] = listSavedMeals().map((meal) => ({
+  // Saved meals whose foods are usually eaten around this hour come first.
+  const saved = listSavedMeals()
+    .map((meal) => ({
+      meal,
+      distance: Math.min(...meal.items.map((item) => distance(recent.get(item.food.id)))),
+    }))
+    .sort((a, b) => a.distance - b.distance);
+  const meals: LogChoice[] = saved.map(({ meal }) => ({
     key: `meal:${meal.id}`,
     title: meal.name,
-    detail: `${meal.items.length} foods · 1 saved meal`,
+    detail: `${meal.items.length} foods · saved meal`,
     items: meal.items,
   }));
-  // One saved meal and two familiar foods keep the home surface small.
-  const quick = [
-    ...meals.slice(0, 1),
-    ...choices
-      .filter((choice) => recent.has(choice.items[0].food.id))
-      .slice(0, meals.length ? 2 : 3),
-  ];
-  return { choices, meals, quick, history, personal: [...current.values()] };
+  return { choices, meals, history, personal: [...current.values()] };
 }
 
 export function logBatch(

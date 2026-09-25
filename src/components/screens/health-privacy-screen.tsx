@@ -5,11 +5,18 @@ import { useStore } from "@/lib/store";
 export function HealthPrivacyScreen() {
   const { t } = useStore();
   return (
-    <Screen title={t("sync")}>
+    <Screen
+      title={t("sync")}
+      action={
+        <SystemButton variant="ghost" onPress={() => router.back()}>
+          Done
+        </SystemButton>
+      }
+    >
       <Text className="text-foreground">{t("healthPrivacy")}</Text>
       <Text className="text-muted">{t("syncHelp")}</Text>
       <Text className="text-muted">{t("localPhotos")}</Text>
-      <SystemButton onPress={() => router.replace("/settings")}>{t("settings")}</SystemButton>
+      <Text className="text-muted">{t("syncSchedule")}</Text>
     </Screen>
   );
 }

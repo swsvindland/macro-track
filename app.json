@@ -75,6 +75,7 @@
       ],
       "react-native-health-connect",
       "./plugins/with-health-rationale",
+      "./plugins/with-scene-lifecycle",
       [
         "expo-build-properties",
         {

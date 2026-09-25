@@ -2,10 +2,11 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { Uniwind } from "uniwind";
 import { AppState } from "react-native";
 import { configureHealthSchedule, syncHealthIfDue } from "./health-schedule";
-import { desc } from "drizzle-orm";
 import { useLocales } from "expo-localization";
-import { db, measurements, photos, preferences, weightEntries } from "@/db";
-import type { Units } from "./metrics";
+import { and, desc, eq } from "drizzle-orm";
+import { db, healthLinks, measurements, photos, preferences, weightEntries } from "@/db";
+import { dayOf, localDay, type Units } from "./metrics";
+import { shiftDay } from "./nutrition";
 import { languagePreference, resolveLanguage, type Language, translate } from "./translations";
 
 function read() {
@@ -16,12 +17,30 @@ function read() {
       .all()
       .map((p) => [p.key, p.value])
   );
+  const weights = db
+    .select()
+    .from(weightEntries)
+    .orderBy(desc(weightEntries.measuredAt), desc(weightEntries.id))
+    .all();
+  const healthSyncEnabled = prefs.healthSyncEnabled === "true";
+  const healthSyncError = prefs.healthSyncError ?? "";
+  // Sync can be on for someone without a smart scale; only a recent imported weight
+  // means Home can skip the manual weigh-in. A one-off sync failure doesn't count.
+  const imported = new Set(
+    healthSyncEnabled
+      ? db
+          .select({ id: healthLinks.localId })
+          .from(healthLinks)
+          .where(and(eq(healthLinks.origin, "health"), eq(healthLinks.localKind, "weight")))
+          .all()
+          .map((row) => row.id)
+      : []
+  );
+  const weekAgo = shiftDay(localDay(), -7);
   return {
-    weights: db
-      .select()
-      .from(weightEntries)
-      .orderBy(desc(weightEntries.measuredAt), desc(weightEntries.id))
-      .all(),
+    weights,
+    weightsSynced: weights.some((row) => imported.has(row.id) && dayOf(row.measuredAt) >= weekAgo),
+    weighInSkippedDay: prefs.weighInSkippedDay ?? "",
     measurements: db
       .select()
       .from(measurements)
@@ -34,8 +53,8 @@ function read() {
     formula: (prefs.formula === "female" ? "female" : "male") as "male" | "female",
     theme: (prefs.theme === "dark" || prefs.theme === "light" ? prefs.theme : "system") as
       "dark" | "light" | "system",
-    healthSyncEnabled: prefs.healthSyncEnabled === "true",
-    healthSyncError: prefs.healthSyncError ?? "",
+    healthSyncEnabled,
+    healthSyncError,
     languagePreference: languagePreference(prefs.language),
     lastSync: prefs.lastSync,
   };

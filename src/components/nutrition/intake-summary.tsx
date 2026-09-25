@@ -1,56 +1,55 @@
 import { router } from "expo-router";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import { entriesForDay, dayStatus } from "@/lib/diary";
 import { currentGoal, nextCheckInDay } from "@/lib/coaching-store";
 import { localDay } from "@/lib/metrics";
 import { shiftDay, totalNutrients } from "@/lib/nutrition";
+import { shortDay } from "./coaching-panel";
+
 export function IntakeSummary() {
-  const { number, date } = useStore();
+  const { number, language } = useStore();
   const data = useNutritionQuery(() => {
     const today = localDay();
     const days = Array.from({ length: 7 }, (_, i) => shiftDay(today, -i - 1));
     const complete = days.filter((day) => dayStatus(day) === "complete");
+    const goal = currentGoal(),
+      due = nextCheckInDay();
     return {
       complete: complete.length,
       totals: totalNutrients(
         complete.flatMap((day) => entriesForDay(day).map((row) => row.nutrients))
       ),
-      goal: currentGoal(),
-      due: nextCheckInDay(),
-      start: days[6],
-      end: days[0],
+      coached: !!goal && goal.mode !== "manual",
+      due,
+      isDue: due <= today,
     };
   });
+  const average = (value: number) => number(value / data.complete, 0);
   return (
-    <SystemPanel>
+    <SystemPanel className="p-4">
       <SystemPanel.Body className="gap-3">
-        <Text className="text-xl font-semibold">Your week in food</Text>
-        <Text className="text-sm text-muted">
-          {date(data.start)} – {date(data.end)} · {data.complete}/7 complete days
-        </Text>
+        <SystemLabel>Last 7 days</SystemLabel>
         {data.complete ? (
           <>
-            <Text className="text-3xl font-semibold">
-              {number(data.totals.calories / data.complete, 0)} kcal/day
+            <Text className="text-3xl font-semibold tabular-nums" maxFontSizeMultiplier={1.35}>
+              {average(data.totals.calories)}
+              <Text className="text-base font-medium text-muted"> kcal/day avg</Text>
             </Text>
-            <Text className="text-muted">
-              Average across complete days only · {number(data.totals.protein / data.complete, 0)} g
-              protein · {number(data.totals.carbs / data.complete, 0)} g carbs ·{" "}
-              {number(data.totals.fat / data.complete, 0)} g fat
+            <Text className="text-sm text-muted tabular-nums">
+              {data.complete}/7 complete days · P {average(data.totals.protein)} g · C{" "}
+              {average(data.totals.carbs)} g · F {average(data.totals.fat)} g
             </Text>
           </>
         ) : (
-          <Text className="text-muted">
-            Complete a day in your diary to start seeing your intake averages.
-          </Text>
+          <Text className="text-sm text-muted">No complete days yet.</Text>
         )}
         <SystemButton variant="secondary" onPress={() => router.push("/(tabs)/plan")}>
-          {data.goal && data.goal.mode !== "manual"
-            ? data.due <= localDay()
-              ? "Review your weekly check-in"
-              : `Next check-in · ${date(data.due)}`
+          {data.coached
+            ? data.isDue
+              ? "Review check-in"
+              : `Next check-in · ${shortDay(data.due, language, true)}`
             : "Set up your plan"}
         </SystemButton>
       </SystemPanel.Body>

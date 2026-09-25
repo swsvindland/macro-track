@@ -80,7 +80,7 @@ export function LibraryScreen() {
           <Text className="text-sm text-muted">
             {savedMeals.length
               ? "Your usuals, ready to log again."
-              : "Tap Reuse meal in your diary to save a combination you enjoy."}
+              : "On Today, open a meal’s ··· menu and choose Save or copy this meal."}
           </Text>
           {savedMeals.map((meal) => (
             <SystemButton

@@ -30,7 +30,7 @@ function PlanContent({ targets }: { targets: Targets | null }) {
   const macroCalories =
     parseNumber(values.protein) * 4 + parseNumber(values.carbs) * 4 + parseNumber(values.fat) * 9;
   return (
-    <Screen title="Plan" subtitle="Your targets, on your terms.">
+    <Screen title="Plan">
       <CoachingPanel
         onTargetsChanged={() => {
           const next = targetsForDay(localDay());
@@ -45,15 +45,9 @@ function PlanContent({ targets }: { targets: Targets | null }) {
         }}
       />
       {!goal?.program && (
-        <SystemPanel>
-          <SystemPanel.Body className="gap-5">
-            <View className="gap-2">
-              <Text className="text-xl font-semibold">Daily targets</Text>
-              <Text className="text-muted">
-                Set the calories and macros you want to follow. Changes start today and keep
-                previous days intact.
-              </Text>
-            </View>
+        <SystemPanel className="p-4">
+          <SystemPanel.Body className="gap-4">
+            <Text className="text-xl font-semibold">Daily targets</Text>
             <Field
               label="Calories (kcal)"
               value={values.calories}
@@ -110,13 +104,13 @@ function PlanContent({ targets }: { targets: Targets | null }) {
           </SystemPanel.Body>
         </SystemPanel>
       )}
-      <SystemButton variant="ghost" onPress={() => router.push("/coaching-method")}>
+      <SystemButton
+        variant="ghost"
+        icon="help-circle-outline"
+        onPress={() => router.push("/coaching-method")}
+      >
         How check-ins work
       </SystemButton>
-      <Text className="text-sm text-muted">
-        Your program is calculated locally. Starting estimates are approximate; logged intake and
-        normalized weight guide later reviews. Goal changes preserve your history and learning.
-      </Text>
     </Screen>
   );
 }

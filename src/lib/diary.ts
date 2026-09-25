@@ -1,6 +1,7 @@
 import { currentFoodTime, validFoodTime, inFoodGroup } from "./food-time";
-import { desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import {
+  coachingGoals,
   customFoods,
   db,
   diaryDays,
@@ -13,6 +14,7 @@ import {
 } from "@/db";
 import { validDay } from "./metrics";
 import {
+  shiftDay,
   dayStates,
   recipeFood,
   type Recipe,
@@ -354,4 +356,87 @@ export function copyDay(sourceDay: string, destination: string) {
       .run();
   });
   return entries.length;
+}
+
+/**
+ * Calories usually logged after `cutoff` ("HH:MM") on recent complete days: the
+ * median over up to 14 days in the previous 28. Only days logged in real time
+ * count. Untimed legacy entries and back-filled days (anything created after 04:00
+ * the next morning) carry the logging clock rather than the meal time, which would
+ * make the evening look emptier than it is. Returns null until 3 such days exist.
+ */
+export function typicalKcalAfter(day: string, cutoff: string): number | null {
+  const complete = db
+    .select({ day: diaryDays.day })
+    .from(diaryDays)
+    .where(
+      and(
+        eq(diaryDays.status, "complete"),
+        gte(diaryDays.day, shiftDay(day, -28)),
+        lt(diaryDays.day, day)
+      )
+    )
+    .orderBy(desc(diaryDays.day))
+    .all()
+    .map((row) => row.day);
+  if (complete.length < 3) return null;
+  const rows = db
+    .select({
+      day: foodEntries.day,
+      loggedTime: foodEntries.loggedTime,
+      createdAt: foodEntries.createdAt,
+      nutrients: foodEntries.nutrients,
+    })
+    .from(foodEntries)
+    .where(inArray(foodEntries.day, complete))
+    .all();
+  const samples: number[] = [];
+  for (const date of complete) {
+    const entries = rows.filter((row) => row.day === date);
+    const lateCutoff = new Date(`${shiftDay(date, 1)}T04:00:00`).getTime();
+    if (!entries.length || entries.some((row) => !row.loggedTime || row.createdAt > lateCutoff))
+      continue;
+    samples.push(
+      entries
+        .filter((row) => row.loggedTime! > cutoff)
+        .reduce((sum, row) => sum + row.nutrients.calories, 0)
+    );
+    if (samples.length === 14) break;
+  }
+  if (samples.length < 3) return null;
+  samples.sort((a, b) => a - b);
+  const middle = Math.floor(samples.length / 2);
+  return samples.length % 2 ? samples[middle] : (samples[middle - 1] + samples[middle]) / 2;
+}
+
+/**
+ * The most recent of the last 7 days that has food and targets but was never
+ * marked complete or partial. Coaching only learns from answered days, so Home
+ * asks about one at a time.
+ */
+export function dayToConfirm(today: string): { day: string; calories: number } | null {
+  const open = db
+    .select({ day: diaryDays.day })
+    .from(diaryDays)
+    .where(
+      and(
+        eq(diaryDays.status, "in-progress"),
+        gte(diaryDays.day, shiftDay(today, -7)),
+        lt(diaryDays.day, today)
+      )
+    )
+    .orderBy(desc(diaryDays.day))
+    .all();
+  for (const { day } of open) {
+    const entries = entriesForDay(day);
+    if (entries.length && targetsForDay(day))
+      return { day, calories: entries.reduce((sum, row) => sum + row.nutrients.calories, 0) };
+  }
+  return null;
+}
+
+/** Whether a Cut/Bulk/Maintain program is running (manual targets don't check in). */
+export function isCoached() {
+  const goal = db.select().from(coachingGoals).orderBy(desc(coachingGoals.id)).limit(1).get();
+  return !!goal && goal.mode !== "manual";
 }

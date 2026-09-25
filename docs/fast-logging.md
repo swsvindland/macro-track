@@ -2,36 +2,51 @@
 
 September 25, 2026. Product success means less time needed to record a correct meal or finish a weekly check-in. Session length is a cost, not an engagement goal.
 
+## Home layout
+
+Home is ordered by the reasons to open the app: see how today is going, clear the one task that is due, then log food. Settings is its own tab, so nothing sits between the page and the floating tab bar.
+
+1. **Header.** A compact row replaces the large title: previous/next day chevrons around a date label that opens a calendar, a **Today** pill on past days, and a **···** day menu (Log weight, Copy a day, Mark day as In progress / Complete / Not fully logged / Fasted). The header stays fixed while the list scrolls.
+2. **Summary.** Calories left (or over, or eaten without targets) in one large number, a pace bar and one status line, then protein/carbs/fat against targets. The bar's solid fill is what was eaten; a lighter extension shows what you usually eat for the rest of the day; a tick marks the target; amber means the usual rest of day would take you past it by more than max(100 kcal, 5%); a smaller overshoot reads as "right around your target".
+3. **One task at a time**, only on today and only when due, in this order: morning weigh-in → confirm an unfinished recent day → weekly check-in. Each resolves in the same slot so the next can appear. The order matters: the check-in reviews complete days up to yesterday and weights up to today, so it waits until both are answered.
+4. **Log food** and **Scan**, with room for a future photo logger. After a save, a short message with **Undo** appears right under them.
+5. **Today's food.** One list grouped by time (or meal in the classic layout). Each group's **···** offers Add food here and Save or copy this meal. Tap an entry to edit it. Fiber and sodium sit in one small line at the end.
+
+The Undo message disappears after 8 seconds (not while a screen reader is running) and when the app goes to the background. Returning after two minutes or more lands on today, scrolled to the top. Helper text is kept out of the main flows; details live behind **Why?** or in Settings.
+
+## Pace projection
+
+"On pace" compares today's target with: food already eaten + the larger of (food already logged for later today, the calories you usually log after now). "Usually" is the median across up to 14 recent **complete** days in the last 28 that were logged in real time. Days with untimed legacy entries or entries created after 04:00 the next morning are skipped because their times are logging times, not meal times. The window starts an hour after the last meal eaten today, so a meal that was just logged is not counted again from history. At least three usable days and one entry today are required; otherwise the line shows eaten of target. "Heading over" needs a margin of max(100 kcal, 5% of target), and amounts are rounded to 50 kcal.
+
 ## Daily flow
 
-Home starts with calories left and consumed/target macros. A fixed **Log a meal** button and **Scan** shortcut stay above the native tab bar. Historical dates, copying, quick calories, detailed nutrients and logging states are secondary controls. The timeline remains editable.
+**Log food** opens with **Log again** visible: up to two saved meals ranked by the time you usually eat them, then familiar foods ranked by similar time of day with their last quantity. Quick-add estimates are left out. Tap the search box to search the offline catalogs; saved meals also appear in results, so there is no Foods/Meals switch. Add several foods with the round **+** buttons, or tap a name to adjust its portion. Save all selected foods with one button. **Scan**, **Quick add** and **New food** sit under the search box. With nothing selected, a scanned food, a quick-add estimate or a single adjusted portion logs directly; with a selection in progress they join it. Date and time default to the selected day and now, and remain editable. One-step logging from Scan, New food and Quick add applies only to today; on other days they join the selection so the day is visible before saving. Undo removes only the untouched entries from that save and restores the previous day state when no intervening change conflicts.
 
-**Log again** shows at most three shortcuts: a saved meal and recent foods, or three recent foods when no saved meals exist. Recent foods favor similar hours of the day and reuse their last quantity. A single tap writes immediately and shows **Undo** beside the fixed logging controls. There is no success dialog to dismiss before leaving. Undo removes only the untouched entries from that save and restores the previous day state when no intervening change conflicts.
+## Morning weigh-in
 
-**Log a meal** opens local search with the keyboard ready. Add multiple foods using the plus buttons; their visible portions are already filled. Tap a food name to adjust its quantity. Selected foods collapse into a review row so search results stay accessible. Save all foods in one transaction with one button. Saved meals, recipes, scanning and custom food creation feed the same selection. Scanning retains the selection already built. Failed saves retain the draft; duplicate save taps cannot create a second meal.
-
-Date and time default to the selected diary day and current time. They remain editable. Each food gets an explicit local time, and classic meal layout remains available. **Finish day** can be selected as part of saving the last meal; missing intake is never assumed to be zero or complete automatically.
-
-Catalogs warm after the initial Home render. Recent-food retrieval uses an index on creation time and ID; Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
+When Health isn't delivering weights, Home shows a weigh-in card until noon on days without a weight: type the scale reading and **Save** (decimal keypad, the user's units, last weight shown below). A reading more than 3% away from a weigh-in in the previous two weeks asks for a second tap before saving, so a typo doesn't hold coaching for weeks. The card is skipped for the day with its ×, and hidden when Health sync is on without errors and has imported a weight in the last week. Log weight in the day menu and Progress remain available at any time.
 
 ## Weekly flow
 
-When due, Home shows the review just below daily totals. A ready review displays old/new calories and proposed macros with **Accept plan** and **Keep current**. Either action finishes the check-in immediately, refreshes targets, and removes the due card. **Why?** expands the evidence and logging coverage without navigation.
-
-When data is insufficient, the card explains the hold and offers **Keep targets this week**, **Weigh in**, and access to recent logging. The same deterministic coaching rules and transaction are used by Home and Plan. The full program controls and history remain in Plan.
+When due and after the morning tasks, Home shows the check-in: current → proposed calories, proposed macros and your pace against the goal pace, with **Accept plan** and **Keep current**. Either action finishes the check-in immediately, refreshes targets and removes the card. **Why?** expands the reasoning, dates and estimated expenditure. When data is insufficient, the card shows logging and weigh-in coverage with **Keep targets this week** and **Log weight**. Plan shows the same review with a 2×2 evidence grid and blocks Accept/Keep until an unfinished recent day is answered.
 
 ## Interaction budgets
 
 Counts start on Home and exclude typing, biometric phone unlock and opening the app from the operating system. These are supported paths, not measured elapsed times.
 
-| Routine task                                            | Actions                                                 |
-| ------------------------------------------------------- | ------------------------------------------------------- |
-| Repeat one of the visible familiar foods or saved meals | 1 tap; optional Undo                                    |
-| Log three visible usual foods                           | Open logger + 3 selections + Save = 5 taps              |
-| Log a saved meal outside the Home shortcuts             | Saved meals + select + Save = 3 taps                    |
-| Finish a ready weekly review                            | Accept or Keep = 1 tap                                  |
-| Read evidence before accepting                          | Why? + Accept = 2 taps                                  |
-| Mark the logged day complete                            | 1 tap, or select Finish day before saving the last meal |
+| Routine task                               | Actions                                      |
+| ------------------------------------------ | -------------------------------------------- |
+| Repeat a familiar food or saved meal       | Log food + select + Log = 3 taps; Undo       |
+| Repeat a food with a new amount            | Log food + row + Log = 3 taps                |
+| Log three usual foods                      | Log food + 3 selections + Log = 5 taps       |
+| Scan a packaged food with nothing selected | Scan + Log = 2 taps                          |
+| Quick-add an estimate                      | Log food + Quick add + Add to diary = 3 taps |
+| Morning weigh-in                           | Field + Save = 2 taps                        |
+| Confirm yesterday was fully logged         | 1 tap                                        |
+| Finish a ready weekly review               | Accept or Keep = 1 tap                       |
+| Read the reasoning before accepting        | Why? + Accept = 2 taps                       |
+
+Catalogs warm after the initial Home render. Recent-food retrieval uses an index on creation time and ID; Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
 
 ## Phone timing protocol
 

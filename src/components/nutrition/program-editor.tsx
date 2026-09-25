@@ -57,10 +57,6 @@ export function ProgramEditor({ close }: { close: () => void }) {
   });
   return (
     <Editor title={saved ? "Update your program" : "Build your program"} open close={close}>
-      <Text className="text-muted">
-        Choose your goal and preferences. We’ll calculate your calories and macros, then refine the
-        plan from your food logs and normalized weight.
-      </Text>
       <Choices
         values={["lose", "maintain", "gain"] as const}
         value={mode}
@@ -96,10 +92,6 @@ export function ProgramEditor({ close }: { close: () => void }) {
         onChange={setFormula}
         label={(value) => (value === "female" ? "Female equation" : "Male equation")}
       />
-      <Text className="text-sm text-muted">
-        The formula uses this input for its initial estimate. Logged intake and weight guide later
-        adjustments.
-      </Text>
       <Text className="font-semibold">Typical activity</Text>
       <Choices
         values={["low", "light", "moderate", "high"] as const}
@@ -154,10 +146,6 @@ export function ProgramEditor({ close }: { close: () => void }) {
             <Text className="text-3xl font-semibold">{number(preview.calories, 0)} kcal/day</Text>
             <Text>
               {preview.protein} g protein · {preview.carbs} g carbs · {preview.fat} g fat
-            </Text>
-            <Text className="text-sm text-muted">
-              Calculated using your profile or existing normalized weight and learned expenditure.
-              Changes start today.
             </Text>
           </SystemPanel.Body>
         </SystemPanel>

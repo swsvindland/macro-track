@@ -1,16 +1,48 @@
 import { useEffect, useRef, useState } from "react";
-import { AppState, View } from "react-native";
+import { AccessibilityInfo, AppState, Platform, View, type ScrollView } from "react-native";
 import { router } from "expo-router";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Choices, DateInput, ErrorText, Screen } from "@/components/ui";
-import { entriesForDay, targetsForDay, dayStatus, setDayStatus } from "@/lib/diary";
-import { logBatch, loggingChoices, undoLog, type LogChoice, type LogReceipt } from "@/lib/fast-log";
+import {
+  MiniBar,
+  PaceBar,
+  SystemButton,
+  SystemIcon,
+  SystemIconButton,
+  SystemLabel,
+  SystemPanel,
+  SystemText as Text,
+} from "@/components/system";
+import { ActionMenu, DayPicker, ErrorText, Screen } from "@/components/ui";
+import {
+  dayStatus,
+  dayToConfirm,
+  entriesForDay,
+  isCoached,
+  setDayStatus,
+  targetsForDay,
+  typicalKcalAfter,
+} from "@/lib/diary";
+import { undoLog, type LogReceipt } from "@/lib/fast-log";
 import { openCatalogs } from "@/lib/food-catalog";
 import { localDay } from "@/lib/metrics";
-import { meals, shiftDay, totalNutrients, type DayState, type Meal } from "@/lib/nutrition";
-import { timelineGroups, currentFoodTime, mealAtTime } from "@/lib/food-time";
+import {
+  meals,
+  projectDay,
+  roughly,
+  shiftDay,
+  totalNutrients,
+  type DayState,
+  type Meal,
+} from "@/lib/nutrition";
+import {
+  currentFoodTime,
+  formatClock,
+  mealAtTime,
+  paceCutoff,
+  timelineGroups,
+} from "@/lib/food-time";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import { undoWeight, weighInDue } from "@/lib/weigh-in";
 import type { FoodEntry } from "@/db";
 import { useMeasurementLog } from "@/components/measurements/use-measurement-log";
 import { WeightForm } from "@/components/measurements/weight-form";
@@ -18,57 +50,74 @@ import { FoodEditor } from "./food-editor";
 import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
-import { QuickAdd } from "./quick-add";
 import { CopyDay } from "./copy-day";
+import { WeighInCard } from "./weigh-in-card";
 
 const statusLabels: Record<DayState, string> = {
   "in-progress": "In progress",
   complete: "Complete",
-  partial: "Partial",
-  fasting: "Fasting",
+  partial: "Not fully logged",
+  fasting: "Fasted (counts as 0 kcal)",
 };
+type Toast = { message: string; undo?: () => string };
+
+/** Home: how today is going, one-tap repeats and the day's food, in that order. */
 export function TodayScreen() {
-  const { number, date, diaryLayout, hideEmptyHours } = useStore();
+  const store = useStore();
+  const { number, diaryLayout, hideEmptyHours, language } = store;
+  const locale = language === "zh" ? "zh-CN" : language;
   const { refresh } = useNutrition();
   const weight = useMeasurementLog("weight");
   const [today, setToday] = useState(localDay()),
-    [day, setDay] = useState(localDay());
+    [day, setDay] = useState(localDay()),
+    [clock, setClock] = useState(currentFoodTime());
   const todayRef = useRef(today);
-  const [hour, setHour] = useState(new Date().getHours());
-  const [choosingDay, setChoosingDay] = useState(false),
-    [more, setMore] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const [editor, setEditor] = useState<FoodEntry | null>(null);
   const [logger, setLogger] = useState<{
     time?: string;
     meal?: Meal;
-    start?: "search" | "barcode" | "meals";
+    start?: "search" | "barcode";
   } | null>(null);
-  const [quick, setQuick] = useState(false),
-    [copying, setCopying] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [error, setError] = useState("");
-  const [feedback, setFeedback] = useState<{ message: string; receipt?: LogReceipt } | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   const [mealEditor, setMealEditor] = useState<{
     source: { day: string; meal: Meal; group?: string };
     meal: Meal;
   } | null>(null);
-  const quickLocks = useRef(new Set<string>());
+  // One-tap answers: a double tap must not land on whatever moved into place.
+  const tapLock = useRef(false);
+  const undone = useRef(new WeakSet<Toast>());
   useEffect(() => {
     const warm = setTimeout(() => {
       void openCatalogs().catch(() => {});
     }, 300);
-    function checkDay() {
-      setHour(new Date().getHours());
+    let hiddenAt = 0;
+    function tick() {
+      setClock(currentFoodTime());
       const current = localDay(),
         previous = todayRef.current;
       if (previous === current) return;
       todayRef.current = current;
       setToday(current);
       setDay((selected) => (selected === previous ? current : selected));
-      setFeedback(null);
+      setToast(null);
     }
-    const timer = setInterval(checkDay, 60000);
+    const timer = setInterval(tick, 60000);
+    // Coming back after a while should land on today, at the top, with no stale Undo.
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") checkDay();
+      if (state === "active") {
+        tick();
+        if (hiddenAt && Date.now() - hiddenAt > 2 * 60000) {
+          setDay(localDay());
+          scrollRef.current?.scrollTo({ y: 0, animated: false });
+        }
+        hiddenAt = 0;
+      } else if (!hiddenAt) {
+        hiddenAt = Date.now();
+        setToast(null);
+      }
     });
     return () => {
       clearTimeout(warm);
@@ -76,372 +125,539 @@ export function TodayScreen() {
       sub.remove();
     };
   }, []);
-  const { entries, targets, status, picks } = useNutritionQuery(() => ({
-    entries: entriesForDay(day),
-    targets: targetsForDay(day),
-    status: dayStatus(day),
-    picks: loggingChoices(`${String(hour).padStart(2, "0")}:00`).quick,
-  }));
-  const groups =
+  useEffect(() => {
+    if (!toast) return;
+    if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(toast.message);
+    let active = true,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    // Screen-reader users need time to reach Undo, so it stays until the next action.
+    void AccessibilityInfo.isScreenReaderEnabled().then((reading) => {
+      if (active && !reading) timer = setTimeout(() => setToast(null), 8000);
+    });
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [toast]);
+  const live = day === today;
+  const { entries, targets, status, projection, confirm, askConfirm, coached } = useNutritionQuery(
+    () => {
+      // The clock is read here, not in render, so compiled memoization can't freeze it.
+      const now = currentFoodTime();
+      const isToday = day === localDay();
+      const entries = entriesForDay(day),
+        targets = targetsForDay(day),
+        coached = isCoached();
+      const typical =
+        isToday && targets && entries.length
+          ? typicalKcalAfter(day, paceCutoff(entries, now))
+          : null;
+      return {
+        entries,
+        targets,
+        status: dayStatus(day),
+        projection: projectDay({
+          entries: entries.map((entry) => ({
+            loggedTime: entry.loggedTime,
+            calories: entry.nutrients.calories,
+          })),
+          target: targets?.calories ?? null,
+          typical,
+          now,
+        }),
+        // Check-ins and the pace estimate learn only from answered days. An unanswered
+        // day holds the check-in all night; the question itself waits until 04:00 so a
+        // late snack still counts toward the day it belongs to.
+        confirm: isToday ? dayToConfirm(day) : null,
+        askConfirm: new Date().getHours() >= 4,
+        coached,
+      };
+    }
+  );
+  const weighIn = live && weighInDue(store, today, Number(clock.slice(0, 2)), coached);
+  const totals = totalNutrients(entries.map((entry) => entry.nutrients));
+  const groups = (
     diaryLayout === "timeline"
-      ? timelineGroups(entries, hideEmptyHours, day === today)
+      ? timelineGroups(entries, hideEmptyHours, false).map((group) => ({
+          ...group,
+          title: group.group === "untimed" ? group.title : formatClock(group.time, locale),
+        }))
       : meals.map((meal) => ({
           key: meal,
           title: meal,
           meal,
           group: undefined,
-          time: currentFoodTime(),
+          time: "",
           entries: entries.filter((entry) => entry.meal === meal),
-        }));
-  const totals = totalNutrients(entries.map((entry) => entry.nutrients));
-  const remaining = targets ? targets.calories - totals.calories : null;
-  function logged(receipt: LogReceipt, name?: string) {
-    setDay(receipt.day);
-    setFeedback({
-      message: `${name ?? `${receipt.entries.length} ${receipt.entries.length === 1 ? "food" : "foods"}`} logged. You’re all set.`,
-      receipt,
+        }))
+  ).filter((group) => group.entries.length || !hideEmptyHours);
+
+  function label(value: string) {
+    if (value === today) return "Today";
+    if (value === shiftDay(today, -1)) return "Yesterday";
+    return new Date(`${value}T12:00:00`).toLocaleDateString(locale, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
     });
+  }
+  function go(value: string) {
+    setDay(value);
+    setToast(null);
     setError("");
   }
-  function quickLog(choice: LogChoice) {
-    if (quickLocks.current.has(choice.key)) return;
-    quickLocks.current.add(choice.key);
-    setTimeout(() => quickLocks.current.delete(choice.key), 900);
+  function show(message: string, undo?: () => string) {
+    setToast({ message, undo });
+    setError("");
+  }
+  function fail(e: unknown, fallback: string) {
+    setError(e instanceof Error ? e.message : fallback);
+  }
+  function logged(receipt: LogReceipt) {
+    setDay(receipt.day);
+    const kcal = totalNutrients(receipt.entries.map((entry) => entry.nutrients)).calories;
+    const count = receipt.entries.length;
+    const left = receipt.day === day && targets ? targets.calories - totals.calories - kcal : null;
+    show(
+      `${count === 1 ? receipt.entries[0].food.name : `${count} foods`} · ${number(kcal, 0)} kcal` +
+        (left === null
+          ? " logged"
+          : ` · ${number(Math.abs(left), 0)} ${left >= 0 ? "left" : "over"}`),
+      () => {
+        undoLog(receipt);
+        refresh();
+        return "Log undone.";
+      }
+    );
+  }
+  function locked() {
+    if (tapLock.current) return true;
+    tapLock.current = true;
+    setTimeout(() => {
+      tapLock.current = false;
+    }, 900);
+    return false;
+  }
+  function undo() {
+    if (!toast?.undo || undone.current.has(toast)) return;
+    undone.current.add(toast);
     try {
-      const receipt = logBatch(choice.items, { day, time: currentFoodTime() });
-      refresh();
-      logged(receipt, choice.title);
+      show(toast.undo());
     } catch (e) {
-      quickLocks.current.delete(choice.key);
-      setError(e instanceof Error ? e.message : "Could not log this food.");
+      fail(e, "Could not undo.");
     }
   }
-  function updateStatus(value: DayState) {
+  function mark(target: string, value: DayState) {
+    const before = dayStatus(target);
     try {
-      setDayStatus(day, value);
+      setDayStatus(target, value);
       refresh();
-      setError("");
-      setFeedback({
-        message:
-          value === "complete"
-            ? "Day complete. You’re all set."
-            : `Day marked ${statusLabels[value].toLowerCase()}.`,
-      });
+      show(
+        `${label(target)} marked ${value === "complete" ? "complete" : statusLabels[value].toLowerCase()}.`,
+        before === value
+          ? undefined
+          : () => {
+              setDayStatus(target, before);
+              refresh();
+              return "Change undone.";
+            }
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update this day.");
+      fail(e, "Could not update this day.");
     }
   }
+  function answer(target: string, value: "complete" | "partial") {
+    if (!locked()) mark(target, value);
+  }
+
+  const hero =
+    projection.status === "over"
+      ? { value: projection.over, unit: " kcal over", className: "text-danger" }
+      : projection.status === "no-target"
+        ? { value: projection.eaten, unit: " kcal eaten", className: "" }
+        : { value: projection.left, unit: " kcal left", className: "" };
+  const pace =
+    projection.status === "heading-over"
+      ? {
+          className: "text-warning",
+          text: `Heading ~${number(roughly(projection.projected - projection.target), 0)} over`,
+        }
+      : projection.status === "on-pace"
+        ? projection.projected > projection.target
+          ? {
+              className: "text-foreground",
+              text: "Tracking right at your target",
+            }
+          : {
+              className: "text-success",
+              text: `On pace for ~${number(roughly(projection.projected), 0)}`,
+            }
+        : null;
+
+  const header = (
+    <View className="flex-row items-center">
+      <SystemIconButton
+        icon="chevron-back"
+        accessibilityLabel="Previous day"
+        onPress={() => go(shiftDay(day, -1))}
+      />
+      <DayPicker value={day} max={today} label={label(day)} onChange={go} />
+      <SystemIconButton
+        icon="chevron-forward"
+        accessibilityLabel="Next day"
+        isDisabled={live}
+        color={live ? "muted" : "foreground"}
+        onPress={() => go(shiftDay(day, 1))}
+      />
+      <View className="flex-1" />
+      {!live && (
+        <SystemButton
+          variant="secondary"
+          className="min-h-9 px-3 py-1.5"
+          hitSlop={{ top: 4, bottom: 4 }}
+          onPress={() => go(today)}
+        >
+          Today
+        </SystemButton>
+      )}
+      <ActionMenu
+        accessibilityLabel="Day options"
+        sections={[
+          {
+            actions: [
+              {
+                key: "weight",
+                label: "Log weight",
+                icon: "scale-outline",
+                onPress: () => weight.launch(null),
+              },
+              {
+                key: "copy",
+                label: live ? "Copy a day into today" : `Copy a day into ${label(day)}`,
+                icon: "copy-outline",
+                onPress: () => setCopying(true),
+              },
+            ],
+          },
+          {
+            title: "Mark day as",
+            actions: (["in-progress", "complete", "partial", "fasting"] as const).map((value) => ({
+              key: value,
+              label: statusLabels[value],
+              selected: status === value,
+              disabled:
+                status === value ||
+                (value === "fasting"
+                  ? !!entries.length
+                  : value !== "in-progress" && !entries.length),
+              onPress: () => mark(day, value),
+            })),
+          },
+        ]}
+      />
+    </View>
+  );
+
+  const actions = (
+    <View className="gap-2">
+      <View className="flex-row gap-2">
+        <SystemButton
+          className="min-h-12 flex-1"
+          icon="search"
+          labelClassName="text-base font-semibold"
+          onPress={() => setLogger({})}
+        >
+          {live ? "Log food" : `Log to ${label(day)}`}
+        </SystemButton>
+        <SystemButton
+          variant="secondary"
+          className="min-h-12"
+          icon="barcode-outline"
+          labelClassName="text-base font-semibold"
+          accessibilityLabel="Scan barcode"
+          onPress={() => setLogger({ start: "barcode" })}
+        >
+          Scan
+        </SystemButton>
+      </View>
+      {toast && (
+        <View className="flex-row items-center gap-2 rounded-2xl bg-surface py-1 pl-4 pr-1">
+          <Text className="flex-1 text-sm" numberOfLines={2} accessibilityLiveRegion="polite">
+            {toast.message}
+          </Text>
+          {toast.undo ? (
+            <SystemButton
+              variant="ghost"
+              labelClassName="text-accent-soft-foreground"
+              onPress={undo}
+            >
+              Undo
+            </SystemButton>
+          ) : (
+            <SystemIconButton
+              icon="close"
+              iconSize={18}
+              color="muted"
+              accessibilityLabel="Dismiss"
+              onPress={() => setToast(null)}
+            />
+          )}
+        </View>
+      )}
+      <ErrorText message={error} />
+    </View>
+  );
+
   return (
     <>
-      <Screen
-        compact
-        title={day === today ? "Today" : "Food diary"}
-        action={
-          <SystemButton variant="ghost" onPress={() => router.push("/settings")}>
-            Settings
-          </SystemButton>
-        }
-        footer={
-          <View className="gap-2">
-            <ErrorText message={error} />
-            {feedback && (
-              <View className="flex-row items-center gap-2 rounded-2xl bg-accent-soft px-3 py-2">
-                <Text className="flex-1 text-sm" accessibilityLiveRegion="polite">
-                  {feedback.message}
-                </Text>
-                {feedback.receipt ? (
-                  <SystemButton
-                    variant="ghost"
-                    onPress={() => {
-                      try {
-                        undoLog(feedback.receipt!);
-                        refresh();
-                        setFeedback({ message: "Log undone." });
-                        setError("");
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : "Could not undo.");
-                      }
-                    }}
-                  >
-                    Undo
-                  </SystemButton>
-                ) : (
-                  <SystemButton variant="ghost" onPress={() => setFeedback(null)}>
-                    Done
-                  </SystemButton>
-                )}
-              </View>
-            )}
-            <View className="flex-row gap-2">
-              <SystemButton className="flex-1" onPress={() => setLogger({})}>
-                Log a meal
-              </SystemButton>
-              <SystemButton variant="secondary" onPress={() => setLogger({ start: "barcode" })}>
-                Scan
-              </SystemButton>
-            </View>
-          </View>
-        }
-      >
+      <Screen title="Today" compact scrollRef={scrollRef} header={header}>
         <SystemPanel className="p-4">
           <SystemPanel.Body className="gap-3">
-            <View className="flex-row items-center justify-between gap-3">
-              <View className="flex-1 gap-1">
-                <Text className="text-sm text-muted">
-                  {remaining === null
-                    ? "Calories eaten"
-                    : remaining >= 0
-                      ? "Calories left"
-                      : "Above target"}
-                </Text>
-                <Text className="text-4xl font-semibold tabular-nums">
-                  {number(Math.abs(remaining ?? totals.calories), 0)}{" "}
-                  <Text className="text-base text-muted">kcal</Text>
-                </Text>
-              </View>
-              <SystemButton variant="ghost" onPress={() => setChoosingDay((value) => !value)}>
-                {day === today ? date(today) : date(day)}
-              </SystemButton>
-            </View>
+            <Text
+              className={`text-4xl font-semibold tabular-nums ${hero.className}`}
+              maxFontSizeMultiplier={1.35}
+              numberOfLines={1}
+            >
+              {number(hero.value, 0)}
+              <Text className="text-base font-medium text-muted">{hero.unit}</Text>
+            </Text>
             {targets ? (
-              <Text className="text-sm text-muted">
-                {number(totals.calories, 0)} eaten · {number(targets.calories, 0)} target
-              </Text>
+              <>
+                <PaceBar
+                  eaten={totals.calories}
+                  target={targets.calories}
+                  projected={
+                    projection.status === "on-pace" || projection.status === "heading-over"
+                      ? projection.projected
+                      : null
+                  }
+                  warn={projection.status === "heading-over"}
+                  description={
+                    pace?.text ?? `${Math.round(totals.calories)} of ${targets.calories} kcal`
+                  }
+                />
+                {pace ? (
+                  <Text className={`text-sm font-medium ${pace.className}`}>{pace.text}</Text>
+                ) : (
+                  <Text
+                    className={`text-sm ${projection.status === "over" ? "text-danger" : "text-muted"}`}
+                  >
+                    {number(totals.calories, 0)} of {number(targets.calories, 0)} kcal
+                  </Text>
+                )}
+              </>
             ) : (
-              <SystemButton
-                variant="ghost"
-                className="self-start px-0"
-                onPress={() => router.push("/(tabs)/plan")}
-              >
-                Build your calorie & macro plan
-              </SystemButton>
+              live && (
+                <SystemButton
+                  variant="secondary"
+                  icon="flag-outline"
+                  className="self-start"
+                  onPress={() => router.push("/(tabs)/plan")}
+                >
+                  Set calorie & macro targets
+                </SystemButton>
+              )
             )}
-            <View className="flex-row gap-3">
+            <View className="flex-row gap-4 pt-1">
               {(["protein", "carbs", "fat"] as const).map((key) => (
                 <View key={key} className="flex-1 gap-1">
-                  <Text className="text-xs text-muted">{key[0].toUpperCase() + key.slice(1)}</Text>
-                  <Text className="font-semibold tabular-nums">
+                  <SystemLabel>{key}</SystemLabel>
+                  <Text
+                    className="font-semibold tabular-nums"
+                    maxFontSizeMultiplier={1.3}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.75}
+                  >
                     {number(totals[key], 0)}
-                    <Text className="text-xs text-muted">
+                    <Text className="text-sm font-normal text-muted">
                       {targets ? ` / ${number(targets[key], 0)} g` : " g"}
                     </Text>
                   </Text>
                   {targets && targets[key] > 0 && (
-                    <View
-                      className="h-1 rounded-full bg-surface-tertiary"
-                      accessibilityRole="progressbar"
-                      accessibilityLabel={key}
-                      accessibilityValue={{
-                        min: 0,
-                        max: targets[key],
-                        now: Math.min(totals[key], targets[key]),
-                      }}
-                    >
-                      <View
-                        className="h-1 rounded-full bg-accent"
-                        style={{ width: `${Math.min(100, (totals[key] / targets[key]) * 100)}%` }}
-                      />
-                    </View>
+                    <MiniBar value={totals[key]} max={targets[key]} />
                   )}
                 </View>
               ))}
             </View>
           </SystemPanel.Body>
         </SystemPanel>
-        {choosingDay && (
-          <View className="gap-2">
-            <DateInput
-              label="Diary date"
-              value={day}
-              onChange={(value) => {
-                setDay(value);
-                setChoosingDay(false);
-                setFeedback(null);
-              }}
-            />
-            <View className="flex-row gap-2">
-              <SystemButton
-                variant="ghost"
-                onPress={() => {
-                  setDay(shiftDay(day, -1));
-                  setFeedback(null);
-                }}
-              >
-                Previous day
-              </SystemButton>
-              <SystemButton
-                variant="ghost"
-                isDisabled={day >= today}
-                onPress={() => {
-                  setDay(shiftDay(day, 1));
-                  setFeedback(null);
-                }}
-              >
-                Next day
-              </SystemButton>
-            </View>
-          </View>
-        )}
-        {day !== today && (
-          <SystemButton
-            variant="secondary"
-            onPress={() => {
-              setDay(today);
-              setFeedback(null);
-            }}
-          >
-            Back to today
-          </SystemButton>
-        )}
-        {day === today && (
-          <HomeCheckIn
-            onDone={(message) => setFeedback({ message })}
-            onWeighIn={() => weight.launch(null)}
-            onReviewLogs={(value) => {
-              setDay(value);
-              setMore(true);
-            }}
-          />
-        )}
-        {!!picks.length && (
-          <View className="gap-1">
-            <View className="flex-row items-center justify-between">
-              <Text className="font-semibold">Log again</Text>
-              <SystemButton variant="ghost" onPress={() => setLogger({ start: "meals" })}>
-                Saved meals
-              </SystemButton>
-            </View>
-            {picks.map((choice) => (
-              <View key={choice.key} className="flex-row items-center gap-2">
-                <View className="flex-1 gap-1">
-                  <Text numberOfLines={1} className="font-medium">
-                    {choice.title}
-                  </Text>
-                  <Text className="text-xs text-muted">
-                    {choice.detail} ·{" "}
-                    {number(totalNutrients(choice.items.map((item) => item.nutrients)).calories, 0)}{" "}
-                    kcal
-                  </Text>
-                </View>
-                <SystemButton
-                  variant="secondary"
-                  accessibilityLabel={`Log ${choice.title} again`}
-                  onPress={() => quickLog(choice)}
-                >
-                  Log
-                </SystemButton>
-              </View>
-            ))}
-          </View>
-        )}
-        {!entries.length && !picks.length && (
-          <Text className="text-muted">
-            Log your first meal below. Your usual foods and portions will be ready here next time.
-          </Text>
-        )}
-        <View className="flex-row items-center justify-between gap-2">
-          <SystemButton variant="ghost" className="px-0" onPress={() => setMore((value) => !value)}>
-            More options
-          </SystemButton>
-          <SystemButton
-            variant={status === "complete" ? "ghost" : "secondary"}
-            isDisabled={!entries.length}
-            onPress={() => updateStatus(status === "complete" ? "in-progress" : "complete")}
-          >
-            {status === "complete" ? "✓ Day complete" : "Finish day"}
-          </SystemButton>
-        </View>
-        {more && (
-          <View className="gap-3">
-            <View className="flex-row flex-wrap gap-2">
-              <SystemButton variant="secondary" onPress={() => setQuick(true)}>
-                Quick calories
-              </SystemButton>
-              <SystemButton variant="secondary" onPress={() => setCopying(true)}>
-                Copy a day
-              </SystemButton>
-              <SystemButton variant="secondary" onPress={() => weight.launch(null)}>
-                Weigh in
-              </SystemButton>
-              <SystemButton variant="secondary" onPress={() => setLogger({ start: "meals" })}>
-                Saved meals
-              </SystemButton>
-            </View>
-            <Choices
-              values={["in-progress", "complete", "partial", "fasting"] as const}
-              value={status}
-              label={(value) => statusLabels[value]}
-              onChange={updateStatus}
-            />
-            <Text className="text-xs text-muted">
-              Mark complete only when everything for this day is logged. Fiber:{" "}
-              {totals.fiber === null ? "incomplete data" : `${number(totals.fiber)} g`} · Sodium:{" "}
-              {totals.sodium === null ? "incomplete data" : `${number(totals.sodium, 0)} mg`}
+
+        {!live && (
+          <View className="flex-row flex-wrap items-center gap-2 px-1">
+            <Text className="flex-1 text-sm text-muted">
+              {status === "complete"
+                ? "Marked complete"
+                : status === "in-progress"
+                  ? entries.length
+                    ? "Was this day fully logged?"
+                    : "Nothing logged on this day"
+                  : statusLabels[status]}
             </Text>
+            {status !== "complete" && !!entries.length && (
+              <SystemButton variant="secondary" onPress={() => mark(day, "complete")}>
+                Mark complete
+              </SystemButton>
+            )}
+            {status === "in-progress" && !!entries.length && (
+              <SystemButton variant="secondary" onPress={() => mark(day, "partial")}>
+                Not all
+              </SystemButton>
+            )}
           </View>
         )}
-        <Text className="font-semibold">
-          {diaryLayout === "timeline" ? "Food timeline" : "Your meals"}
-        </Text>
-        {groups
-          .filter((group) => group.entries.length || !hideEmptyHours)
-          .map((group) => (
-            <View key={group.key} className="gap-1">
-              <View className="flex-row items-center justify-between gap-2">
-                <Text className="text-sm font-semibold text-muted">
-                  {group.title} ·{" "}
-                  {number(
-                    totalNutrients(group.entries.map((entry) => entry.nutrients)).calories,
-                    0
-                  )}{" "}
-                  kcal
-                </Text>
-                <SystemButton
-                  variant="ghost"
-                  accessibilityLabel={`Add food to ${group.title}`}
-                  onPress={() =>
-                    setLogger({ meal: group.meal, time: group.time || currentFoodTime() })
-                  }
-                >
-                  Add
-                </SystemButton>
-              </View>
-              {group.entries.map((entry) => (
-                <SystemButton
-                  key={entry.id}
-                  variant="ghost"
-                  className="justify-start px-0 py-2"
-                  accessibilityLabel={`Edit ${entry.food.name}`}
-                  onPress={() => setEditor(entry)}
-                >
-                  <View className="flex-1 gap-1">
-                    <Text numberOfLines={1}>{entry.food.name}</Text>
-                    <Text className="text-xs text-muted">
-                      {entry.loggedTime ? `${entry.loggedTime} · ` : ""}
-                      {entry.portionLabel}
+
+        {live &&
+          (weighIn ? (
+            <WeighInCard
+              today={today}
+              onSaved={(entry, message) =>
+                show(message, () => {
+                  undoWeight(entry);
+                  store.refresh();
+                  refresh();
+                  return "Weight removed.";
+                })
+              }
+            />
+          ) : confirm ? (
+            askConfirm && (
+              <SystemPanel className="p-4">
+                <SystemPanel.Body className="gap-3">
+                  <SystemLabel className="text-accent-soft-foreground">
+                    Finish {label(confirm.day)}
+                  </SystemLabel>
+                  <SystemButton
+                    variant="ghost"
+                    className="-my-2 justify-start px-0"
+                    accessibilityLabel={`Review ${label(confirm.day)}: ${number(confirm.calories, 0)} kcal logged. Is that everything?`}
+                    onPress={() => go(confirm.day)}
+                  >
+                    <Text className="flex-1 font-semibold">
+                      {number(confirm.calories, 0)} kcal logged. Is that everything?
                     </Text>
+                    <SystemIcon name="chevron-forward" size={18} color="muted" />
+                  </SystemButton>
+                  <View className="flex-row gap-2">
+                    <SystemButton
+                      className="flex-1"
+                      onPress={() => answer(confirm.day, "complete")}
+                    >
+                      Yes, complete
+                    </SystemButton>
+                    <SystemButton
+                      variant="secondary"
+                      className="flex-1"
+                      onPress={() => answer(confirm.day, "partial")}
+                    >
+                      Not all
+                    </SystemButton>
                   </View>
-                  <Text className="text-sm tabular-nums">
-                    {number(entry.nutrients.calories, 0)}
-                  </Text>
-                </SystemButton>
-              ))}
-              {!!group.entries.length && (
-                <SystemButton
-                  variant="ghost"
-                  className="self-start px-0"
-                  onPress={() =>
-                    setMealEditor({
-                      source: { day, meal: group.meal, group: group.group },
-                      meal: group.meal,
-                    })
-                  }
-                >
-                  Save / reuse this meal
-                </SystemButton>
-              )}
-            </View>
+                </SystemPanel.Body>
+              </SystemPanel>
+            )
+          ) : (
+            <HomeCheckIn
+              onDone={(message) => show(message)}
+              onWeighIn={() => weight.launch(null)}
+              onReviewLogs={go}
+            />
           ))}
+
+        {actions}
+
+        <View className="gap-2">
+          <View className="flex-row items-center justify-between gap-2 px-1">
+            <SystemLabel accessibilityRole="header">{live ? "Today’s food" : "Food"}</SystemLabel>
+            {status === "complete" && (
+              <View className="flex-row items-center gap-1">
+                <SystemIcon name="checkmark-circle" size={14} color="success" />
+                <Text className="text-xs text-success">Day complete</Text>
+              </View>
+            )}
+          </View>
+          {entries.length || !hideEmptyHours ? (
+            <SystemPanel className="p-0">
+              <SystemPanel.Body className="gap-0 pb-1">
+                {groups.map((group, index) => (
+                  <View key={group.key} className={index ? "border-t border-separator" : ""}>
+                    <View className="flex-row items-center pl-4 pr-1">
+                      <Text className="flex-1 text-sm font-semibold text-muted tabular-nums">
+                        {group.title} ·{" "}
+                        {number(
+                          totalNutrients(group.entries.map((entry) => entry.nutrients)).calories,
+                          0
+                        )}{" "}
+                        kcal
+                      </Text>
+                      <ActionMenu
+                        accessibilityLabel={`Options for ${group.title}`}
+                        sections={[
+                          {
+                            actions: [
+                              {
+                                key: "add",
+                                label: "Add food here",
+                                icon: "add",
+                                onPress: () =>
+                                  setLogger({
+                                    meal: group.meal,
+                                    time: group.time || currentFoodTime(),
+                                  }),
+                              },
+                              ...(group.entries.length
+                                ? [
+                                    {
+                                      key: "save",
+                                      label: "Save or copy this meal",
+                                      icon: "bookmark-outline" as const,
+                                      onPress: () =>
+                                        setMealEditor({
+                                          source: { day, meal: group.meal, group: group.group },
+                                          meal: group.meal,
+                                        }),
+                                    },
+                                  ]
+                                : []),
+                            ],
+                          },
+                        ]}
+                      />
+                    </View>
+                    {group.entries.map((entry) => (
+                      <SystemButton
+                        key={entry.id}
+                        variant="ghost"
+                        className="justify-start gap-3 rounded-none px-4 py-2"
+                        accessibilityLabel={`Edit ${entry.food.name}`}
+                        onPress={() => setEditor(entry)}
+                      >
+                        <View className="flex-1 gap-0.5">
+                          <Text numberOfLines={1}>{entry.food.name}</Text>
+                          <Text numberOfLines={1} className="text-sm text-muted">
+                            {entry.loggedTime ? `${formatClock(entry.loggedTime, locale)} · ` : ""}
+                            {entry.portionLabel}
+                          </Text>
+                        </View>
+                        <Text className="tabular-nums">{number(entry.nutrients.calories, 0)}</Text>
+                      </SystemButton>
+                    ))}
+                  </View>
+                ))}
+              </SystemPanel.Body>
+            </SystemPanel>
+          ) : (
+            <Text className="px-1 text-sm text-muted">
+              {live ? "Nothing logged yet." : "Nothing logged on this day."}
+            </Text>
+          )}
+          {!!entries.length && (
+            <Text className="px-1 text-xs text-muted">
+              Fiber {totals.fiber === null ? "—" : `${number(totals.fiber, 0)} g`} · Sodium{" "}
+              {totals.sodium === null ? "—" : `${number(totals.sodium, 0)} mg`}
+            </Text>
+          )}
+        </View>
       </Screen>
       {logger && (
         <FastLogger
@@ -450,18 +666,10 @@ export function TodayScreen() {
           initialMeal={logger.meal ?? mealAtTime(currentFoodTime())}
           start={logger.start}
           close={() => setLogger(null)}
-          onLogged={(receipt) => logged(receipt)}
+          onLogged={logged}
         />
       )}
       {editor && <FoodEditor entry={editor} close={() => setEditor(null)} />}
-      {quick && (
-        <QuickAdd
-          day={day}
-          close={() => {
-            setQuick(false);
-          }}
-        />
-      )}
       {copying && <CopyDay destination={day} close={() => setCopying(false)} />}
       {mealEditor && (
         <MealEditor
