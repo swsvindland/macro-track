@@ -11,6 +11,7 @@ import m0006 from "./0006_spotty_ser_duncan.sql";
 import m0007 from "./0007_reflective_golden_guardian.sql";
 import m0008 from "./0008_late_marauders.sql";
 import m0009 from "./0009_organic_terrax.sql";
+import m0010 from "./0010_fast_recent_foods.sql";
 
 export default {
   journal,
@@ -25,5 +26,6 @@ export default {
     m0007,
     m0008,
     m0009,
+    m0010,
   },
 };

@@ -1480,3 +1480,15 @@ for (const enoughData of [true, false])
     assert.equal(render().length, 0, "finished check-in disappears without navigation or reload");
     sqlite.close();
   });
+
+test("recent-food lookup uses the history index instead of sorting the full diary", () => {
+  const { sqlite } = diaryDatabase();
+  const plan = sqlite
+    .prepare(
+      "EXPLAIN QUERY PLAN SELECT * FROM food_entries ORDER BY created_at DESC, id DESC LIMIT 200"
+    )
+    .all();
+  assert.ok(plan.some((row) => row.detail.includes("USING INDEX food_entries_recent_idx")));
+  assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
+  sqlite.close();
+});

@@ -4,12 +4,12 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 
 ## Usable MVP
 
-- Today: an hourly food timeline with editable times, date navigation, calories/macros, logging status and add/edit/delete entries. Empty hours are hidden by default; Settings also offers the classic meal layout. Older entries remain visible with time unset.
+- Today: calories left and macro progress first, one-tap repeat foods/meals with Undo, fixed Log/Scan controls, and an hourly food timeline with editable times, date navigation, calories/macros, logging status and add/edit/delete entries. Empty hours are hidden by default; Settings also offers the classic meal layout. Older entries remain visible with time unset.
 - Offline food search across **7,793 USDA SR Legacy foods** and **82,937 US packaged foods** from the full Open Food Facts CSV export.
 - Camera barcode scanning and typed barcode lookup, with a custom-food fallback.
 - Gram, milliliter, and serving quantities; source-provided common portions; nutrition snapshots that preserve historical totals.
-- Personal foods, favorites, and recent foods.
-- Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Tap **Reuse meal** below a logged meal, or open **Saved meals** from Today or Library. Copies preserve nutrition snapshots and remain independently editable.
+- Personal foods, favorites, and recent foods. The meal logger selects multiple foods in one screen, remembers quantities, retains selections while scanning, and saves the meal once.
+- Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Tap **Save / reuse this meal** below a logged meal, or open **Saved meals** from Today or Library. Copies preserve nutrition snapshots and remain independently editable.
 - Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
 - Guided Cut/Bulk/Maintain programs generate calories and macros from your profile, goal and preferences. Weekly reviews use normalized weight and observed intake; maintenance gently corrects drift around a target weight. Goal changes preserve learning. Manual mode remains available. See [coaching method and limits](docs/coaching.md).
 - Quick-add estimates, whole-day copying, and optional cooked batch weights for gram-based recipe portions.
@@ -21,7 +21,7 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 
 Label OCR, meal-photo AI, and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
-Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food in **Today**, add weights in **Progress**, and mark finished days complete. **Library** holds personal foods, saved meals and recipes. Check-ins explain their coverage and proposed changes; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
+Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food in **Today**, add weights in **Progress**, and mark finished days complete. **Library** holds personal foods, saved meals and recipes. Due check-ins appear directly on Today with Accept/Keep actions and expandable evidence; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
 
 Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules. Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
 
@@ -77,3 +77,5 @@ The documentation and store assets under `docs/app-store/` were inherited from B
 See [MVP validation and release gates](docs/mvp-validation.md) for the latest verified scope.
 
 See [the MacroFactor feature review](docs/macrofactor-feature-review.md) for the researched comparison and remaining gaps.
+
+See [fast logging flows and device timing targets](docs/fast-logging.md) for interaction budgets and the speed validation protocol.

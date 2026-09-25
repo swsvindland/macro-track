@@ -12,7 +12,7 @@ Home starts with calories left and consumed/target macros. A fixed **Log a meal*
 
 Date and time default to the selected diary day and current time. They remain editable. Each food gets an explicit local time, and classic meal layout remains available. **Finish day** can be selected as part of saving the last meal; missing intake is never assumed to be zero or complete automatically.
 
-Catalogs warm after the initial Home render. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
+Catalogs warm after the initial Home render. Recent-food retrieval uses an index on creation time and ID; Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
 
 ## Weekly flow
 

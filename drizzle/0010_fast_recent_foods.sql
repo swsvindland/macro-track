@@ -1,0 +1,1 @@
+CREATE INDEX `food_entries_recent_idx` ON `food_entries` (`created_at`,`id`);

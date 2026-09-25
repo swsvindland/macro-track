@@ -418,7 +418,7 @@ export function FastLogger({
               </SystemButton>
             </View>
           ))}
-          {!choices.length && (
+          {!choices.length && (category === "meals" || !trimmed || results?.query === trimmed) && (
             <Text className="text-muted">
               {category === "meals"
                 ? "Save a meal from your timeline to reuse it here."

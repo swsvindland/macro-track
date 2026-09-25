@@ -73,7 +73,10 @@ export const foodEntries = sqliteTable(
     nutrients: text("nutrients", { mode: "json" }).$type<Nutrients>().notNull(),
     createdAt: integer("created_at").notNull(),
   },
-  (table) => [index("food_entries_day_idx").on(table.day)]
+  (table) => [
+    index("food_entries_day_idx").on(table.day),
+    index("food_entries_recent_idx").on(table.createdAt, table.id),
+  ]
 );
 export type FoodEntry = typeof foodEntries.$inferSelect;
 
