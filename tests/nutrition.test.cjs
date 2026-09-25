@@ -117,6 +117,13 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./metrics": metrics,
     "@/lib/nutrition": nutrition,
     "@/lib/food-time": foodTime,
+    "@/lib/fast-log": { loggingChoices: () => ({ quick: [] }) },
+    "@/components/measurements/use-measurement-log": {
+      useMeasurementLog: () => ({ launch: () => {}, open: false }),
+    },
+    "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
+    "./fast-logger": { FastLogger: "FastLogger" },
+    "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./time-field": { TimeField: "TimeField" },
     "./quick-add": { QuickAdd: "QuickAdd" },
@@ -151,7 +158,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
 function nodes(tree) {
   if (!tree || typeof tree !== "object") return [];
   if (Array.isArray(tree)) return tree.flatMap(nodes);
-  return [tree, ...nodes(tree.props?.children)];
+  return [tree, ...nodes(tree.props?.children), ...nodes(tree.props?.footer)];
 }
 function diaryDatabase() {
   const sqlite = new DatabaseSync(":memory:");
@@ -292,10 +299,8 @@ test("compiled diary refreshes same-day meals, totals, targets and status after 
   diary.setDayStatus(day, "complete");
   harness.context.refresh();
   tree = render();
-  assert.ok(tree.some((node) => node.type === "Choices" && node.props.value === "complete"));
-  assert.ok(
-    tree.some((node) => node.props?.children === "1910 kcal remaining to your 2000 target")
-  );
+  assert.ok(tree.some((node) => node.props?.children === "✓ Day complete"));
+  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "1910"));
   const entry = diary.entriesForDay(day)[0];
   diary.saveEntry({ ...entry, amount: 100, portionLabel: "100 g" });
   harness.context.refresh();
@@ -1167,16 +1172,16 @@ test("compiled timeline moves an edited entry between hours without changing the
   const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
   const render = () => nodes(harness.render(TodayScreen));
   assert.ok(render().some((node) => node.props.children === "Food timeline"));
-  assert.ok(render().some((node) => node.props.children === "08:00"));
+  assert.ok(render().some((node) => node.props.children?.[0] === "08:00"));
   const entry = diary.entriesForDay(day)[0];
   diary.saveEntry({ ...entry, loggedTime: "17:25" });
   harness.context.refresh();
   const tree = render();
-  assert.ok(tree.some((node) => node.props.children === "17:00"));
+  assert.ok(tree.some((node) => node.props.children?.[0] === "17:00"));
   assert.equal(tree.filter((node) => node.props.accessibilityLabel === "Edit Test food").length, 1);
   const add = tree.find((node) => node.props.accessibilityLabel === "Add food to 17:00");
   add.props.onPress();
-  assert.equal(render().find((node) => node.type === "FoodEditor").props.initialTime, "17:00");
+  assert.equal(render().find((node) => node.type === "FastLogger").props.initialTime, "17:00");
   sqlite.close();
 });
 
@@ -1289,3 +1294,189 @@ test("remembered portions follow current food definitions and quick choices favo
   );
   sqlite.close();
 });
+
+test("compiled fast logger logs a whole meal once, remembers quantities, and closes immediately", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const day = metrics.localDay();
+  const second = { ...food, id: "custom:second", name: "Second food" };
+  for (const [item, amount] of [
+    [food, 75],
+    [second, 120],
+  ])
+    diary.saveEntry({
+      day: "2024-01-01",
+      meal: "Breakfast",
+      food: item,
+      amount,
+      portionLabel: `${amount} g`,
+    });
+  const harness = screenHarness(diary, { diaryLayout: "timeline" }, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  let closed = 0,
+    receipt;
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: day,
+        initialTime: "12:35",
+        close: () => closed++,
+        onLogged: (value) => {
+          receipt = value;
+        },
+      })
+    );
+  for (const name of [food.name, second.name])
+    render()
+      .find((node) => node.props.accessibilityLabel === `Add ${name}`)
+      .props.onPress();
+  assert.equal(
+    diary.entriesForDay(day).length,
+    0,
+    "selection is a draft until the one save action"
+  );
+  render()
+    .find((node) => node.props.accessibilityLabel === "Toggle day complete after logging")
+    .props.onPress();
+  const submit = render().find(
+    (node) => node.type === "Button" && node.props.children === "Log 2 foods & finish day"
+  );
+  assert.equal(submit.props.isDisabled, false);
+  submit.props.onPress();
+  submit.props.onPress();
+  const entries = diary.entriesForDay(day);
+  assert.equal(entries.length, 2);
+  assert.deepEqual(
+    entries.map((row) => row.amount).sort((a, b) => a - b),
+    [75, 120]
+  );
+  assert.ok(entries.every((row) => row.loggedTime === "12:35" && row.meal === "Lunch"));
+  assert.equal(nutrition.totalNutrients(entries.map((row) => row.nutrients)).calories, 351);
+  assert.equal(diary.dayStatus(day), "complete");
+  assert.equal(closed, 1);
+  fastLog.undoLog(receipt);
+  assert.equal(diary.entriesForDay(day).length, 0);
+  assert.equal(diary.dayStatus(day), "in-progress");
+  sqlite.close();
+});
+
+test("compiled fast logger keeps selected foods through scanning and permits quantity correction", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  diary.saveCustomFood(food);
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const day = metrics.localDay();
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: day,
+        initialTime: "09:10",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  render()
+    .find((node) => node.props.accessibilityLabel === `Adjust ${food.name}`)
+    .props.onPress();
+  render()
+    .find((node) => node.type === "Field")
+    .props.onChange("90");
+  render()
+    .find((node) => node.props.children === "Add to meal")
+    .props.onPress();
+  render()
+    .find((node) => node.props.children === "Scan")
+    .props.onPress();
+  const picker = render().find((node) => node.type === "FoodEditor");
+  assert.equal(picker.props.initialMode, "barcode");
+  picker.props.onPick({ ...food, id: "off:scan", name: "Scanned food", source: "off" }, 50);
+  picker.props.close();
+  render()
+    .find((node) => node.props.children === "Log 2 foods")
+    .props.onPress();
+  assert.deepEqual(
+    diary.entriesForDay(day).map((row) => row.amount),
+    [90, 50]
+  );
+  sqlite.close();
+});
+
+test("compiled Home repeats a familiar food in one action, refreshes totals and offers safe undo", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  diary.saveEntry({ day: "2024-01-01", meal: "Breakfast", food, amount: 75, portionLabel: "75 g" });
+  const harness = screenHarness(diary, { diaryLayout: "timeline" }, { "@/lib/fast-log": fastLog });
+  const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
+  const render = () => nodes(harness.render(TodayScreen));
+  const repeat = render().find(
+    (node) => node.props.accessibilityLabel === `Log ${food.name} again`
+  );
+  repeat.props.onPress();
+  repeat.props.onPress();
+  assert.equal(diary.entriesForDay(metrics.localDay()).length, 1);
+  assert.ok(render().some((node) => node.props.accessibilityLabel === `Edit ${food.name}`));
+  assert.ok(render().some((node) => node.type === "Text" && node.props.children?.[0] === "135"));
+  render()
+    .find((node) => node.props.children === "Undo")
+    .props.onPress();
+  assert.equal(diary.entriesForDay(metrics.localDay()).length, 0);
+  assert.ok(render().some((node) => node.props.children === "Log undone."));
+  sqlite.close();
+});
+
+for (const enoughData of [true, false])
+  test(`compiled Home check-in ${enoughData ? "accepts new" : "keeps current"} targets in one action and clears when finished`, () => {
+    const { diary, sqlite, db } = diaryDatabase();
+    const fakeMetrics = { ...metrics, localDay: () => "2024-02-01" };
+    const store = load("src/lib/coaching-store.ts", {
+      "@/db": { db, ...schema },
+      "./metrics": fakeMetrics,
+      "./nutrition": nutrition,
+      "./food-time": foodTime,
+      "./diary": diary,
+      "./coaching": coaching,
+      "./program": program,
+    });
+    const input = coachingInput();
+    db.insert(schema.coachingGoals).values(input.goal).run();
+    diary.saveTargets("2024-01-01", input.targets);
+    if (enoughData)
+      for (const row of input.days) {
+        diary.saveEntry({
+          day: row.day,
+          meal: "Breakfast",
+          food: { ...food, basis: "serving", nutrients: { ...food.nutrients, calories: 2400 } },
+          amount: 1,
+          portionLabel: "1 serving",
+        });
+        diary.setDayStatus(row.day, "complete");
+        db.insert(schema.weightEntries)
+          .values({ weightKg: 80, measuredAt: `${row.day}T12:00:00Z` })
+          .run();
+      }
+    const harness = screenHarness(
+      diary,
+      {},
+      { "@/lib/coaching-store": store, "@/lib/metrics": fakeMetrics }
+    );
+    const { HomeCheckIn } = harness.load("src/components/nutrition/home-check-in.tsx");
+    let done = 0;
+    const render = () =>
+      nodes(
+        harness.render(HomeCheckIn, {
+          onDone: () => done++,
+          onWeighIn: () => {},
+          onReviewLogs: () => {},
+        })
+      );
+    const action = render().find(
+      (node) => node.props.children === (enoughData ? "Accept plan" : "Keep targets this week")
+    );
+    assert.ok(action);
+    action.props.onPress();
+    action.props.onPress();
+    assert.equal(done, 1);
+    assert.equal(store.checkInHistory().length, 1);
+    assert.equal(diary.targetsForDay("2024-02-01").calories, enoughData ? 2180 : 2200);
+    assert.equal(diary.targetsForDay("2024-01-31").calories, 2200);
+    assert.equal(render().length, 0, "finished check-in disappears without navigation or reload");
+    sqlite.close();
+  });

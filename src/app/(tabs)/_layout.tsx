@@ -11,7 +11,11 @@ export default function TabsLayout() {
       labelVisibilityMode="labeled"
       backBehavior="initialRoute"
     >
-      <NativeTabs.Trigger name="index" contentStyle={{ backgroundColor: background }}>
+      <NativeTabs.Trigger
+        name="index"
+        disableAutomaticContentInsets
+        contentStyle={{ backgroundColor: background }}
+      >
         <NativeTabs.Trigger.Label>Today</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="fork.knife" md="restaurant" />
       </NativeTabs.Trigger>

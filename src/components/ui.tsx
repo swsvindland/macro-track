@@ -8,6 +8,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView as NativeSafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView as TabsSafeAreaView } from "react-native-screens/experimental";
 import { withUniwind } from "uniwind";
 import { Input, InputGroup, Label, Select, TextField } from "heroui-native";
 import { PortalHost } from "heroui-native/portal";
@@ -30,15 +31,19 @@ export function Screen({
   children,
   nativeHeader = false,
   action,
+  footer,
+  compact = false,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   nativeHeader?: boolean;
   action?: ReactNode;
+  footer?: ReactNode;
+  compact?: boolean;
 }) {
   const { width } = useWindowDimensions();
-  return (
+  const content = (
     <SafeAreaView
       className="flex-1 bg-background"
       edges={nativeHeader ? ["bottom", "left", "right"] : ["top"]}
@@ -47,9 +52,9 @@ export function Screen({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
-          paddingTop: 24,
-          paddingBottom: 40,
-          gap: 20,
+          paddingTop: compact ? 12 : 24,
+          paddingBottom: footer ? 16 : 40,
+          gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,
           alignSelf: "center",
@@ -71,7 +76,17 @@ export function Screen({
         )}
         {children}
       </ScrollView>
+      {footer && <View className="bg-background px-4 pt-2 pb-2">{footer}</View>}
     </SafeAreaView>
+  );
+  // A fixed footer must respect the native tab bar, not just the device's
+  // home indicator. Today disables the tab's automatic scroll-only insets.
+  return footer ? (
+    <TabsSafeAreaView edges={{ bottom: true, left: true, right: true }} style={{ flex: 1 }}>
+      {content}
+    </TabsSafeAreaView>
+  ) : (
+    content
   );
 }
 export function Field({
@@ -82,12 +97,14 @@ export function Field({
   secure = false,
   placeholder,
   disabled = false,
+  autoFocus = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   numeric?: boolean;
   secure?: boolean;
+  autoFocus?: boolean;
   placeholder?: string;
   disabled?: boolean;
 }) {
@@ -96,6 +113,7 @@ export function Field({
       <Label>{label}</Label>
       <Input
         accessibilityLabel={label}
+        autoFocus={autoFocus}
         variant="primary"
         className={numeric ? "font-mono focus:border-focus" : "font-sans focus:border-focus"}
         value={value}
@@ -257,12 +275,16 @@ export function Editor({
   close,
   children,
   busy = false,
+  footer,
+  compact = false,
 }: {
   title: string;
   open: boolean;
   close: () => void;
   children: ReactNode;
   busy?: boolean;
+  footer?: ReactNode;
+  compact?: boolean;
 }) {
   const { t } = useStore();
   const portalHost = useId();
@@ -280,25 +302,43 @@ export function Editor({
               style={{ flex: 1 }}
               behavior={Platform.OS === "ios" ? "padding" : undefined}
             >
+              {compact && (
+                <View className="flex-row items-center justify-between px-4 py-2">
+                  <Text accessibilityRole="header" className="text-xl font-semibold">
+                    {title}
+                  </Text>
+                  <SystemButton variant="ghost" isDisabled={busy} onPress={close}>
+                    Cancel
+                  </SystemButton>
+                </View>
+              )}
               <ScrollView
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={{
-                  padding: 24,
-                  gap: 20,
+                  padding: compact ? 16 : 24,
+                  gap: compact ? 12 : 20,
                   paddingBottom: 40,
                   maxWidth: 640,
                   width: "100%",
                   alignSelf: "center",
                 }}
               >
-                <Text accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-                  {title}
-                </Text>
+                {!compact && (
+                  <Text
+                    accessibilityRole="header"
+                    className="text-2xl font-semibold text-foreground"
+                  >
+                    {title}
+                  </Text>
+                )}
                 {children}
-                <SystemButton variant="outline" isDisabled={busy} onPress={close}>
-                  {t("cancel")}
-                </SystemButton>
+                {!compact && (
+                  <SystemButton variant="outline" isDisabled={busy} onPress={close}>
+                    {t("cancel")}
+                  </SystemButton>
+                )}
               </ScrollView>
+              {footer && <View className="bg-background px-4 py-3">{footer}</View>}
             </KeyboardAvoidingView>
           </SafeAreaView>
           {/* Keep calendar overlays above the native editor modal on both platforms. */}

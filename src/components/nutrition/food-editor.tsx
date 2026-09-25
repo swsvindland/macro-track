@@ -191,6 +191,8 @@ export function FoodEditor({
   initialFood,
   initialAmount,
   onPick,
+  pickerTitle,
+  initialMode = "search",
 }: {
   close: () => void;
   initialDay?: string;
@@ -200,11 +202,13 @@ export function FoodEditor({
   initialFood?: Food;
   initialAmount?: number;
   onPick?: (food: Food, amount: number) => void;
+  pickerTitle?: string;
+  initialMode?: "search" | "barcode" | "custom";
 }) {
   const { refresh } = useNutrition();
   const { number, diaryLayout } = useStore();
   const [mode, setMode] = useState<"search" | "barcode" | "custom" | "portion">(
-    entry || initialFood ? "portion" : "search"
+    entry || initialFood ? "portion" : initialMode
   );
   const [food, setFood] = useState<Food | undefined>(entry?.food ?? initialFood);
   const [day, setDay] = useState(entry?.day ?? initialDay);
@@ -327,7 +331,7 @@ export function FoodEditor({
     <Editor
       title={
         onPick
-          ? "Add ingredient"
+          ? (pickerTitle ?? "Add ingredient")
           : entry
             ? "Edit food"
             : mode === "custom"
@@ -522,7 +526,9 @@ export function FoodEditor({
           <ErrorText message={error} />
           <SystemButton onPress={save}>
             {onPick
-              ? "Use ingredient"
+              ? pickerTitle
+                ? "Add to meal"
+                : "Use ingredient"
               : entry
                 ? "Save changes"
                 : diaryLayout === "timeline"
