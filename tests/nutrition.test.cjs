@@ -147,6 +147,13 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./time-field": { TimeField: "TimeField" },
     "./quick-add": { QuickAdd: "QuickAdd" },
+    "./photo-logger": {
+      PhotoLogger: "PhotoLogger",
+      photoLoggingOffered: (status) => status?.state === "available",
+    },
+    "@/lib/local-ai": {
+      modelStatus: async () => ({ state: "unavailable", engine: "none", vision: false }),
+    },
     "./copy-day": { CopyDay: "CopyDay" },
     "./meal-editor": { MealEditor: "MealEditor" },
     "./recipe-editor": { RecipeEditor: "RecipeEditor" },
@@ -1799,6 +1806,69 @@ test("compiled fast logger quick add logs straight away or joins the selected fo
       .map((row) => row.food.name)
       .sort(),
     ["Quick add", food.name]
+  );
+  assert.equal(draft.state.closed, 1);
+  draft.sqlite.close();
+});
+
+test("compiled fast logger offers photo logging only where it runs, then logs or joins the meal", () => {
+  const plain = fastLoggerHarness();
+  assert.ok(!plain.render().some((node) => node.props.children === "Photo"));
+  plain.sqlite.close();
+
+  const { sqlite, state, render } = fastLoggerHarness();
+  const offered = { photoLogging: true };
+  render(offered)
+    .find((node) => node.props.children === "Photo")
+    .props.onPress();
+  let photo = render(offered).find((node) => node.type === "PhotoLogger");
+  assert.equal(photo.props.onAdd, undefined, "an empty meal logs the photo's foods directly");
+  assert.equal(photo.props.initialTime, "12:10");
+  const receipt = { day: metrics.localDay(), entries: [] };
+  photo.props.onLogged(receipt);
+  assert.equal(state.closed, 1);
+  assert.deepEqual(state.receipts, [receipt]);
+  sqlite.close();
+
+  const draft = fastLoggerHarness();
+  draft
+    .render(offered)
+    .find((node) => node.props.accessibilityLabel === `Add ${food.name}`)
+    .props.onPress();
+  draft
+    .render(offered)
+    .find((node) => node.props.children === "Photo")
+    .props.onPress();
+  photo = draft.render(offered).find((node) => node.type === "PhotoLogger");
+  assert.equal(photo.props.onLogged, undefined, "with foods selected, the photo's foods join them");
+  const lettuce = { ...food, id: "usda:lettuce", name: "Lettuce, iceberg, raw", barcode: null };
+  const tomato = { ...food, id: "usda:tomato", name: "Tomatoes, red, ripe, raw", barcode: null };
+  photo.props.onAdd(
+    [
+      [lettuce, 15, "≈ 1 leaf · 15 g"],
+      [tomato, 30, "≈ 2 slices · 30 g"],
+    ].map(([item, amount, portionLabel]) => ({
+      food: item,
+      amount,
+      portionLabel,
+      nutrients: nutrition.scaleNutrients(item, amount),
+    }))
+  );
+  photo.props.close();
+  draft
+    .render(offered)
+    .find((node) => node.props.children === "Log 3 foods")
+    .props.onPress();
+  assert.deepEqual(
+    draft.diary
+      .entriesForDay(metrics.localDay())
+      .map((row) => [row.food.name, row.portionLabel])
+      .sort(),
+    [
+      [food.name, "1 serving · 30 g"],
+      [lettuce.name, "≈ 1 leaf · 15 g"],
+      [tomato.name, "≈ 2 slices · 30 g"],
+    ].sort()
   );
   assert.equal(draft.state.closed, 1);
   draft.sqlite.close();

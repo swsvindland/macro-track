@@ -11,6 +11,7 @@ import {
   SafeAreaView as NativeSafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { twMerge } from "tailwind-merge";
 import { withUniwind } from "uniwind";
 import { Input, InputGroup, Label, Menu, SearchField, Select, TextField } from "heroui-native";
 import { PortalHost } from "heroui-native/portal";
@@ -104,6 +105,7 @@ export function Field({
   disabled = false,
   autoFocus = false,
   selectTextOnFocus = false,
+  multiline = false,
 }: {
   label: string;
   value: string;
@@ -115,6 +117,8 @@ export function Field({
   disabled?: boolean;
   /** Select a prefilled amount so typing replaces it instead of appending. */
   selectTextOnFocus?: boolean;
+  /** A few lines of free text, such as a meal description. */
+  multiline?: boolean;
 }) {
   return (
     <TextField isDisabled={disabled}>
@@ -124,14 +128,19 @@ export function Field({
         autoFocus={autoFocus}
         selectTextOnFocus={selectTextOnFocus}
         variant="primary"
-        className={numeric ? "font-mono focus:border-focus" : "font-sans focus:border-focus"}
+        className={twMerge(
+          numeric ? "font-mono focus:border-focus" : "font-sans focus:border-focus",
+          multiline && "min-h-20 py-3"
+        )}
         value={value}
         onChangeText={onChange}
         keyboardType={numeric ? "decimal-pad" : "default"}
-        autoCapitalize="none"
+        autoCapitalize={multiline ? "sentences" : "none"}
         secureTextEntry={secure}
         autoCorrect={!secure}
         placeholder={placeholder}
+        multiline={multiline}
+        textAlignVertical={multiline ? "top" : undefined}
       />
     </TextField>
   );

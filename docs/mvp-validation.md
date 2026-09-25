@@ -50,7 +50,9 @@ Latest fast-logging production exports are in `/private/tmp/macro-track-speed`; 
 
 ## Explicitly outside this MVP
 
-Local meal-photo AI, nutrition-label OCR, optional signed food-pack downloads/cleanup, advanced micronutrients, reminders/widgets, restaurant coverage, paid entitlements and translated nutrition screens. Photo AI/OCR need a separate native prototype and physical-device accuracy/performance validation. No cloud AI fallback is silently used.
+Nutrition-label OCR, optional signed food-pack downloads/cleanup, advanced micronutrients, reminders/widgets, restaurant coverage, paid entitlements and translated nutrition screens. No cloud AI fallback is silently used.
+
+Photo and description logging now exists on phones with Apple Intelligence or Gemini Nano ([details](ai-logging.md)). It has simulator and on-Mac model evaluation only; the plan's physical-device accuracy/performance gate and an Android device run are still required before release.
 
 ## Program and timeline follow-up
 

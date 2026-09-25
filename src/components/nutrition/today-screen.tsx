@@ -23,6 +23,7 @@ import {
 } from "@/lib/diary";
 import { undoLog, type LogReceipt } from "@/lib/fast-log";
 import { openCatalogs } from "@/lib/food-catalog";
+import { modelStatus, type ModelStatus } from "@/lib/local-ai";
 import { localDay } from "@/lib/metrics";
 import {
   meals,
@@ -50,6 +51,7 @@ import { FoodEditor } from "./food-editor";
 import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
+import { PhotoLogger, photoLoggingOffered } from "./photo-logger";
 import { CopyDay } from "./copy-day";
 import { WeighInCard } from "./weigh-in-card";
 
@@ -80,6 +82,9 @@ export function TodayScreen() {
     start?: "search" | "barcode";
   } | null>(null);
   const [copying, setCopying] = useState(false);
+  const [photoLog, setPhotoLog] = useState(false);
+  // On-device AI availability decides whether Home offers photo logging at all.
+  const [ai, setAi] = useState<ModelStatus | null>(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
   const [mealEditor, setMealEditor] = useState<{
@@ -92,6 +97,7 @@ export function TodayScreen() {
   useEffect(() => {
     const warm = setTimeout(() => {
       void openCatalogs().catch(() => {});
+      void modelStatus().then(setAi);
     }, 300);
     let hiddenAt = 0;
     function tick() {
@@ -109,6 +115,8 @@ export function TodayScreen() {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         tick();
+        // Apple Intelligence may have been turned on, or Gemini Nano finished installing.
+        void modelStatus().then(setAi);
         if (hiddenAt && Date.now() - hiddenAt > 2 * 60000) {
           setDay(localDay());
           scrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -369,6 +377,20 @@ export function TodayScreen() {
         >
           {live ? "Log food" : `Log to ${label(day)}`}
         </SystemButton>
+        {photoLoggingOffered(ai) && (
+          <SystemButton
+            variant="secondary"
+            className="min-h-12"
+            icon={ai?.vision ? "camera-outline" : "chatbox-ellipses-outline"}
+            labelClassName="text-base font-semibold"
+            accessibilityLabel={
+              ai?.vision ? "Log a meal from a photo" : "Describe a meal to log it"
+            }
+            onPress={() => setPhotoLog(true)}
+          >
+            {ai?.vision ? "Photo" : "Describe"}
+          </SystemButton>
+        )}
         <SystemButton
           variant="secondary"
           className="min-h-12"
@@ -665,7 +687,16 @@ export function TodayScreen() {
           initialTime={logger.time}
           initialMeal={logger.meal ?? mealAtTime(currentFoodTime())}
           start={logger.start}
+          photoLogging={photoLoggingOffered(ai)}
           close={() => setLogger(null)}
+          onLogged={logged}
+        />
+      )}
+      {photoLog && (
+        <PhotoLogger
+          initialDay={day}
+          initialMeal={mealAtTime(currentFoodTime())}
+          close={() => setPhotoLog(false)}
           onLogged={logged}
         />
       )}

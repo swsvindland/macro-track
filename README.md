@@ -7,6 +7,7 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Home: calories left with an "on pace / heading over" projection from your own recent complete days, macros against targets, one due task at a time (morning weigh-in → confirm an unfinished day → weekly check-in), in-page Log food and Scan with Undo, and a compact time-grouped food list. A compact header handles dates, day status and copying; Settings is a tab. Classic meal layout remains in Settings. Older entries remain visible with time unset.
 - Offline food search across **7,793 USDA SR Legacy foods** and **82,937 US packaged foods** from the full Open Food Facts CSV export.
 - Camera barcode scanning and typed barcode lookup, with a custom-food fallback.
+- Photo and description logging with the phone's own model (Apple Intelligence on iPhone, Gemini Nano on supported Android phones): a photo, a sentence, or both become an editable draft of catalog foods and estimated portions. Chain and packaged items are logged whole; unbranded dishes are split into components. Nothing leaves the phone. See [photo and description logging](docs/ai-logging.md).
 - Gram, milliliter, and serving quantities; source-provided common portions; nutrition snapshots that preserve historical totals.
 - Personal foods, favorites, and recent foods. The meal logger selects multiple foods in one screen, remembers quantities, retains selections while scanning, and saves the meal once.
 - Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Choose **Save or copy this meal** from a meal’s ··· menu on Today; saved meals appear under Log again in the logger and in Library. Copies preserve nutrition snapshots and remain independently editable.
@@ -19,11 +20,11 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Password-protected local backup and restore in Settings, with an automatic encrypted recovery copy before replacement. See [backup scope and recovery](docs/backups.md).
 - Distinct `dev.svindland.macrotrack` application IDs, `macrotrack://` scheme, private `macro_track.db`, and app icon.
 
-Label OCR, meal-photo AI, and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
+Label OCR, a downloadable AI model for phones without Apple Intelligence or Gemini Nano, and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
 Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food from **Today**. Without Health weights, Today asks for a morning weigh-in; it also asks you to confirm recent days were fully logged, which weekly check-ins need. **Library** holds personal foods, saved meals and recipes. Due check-ins appear directly on Today (after the morning weigh-in and day confirmation) with Accept/Keep actions and expandable evidence; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
 
-Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules. Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
+Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules, and the local `modules/local-ai` module for photo logging (rebuild the dev client after pulling it). Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
 
 ## Development
 
@@ -36,7 +37,7 @@ pnpm ios
 pnpm android
 ```
 
-Expo Go can preview the diary, food catalogs and weight screens. Health sync requires a native build. Camera scanning requires camera permission and a device with a usable camera. Food search does not call a remote API. Expo Go downloads development assets from Metro; production builds bundle them locally.
+Expo Go can preview the diary, food catalogs and weight screens. Health sync and photo logging require a native build; photo logging on the iOS simulator needs a Mac with Apple Intelligence turned on. Android builds pin Kotlin 2.2.21 (`plugins/with-kotlin-plugin-version.js`) for ML Kit GenAI. Camera scanning requires camera permission and a device with a usable camera. Food search does not call a remote API. Expo Go downloads development assets from Metro; production builds bundle them locally.
 
 The inherited EAS project ID has been removed deliberately. Link a **new Macro Track EAS project** before remote builds or submission. Do not reconnect the old Vector Body project. Generated native folders are ignored and regenerated from app configuration.
 

@@ -29,6 +29,7 @@ import { localDay, parseNumber } from "@/lib/metrics";
 import { useNutrition } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import { FoodEditor } from "./food-editor";
+import { PhotoLogger } from "./photo-logger";
 import { QuickAdd } from "./quick-add";
 import { TimeField } from "./time-field";
 
@@ -80,6 +81,7 @@ export function FastLogger({
   initialTime,
   initialMeal,
   start = "search",
+  photoLogging = false,
   close,
   onLogged,
 }: {
@@ -88,6 +90,8 @@ export function FastLogger({
   initialMeal?: Meal;
   /** "meals" is kept for older callers; saved meals are now part of the search list. */
   start?: "search" | "barcode" | "meals";
+  /** Offers the on-device photo/description logger when this phone can run it. */
+  photoLogging?: boolean;
   close: () => void;
   onLogged: (receipt: LogReceipt) => void;
 }) {
@@ -106,7 +110,7 @@ export function FastLogger({
   const [reviewing, setReviewing] = useState(false);
   const [editing, setEditing] = useState<LogChoice | null>(null),
     [amount, setAmount] = useState("");
-  const [picker, setPicker] = useState<"barcode" | "custom" | "quick" | null>(
+  const [picker, setPicker] = useState<"barcode" | "custom" | "quick" | "photo" | null>(
     start === "barcode" ? "barcode" : null
   );
   // Opened from Home's Scan button: cancelling the scan returns to Home, not the list.
@@ -271,6 +275,38 @@ export function FastLogger({
             : (receipt) => {
                 onLogged(receipt);
                 close();
+              }
+        }
+      />
+    );
+  if (picker === "photo")
+    return (
+      <PhotoLogger
+        initialDay={day}
+        initialTime={time}
+        initialMeal={meal}
+        close={() => setPicker(null)}
+        onLogged={
+          oneStep
+            ? (receipt) => {
+                onLogged(receipt);
+                close();
+              }
+            : undefined
+        }
+        onAdd={
+          oneStep
+            ? undefined
+            : (found) => {
+                const stamp = Date.now();
+                found.forEach((item, i) =>
+                  add({
+                    key: `photo:${stamp}:${i}`,
+                    title: item.food.name,
+                    detail: item.portionLabel,
+                    items: [item],
+                  })
+                );
               }
         }
       />
@@ -466,6 +502,16 @@ export function FastLogger({
         >
           Scan
         </SystemButton>
+        {photoLogging && (
+          <SystemButton
+            variant="secondary"
+            icon="sparkles-outline"
+            className="px-3"
+            onPress={() => setPicker("photo")}
+          >
+            Photo
+          </SystemButton>
+        )}
         <SystemButton
           variant="secondary"
           icon="flash-outline"

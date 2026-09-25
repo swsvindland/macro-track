@@ -194,6 +194,7 @@ export function FoodEditor({
   pickerTitle,
   pickLabel,
   initialMode = "search",
+  initialQuery = "",
 }: {
   close: () => void;
   initialDay?: string;
@@ -207,6 +208,8 @@ export function FoodEditor({
   /** Confirm label when picking, e.g. "Log" when the pick is saved straight away. */
   pickLabel?: string;
   initialMode?: "search" | "barcode" | "custom";
+  /** Prefills the search, e.g. with a food a photo showed but the catalog match missed. */
+  initialQuery?: string;
 }) {
   const { refresh } = useNutrition();
   const { number, diaryLayout } = useStore();
@@ -222,7 +225,7 @@ export function FoodEditor({
   const [amount, setAmount] = useState(
     String(entry?.amount ?? initialAmount ?? (initialFood?.basis === "serving" ? 1 : 100))
   );
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<Food[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

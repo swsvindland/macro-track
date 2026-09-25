@@ -1,0 +1,9 @@
+{
+  "name": "local-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-device language and vision model bridge (Apple Foundation Models, Gemini Nano)",
+  "license": "UNLICENSED",
+  "author": "Sam Svindland",
+  "homepage": "https://github.com/swsvindland/macro-track"
+}

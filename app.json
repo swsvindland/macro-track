@@ -76,11 +76,13 @@
       "react-native-health-connect",
       "./plugins/with-health-rationale",
       "./plugins/with-scene-lifecycle",
+      ["./plugins/with-kotlin-plugin-version", { "version": "2.2.21" }],
       [
         "expo-build-properties",
         {
           "android": {
-            "minSdkVersion": 26
+            "minSdkVersion": 26,
+            "kotlinVersion": "2.2.21"
           }
         }
       ],
