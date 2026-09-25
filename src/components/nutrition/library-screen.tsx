@@ -2,14 +2,20 @@ import { useState } from "react";
 import { Linking, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Screen } from "@/components/ui";
-import { favoriteFoods, personalFoods, recentFoods, listSavedMeals } from "@/lib/diary";
+import {
+  favoriteFoods,
+  personalFoods,
+  recentFoods,
+  listSavedMeals,
+  listRecipes,
+} from "@/lib/diary";
 import { catalogManifest } from "@/lib/food-catalog";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import type { SavedMeal } from "@/db";
-import { totalNutrients } from "@/lib/nutrition";
+import { recipeFood, type Recipe, type Food, totalNutrients } from "@/lib/nutrition";
+import { RecipeEditor } from "./recipe-editor";
 import { MealEditor } from "./meal-editor";
-import type { Food } from "@/lib/nutrition";
 import { FoodEditor, FoodRow } from "./food-editor";
 
 export function LibraryScreen() {
@@ -23,6 +29,8 @@ export function LibraryScreen() {
   );
   const { number } = useStore();
   const savedMeals = useNutritionQuery(listSavedMeals);
+  const recipes = useNutritionQuery(listRecipes);
+  const [recipeEditor, setRecipeEditor] = useState<{ recipe?: Recipe } | null>(null);
   const [mealEditor, setMealEditor] = useState<SavedMeal | null>(null);
   const [editor, setEditor] = useState<{ food?: Food } | null>(null);
   const [sourceError, setSourceError] = useState("");
@@ -38,6 +46,35 @@ export function LibraryScreen() {
     <>
       <Screen title="Library" subtitle="Foods you know. Ready to log again.">
         <SystemButton onPress={() => setEditor({})}>Find or create a food</SystemButton>
+        <View className="gap-3">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-xl font-semibold">Recipes</Text>
+            <SystemButton variant="secondary" onPress={() => setRecipeEditor({})}>
+              Create recipe
+            </SystemButton>
+          </View>
+          {!recipes.length && (
+            <Text className="text-sm text-muted">
+              Your own ingredients. Nutrition worked out per serving.
+            </Text>
+          )}
+          {recipes.map((recipe) => (
+            <View key={recipe.id} className="gap-1">
+              <FoodRow
+                food={recipeFood(recipe)}
+                onPress={() => setEditor({ food: recipeFood(recipe) })}
+              />
+              <SystemButton
+                variant="ghost"
+                className="self-start"
+                accessibilityLabel={`Edit ${recipe.name}`}
+                onPress={() => setRecipeEditor({ recipe })}
+              >
+                Edit recipe
+              </SystemButton>
+            </View>
+          ))}
+        </View>
         <View className="gap-3">
           <Text className="text-xl font-semibold">Saved meals</Text>
           <Text className="text-sm text-muted">
@@ -135,6 +172,9 @@ export function LibraryScreen() {
           </SystemPanel.Body>
         </SystemPanel>
       </Screen>
+      {recipeEditor && (
+        <RecipeEditor recipe={recipeEditor.recipe} close={() => setRecipeEditor(null)} />
+      )}
       {mealEditor && <MealEditor saved={mealEditor} close={() => setMealEditor(null)} />}
       {editor && <FoodEditor initialFood={editor.food} close={() => setEditor(null)} />}
     </>

@@ -6,6 +6,7 @@ import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
 import type { FoodEntry } from "@/db";
 import {
   favoriteFoods,
+  recipeFoods,
   findPersonalBarcode,
   personalFoods,
   recentFoods,
@@ -39,7 +40,9 @@ export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) 
               ? "USDA"
               : food.source === "off"
                 ? "Open Food Facts"
-                : "My food")}{" "}
+                : food.source === "recipe"
+                  ? "Recipe"
+                  : "My food")}{" "}
           · {number(food.nutrients.calories, 0)} kcal /{" "}
           {food.basis === "serving" ? "serving" : `100 ${food.basis}`}
         </Text>
@@ -183,12 +186,16 @@ export function FoodEditor({
   initialMeal = "Breakfast",
   entry,
   initialFood,
+  initialAmount,
+  onPick,
 }: {
   close: () => void;
   initialDay?: string;
   initialMeal?: Meal;
   entry?: FoodEntry;
   initialFood?: Food;
+  initialAmount?: number;
+  onPick?: (food: Food, amount: number) => void;
 }) {
   const { refresh } = useNutrition();
   const { number } = useStore();
@@ -199,7 +206,7 @@ export function FoodEditor({
   const [day, setDay] = useState(entry?.day ?? initialDay);
   const [meal, setMeal] = useState<Meal>(entry?.meal ?? initialMeal);
   const [amount, setAmount] = useState(
-    String(entry?.amount ?? (initialFood?.basis === "serving" ? 1 : 100))
+    String(entry?.amount ?? initialAmount ?? (initialFood?.basis === "serving" ? 1 : 100))
   );
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Food[]>([]);
@@ -215,7 +222,7 @@ export function FoodEditor({
     const timer = setTimeout(() => {
       setBusy(true);
       setError("");
-      const personal = personalFoods().filter((item) =>
+      const personal = [...personalFoods(), ...recipeFoods()].filter((item) =>
         `${item.name} ${item.brand}`.toLowerCase().includes(query.toLowerCase().trim())
       );
       searchCatalog(query)
@@ -271,6 +278,12 @@ export function FoodEditor({
     saveLock.current = true;
     try {
       const value = parseNumber(amount);
+      if (onPick) {
+        scaleNutrients(food, value);
+        onPick(food, value);
+        close();
+        return;
+      }
       saveEntry({
         id: entry?.id,
         day,
@@ -288,7 +301,7 @@ export function FoodEditor({
   }
   const { recent, personal } = useNutritionQuery(() => ({
     recent: recentFoods(),
-    personal: personalFoods(),
+    personal: [...personalFoods(), ...recipeFoods()],
   }));
   const history = [
     ...new Map([...favorites, ...recent, ...personal].map((item) => [item.id, item])).values(),
@@ -304,13 +317,15 @@ export function FoodEditor({
   return (
     <Editor
       title={
-        entry
-          ? "Edit food"
-          : mode === "custom"
-            ? "Create a food"
-            : mode === "portion"
-              ? "Log food"
-              : "Add food"
+        onPick
+          ? "Add ingredient"
+          : entry
+            ? "Edit food"
+            : mode === "custom"
+              ? "Create a food"
+              : mode === "portion"
+                ? "Log food"
+                : "Add food"
       }
       open
       close={close}
@@ -431,7 +446,9 @@ export function FoodEditor({
                 ? "USDA FoodData Central"
                 : food.source === "off"
                   ? "Open Food Facts · check the label"
-                  : "My food"}
+                  : food.source === "recipe"
+                    ? "My recipe"
+                    : "My food"}
             </Text>
             <SystemButton
               variant="ghost"
@@ -447,8 +464,12 @@ export function FoodEditor({
                 : "Save to my library"}
             </SystemButton>
           </View>
-          <DateInput label="Date" value={day} onChange={setDay} />
-          <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
+          {!onPick && (
+            <>
+              <DateInput label="Date" value={day} onChange={setDay} />
+              <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
+            </>
+          )}
           <Field
             label={`Quantity (${food.basis === "serving" ? "servings" : food.basis})`}
             value={amount}
@@ -484,7 +505,7 @@ export function FoodEditor({
           )}
           <ErrorText message={error} />
           <SystemButton onPress={save}>
-            {entry ? "Save changes" : `Add to ${meal.toLowerCase()}`}
+            {onPick ? "Use ingredient" : entry ? "Save changes" : `Add to ${meal.toLowerCase()}`}
           </SystemButton>
           {entry && (
             <SystemButton

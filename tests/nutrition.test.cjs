@@ -116,6 +116,8 @@ function screenHarness(diary) {
     "@/lib/nutrition": nutrition,
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./meal-editor": { MealEditor: "MealEditor" },
+    "./recipe-editor": { RecipeEditor: "RecipeEditor" },
+    "expo-camera": { CameraView: "CameraView", useCameraPermissions: () => [] },
     "@/lib/food-catalog": {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
@@ -500,3 +502,117 @@ test("compiled saved-meal form logs the chosen quantity once and closes after su
   assert.equal(logged[0].nutrients.calories, 90);
   sqlite.close();
 });
+
+test("recipe yield computes per-serving nutrients and preserves unknown values", () => {
+  const recipe = {
+    id: "test",
+    revision: 1,
+    name: "Batch",
+    servings: 4,
+    ingredients: [
+      { food, amount: 200 },
+      { food: { ...food, basis: "ml" }, amount: 100 },
+    ],
+  };
+  const portion = nutrition.recipeFood(recipe);
+  assert.equal(portion.basis, "serving");
+  assert.equal(portion.nutrients.calories, 135);
+  assert.equal(portion.nutrients.protein, 7.5);
+  assert.equal(portion.nutrients.fiber, null);
+  assert.equal(nutrition.scaleNutrients(portion, 0.5).calories, 67.5);
+  for (const servings of [0, -1, NaN, Infinity, 1001])
+    assert.throws(() => nutrition.recipeFood({ ...recipe, servings }));
+  assert.throws(() => nutrition.recipeFood({ ...recipe, ingredients: [] }));
+  assert.throws(() => nutrition.recipeFood({ ...recipe, ingredients: [{ food, amount: 0 }] }));
+});
+
+test("recipe edits refresh future portions and favorites without rewriting diary history", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const recipe = diary.saveRecipe({
+    name: "Original batch",
+    servings: 2,
+    ingredients: [{ food, amount: 200 }],
+  });
+  const original = nutrition.recipeFood(recipe);
+  diary.toggleFavorite(original);
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Dinner",
+    food: original,
+    amount: 1.5,
+    portionLabel: "1.5 servings",
+  });
+  const revised = diary.saveRecipe({ ...recipe, name: "Revised batch", servings: 4 });
+  assert.equal(revised.revision, 2);
+  assert.equal(diary.recipeFoods()[0].nutrients.calories, 90);
+  assert.equal(diary.favoriteFoods()[0].nutrients.calories, 90);
+  assert.equal(diary.recentFoods()[0].name, "Revised batch");
+  assert.equal(diary.entriesForDay("2024-01-01")[0].nutrients.calories, 270);
+  assert.equal(diary.entriesForDay("2024-01-01")[0].food.name, "Original batch");
+  assert.throws(() => diary.saveRecipe({ ...revised, servings: 0 }));
+  assert.equal(diary.listRecipes()[0].revision, 2);
+  diary.deleteRecipe(recipe.id);
+  assert.equal(diary.recipeFoods().length, 0);
+  assert.equal(diary.favoriteFoods().length, 0);
+  assert.equal(diary.recentFoods().length, 0);
+  assert.equal(diary.entriesForDay("2024-01-01")[0].nutrients.calories, 270);
+  assert.throws(() => diary.saveRecipe({ ...recipe }));
+  sqlite.close();
+});
+
+test("compiled recipe form retains draft while picking ingredients and saves once", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const harness = screenHarness(diary);
+  const { RecipeEditor } = harness.load("src/components/nutrition/recipe-editor.tsx");
+  let closed = 0;
+  const props = { close: () => closed++ };
+  let tree = nodes(harness.render(RecipeEditor, props));
+  tree
+    .find((node) => node.type === "Field" && node.props.label === "Recipe name")
+    .props.onChange("Chili");
+  tree
+    .find((node) => node.type === "Button" && node.props.children === "Add ingredient")
+    .props.onPress();
+  const picker = harness.render(RecipeEditor, props);
+  assert.equal(picker.type, "FoodEditor");
+  picker.props.onPick(food, 200);
+  picker.props.close();
+  tree = nodes(harness.render(RecipeEditor, props));
+  assert.equal(
+    tree.find((node) => node.type === "Field" && node.props.label === "Recipe name").props.value,
+    "Chili"
+  );
+  const save = tree.find((node) => node.type === "Button" && node.props.children === "Save recipe")
+    .props.onPress;
+  save();
+  save();
+  assert.equal(closed, 1);
+  assert.equal(diary.listRecipes().length, 1);
+  assert.equal(diary.recipeFoods()[0].nutrients.calories, 90);
+  assert.equal(diary.entriesForDay(metrics.localDay()).length, 0);
+  sqlite.close();
+});
+
+test("ingredient picker returns the chosen amount without adding diary food", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const harness = screenHarness(diary);
+  const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
+  let picked;
+  let closed = 0;
+  const tree = nodes(
+    harness.render(FoodEditor, {
+      initialFood: food,
+      initialAmount: 75,
+      close: () => closed++,
+      onPick: (food, amount) => (picked = { food, amount }),
+    })
+  );
+  tree
+    .find((node) => node.type === "Button" && node.props.children === "Use ingredient")
+    .props.onPress();
+  assert.equal(picked.amount, 75);
+  assert.equal(closed, 1);
+  assert.equal(diary.entriesForDay(metrics.localDay()).length, 0);
+  sqlite.close();
+});
+

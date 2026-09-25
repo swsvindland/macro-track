@@ -7,11 +7,14 @@ import {
   nutritionTargets,
   savedFoods,
   savedMeals,
+  recipes,
   type FoodEntry,
 } from "@/db";
 import { validDay } from "./metrics";
 import {
   dayStates,
+  recipeFood,
+  type Recipe,
   meals,
   normalizeBarcode,
   scaleNutrients,
@@ -153,12 +156,14 @@ export function findPersonalBarcode(barcode: string): Food | null {
     : null;
 }
 export function favoriteFoods(): Food[] {
-  return db
-    .select()
-    .from(savedFoods)
-    .orderBy(desc(savedFoods.savedAt))
-    .all()
-    .map((row) => row.food);
+  return resolveRecipeSnapshots(
+    db
+      .select()
+      .from(savedFoods)
+      .orderBy(desc(savedFoods.savedAt))
+      .all()
+      .map((row) => row.food)
+  );
 }
 export function toggleFavorite(food: Food) {
   if (db.select().from(savedFoods).where(eq(savedFoods.id, food.id)).get())
@@ -174,7 +179,7 @@ export function recentFoods(): Food[] {
     .all();
   const latest = new Map<string, Food>();
   for (const row of rows) if (!latest.has(row.food.id)) latest.set(row.food.id, row.food);
-  return [...latest.values()].slice(0, 20);
+  return resolveRecipeSnapshots([...latest.values()]).slice(0, 20);
 }
 
 export function listSavedMeals() {
@@ -263,4 +268,42 @@ export function logSavedMeal(id: number, day: string, meal: Meal, multiplier = 1
   const saved = db.select().from(savedMeals).where(eq(savedMeals.id, id)).get();
   if (!saved) throw new Error("This saved meal no longer exists.");
   return addMealItems(saved.items, day, meal, multiplier);
+}
+
+export function listRecipes(): Recipe[] {
+  return db.select().from(recipes).orderBy(recipes.name).all();
+}
+
+export function recipeFoods(): Food[] {
+  return listRecipes().map(recipeFood);
+}
+
+export function saveRecipe(input: Omit<Recipe, "id" | "revision"> & { id?: string }): Recipe {
+  return db.transaction((tx) => {
+    const previous = input.id
+      ? tx.select().from(recipes).where(eq(recipes.id, input.id)).get()
+      : null;
+    if (input.id && !previous) throw new Error("This recipe no longer exists.");
+    const recipe: Recipe = {
+      ...input,
+      name: input.name.trim(),
+      id: input.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      revision: (previous?.revision ?? 0) + 1,
+    };
+    recipeFood(recipe);
+    tx.insert(recipes).values(recipe).onConflictDoUpdate({ target: recipes.id, set: recipe }).run();
+    return recipe;
+  });
+}
+
+export function deleteRecipe(id: string) {
+  db.delete(recipes).where(eq(recipes.id, id)).run();
+}
+
+function resolveRecipeSnapshots(foods: Food[]): Food[] {
+  if (!foods.some((food) => food.source === "recipe")) return foods;
+  const current = new Map(recipeFoods().map((food) => [food.id, food]));
+  return foods.flatMap((food) =>
+    food.source === "recipe" ? (current.has(food.id) ? [current.get(food.id)!] : []) : [food]
+  );
 }

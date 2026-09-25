@@ -10,13 +10,16 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Gram, milliliter, and serving quantities; source-provided common portions; nutrition snapshots that preserve historical totals.
 - Personal foods, favorites, and recent foods.
 - Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Tap **Reuse meal** below a logged meal, or open **Saved meals** from Today or Library. Copies preserve nutrition snapshots and remain independently editable.
+- Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
 - Manual targets with effective dates; later revisions preserve earlier days.
 - Inherited weight history, smoothed trend, and opt-in HealthKit / Health Connect integration.
 - Distinct `dev.svindland.macrotrack` application IDs, `macrotrack://` scheme, private `macro_track.db`, and app icon.
 
-This is the first implementation milestone. Adaptive coaching/check-ins, recipes, label OCR, meal-photo AI, portable backup/restore, and downloadable catalog updates are not implemented yet. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
+Adaptive coaching/check-ins, label OCR, meal-photo AI, portable backup/restore, and downloadable catalog updates are not implemented yet. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
 The September 25 update adds reusable meals and refreshes the diary, meal cards, food results, shared controls and light/dark surfaces. Reload a running development app after pulling this update so the new saved-meals migration runs. The saved-meal flow supports half/double quantities, retains existing destination entries, and never changes past logs when a saved meal is removed.
+
+The recipe follow-up adds its own local storage migration, so reload once before trying **Library → Create recipe**. Recipe yield currently uses equal servings, not finished batch weight. Ingredients retain the nutrition selected when the recipe was built; previously saved meals also retain their own snapshots. Recipe deletion removes it from reusable search/favorites while preserving logged history.
 
 ## Development
 

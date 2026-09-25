@@ -14,7 +14,7 @@ export type Food = {
   basis: "g" | "ml" | "serving";
   nutrients: Nutrients;
   portions: { label: string; amount: number }[];
-  source: "usda" | "off" | "custom";
+  source: "usda" | "off" | "custom" | "recipe";
   sourceVersion: string;
 };
 export type MealItem = {
@@ -96,4 +96,46 @@ export function shiftDay(day: string, offset: number): string {
   const date = new Date(`${day}T12:00:00`);
   date.setDate(date.getDate() + offset);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+export type RecipeIngredient = { food: Food; amount: number };
+export type Recipe = {
+  id: string;
+  name: string;
+  servings: number;
+  ingredients: RecipeIngredient[];
+  revision: number;
+};
+
+export function recipeFood(recipe: Recipe): Food {
+  if (!recipe.name.trim() || recipe.name.trim().length > 80)
+    throw new Error("Give your recipe a name up to 80 characters.");
+  if (!Number.isFinite(recipe.servings) || recipe.servings <= 0 || recipe.servings > 1000)
+    throw new Error("Enter a batch yield above 0 and no greater than 1,000 servings.");
+  if (!recipe.ingredients.length || recipe.ingredients.length > 100)
+    throw new Error("Add between 1 and 100 ingredients.");
+  const totals = totalNutrients(
+    recipe.ingredients.map(({ food, amount }) => {
+      validateFood(food);
+      return scaleNutrients(food, amount);
+    })
+  );
+  const food: Food = {
+    id: `recipe:${recipe.id}`,
+    name: recipe.name.trim(),
+    brand: "",
+    barcode: null,
+    basis: "serving",
+    source: "recipe",
+    sourceVersion: String(recipe.revision),
+    nutrients: Object.fromEntries(
+      Object.entries(totals).map(([key, value]) => [
+        key,
+        value === null ? null : value / recipe.servings,
+      ])
+    ) as Nutrients,
+    portions: [{ label: "1 serving", amount: 1 }],
+  };
+  validateFood(food);
+  return food;
 }
