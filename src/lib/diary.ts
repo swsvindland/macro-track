@@ -1,3 +1,4 @@
+import { currentFoodTime, validFoodTime, inFoodGroup } from "./food-time";
 import { desc, eq, lte } from "drizzle-orm";
 import {
   customFoods,
@@ -67,6 +68,7 @@ export function saveEntry({
   food,
   amount,
   portionLabel,
+  loggedTime,
 }: {
   id?: number;
   day: string;
@@ -74,6 +76,7 @@ export function saveEntry({
   food: Food;
   amount: number;
   portionLabel: string;
+  loggedTime?: string | null;
 }) {
   if (!validDay(day)) throw new Error("Choose today or an earlier date.");
   if (!meals.includes(meal)) throw new Error("Choose a meal.");
@@ -84,7 +87,11 @@ export function saveEntry({
     const existing =
       id === undefined ? null : tx.select().from(foodEntries).where(eq(foodEntries.id, id)).get();
     if (id !== undefined && !existing) throw new Error("This entry no longer exists.");
-    const data = { day, meal, food, amount, portionLabel, nutrients };
+    const time =
+      loggedTime === undefined ? (existing ? existing.loggedTime : currentFoodTime()) : loggedTime;
+    if (time !== null && !validFoodTime(time))
+      throw new Error("Enter a time in 24-hour format, such as 14:30.");
+    const data = { day, meal, food, amount, portionLabel, nutrients, loggedTime: time };
     if (id === undefined)
       tx.insert(foodEntries)
         .values({ ...data, createdAt: Date.now() })
@@ -190,9 +197,9 @@ export function listSavedMeals() {
     .all();
 }
 
-function mealItems(day: string, meal: Meal): MealItem[] {
+function mealItems(day: string, meal: Meal, group?: string): MealItem[] {
   if (!validDay(day) || !meals.includes(meal)) throw new Error("Choose a valid day and meal.");
-  const items = entriesForDay(day).filter((entry) => entry.meal === meal);
+  const items = entriesForDay(day).filter((entry) => inFoodGroup(entry, meal, group));
   if (!items.length) throw new Error("Add food to this meal first.");
   return items.map(({ food, amount, portionLabel, nutrients }) => ({
     food,
@@ -202,13 +209,13 @@ function mealItems(day: string, meal: Meal): MealItem[] {
   }));
 }
 
-export function saveMeal(name: string, day: string, meal: Meal) {
+export function saveMeal(name: string, day: string, meal: Meal, group?: string) {
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 80)
     throw new Error("Give your meal a name up to 80 characters.");
   return db
     .insert(savedMeals)
-    .values({ name: trimmed, items: mealItems(day, meal), createdAt: Date.now() })
+    .values({ name: trimmed, items: mealItems(day, meal, group), createdAt: Date.now() })
     .returning()
     .get();
 }
@@ -217,12 +224,19 @@ export function deleteSavedMeal(id: number) {
   db.delete(savedMeals).where(eq(savedMeals.id, id)).run();
 }
 
-function addMealItems(items: MealItem[], day: string, meal: Meal, multiplier: number) {
+function addMealItems(
+  items: MealItem[],
+  day: string,
+  meal: Meal,
+  multiplier: number,
+  loggedTime = currentFoodTime()
+) {
   if (!validDay(day) || !meals.includes(meal))
     throw new Error("Choose today or an earlier date and a meal.");
   if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 100)
     throw new Error("Enter a meal quantity above 0 and no greater than 100.");
   if (!items.length) throw new Error("This meal has no food.");
+  if (!validFoodTime(loggedTime)) throw new Error("Enter a time in 24-hour format, such as 14:30.");
   // Validate the whole batch before writing. Keep the original food and nutrient
   // snapshots, even when the catalog or personal food has since changed.
   const entries = items.map((item) => {
@@ -242,6 +256,7 @@ function addMealItems(items: MealItem[], day: string, meal: Meal, multiplier: nu
       day,
       meal,
       createdAt: Date.now(),
+      loggedTime,
       portionLabel:
         multiplier === 1
           ? item.portionLabel
@@ -260,14 +275,27 @@ function addMealItems(items: MealItem[], day: string, meal: Meal, multiplier: nu
   return entries.length;
 }
 
-export function copyMeal(sourceDay: string, sourceMeal: Meal, day: string, meal: Meal) {
-  return addMealItems(mealItems(sourceDay, sourceMeal), day, meal, 1);
+export function copyMeal(
+  sourceDay: string,
+  sourceMeal: Meal,
+  day: string,
+  meal: Meal,
+  loggedTime = currentFoodTime(),
+  sourceGroup?: string
+) {
+  return addMealItems(mealItems(sourceDay, sourceMeal, sourceGroup), day, meal, 1, loggedTime);
 }
 
-export function logSavedMeal(id: number, day: string, meal: Meal, multiplier = 1) {
+export function logSavedMeal(
+  id: number,
+  day: string,
+  meal: Meal,
+  multiplier = 1,
+  loggedTime = currentFoodTime()
+) {
   const saved = db.select().from(savedMeals).where(eq(savedMeals.id, id)).get();
   if (!saved) throw new Error("This saved meal no longer exists.");
-  return addMealItems(saved.items, day, meal, multiplier);
+  return addMealItems(saved.items, day, meal, multiplier, loggedTime);
 }
 
 export function listRecipes(): Recipe[] {

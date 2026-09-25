@@ -1,3 +1,5 @@
+import { TimeField } from "./time-field";
+import { currentFoodTime, mealAtTime } from "@/lib/food-time";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Linking, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -184,6 +186,7 @@ export function FoodEditor({
   close,
   initialDay = localDay(),
   initialMeal = "Breakfast",
+  initialTime,
   entry,
   initialFood,
   initialAmount,
@@ -192,18 +195,22 @@ export function FoodEditor({
   close: () => void;
   initialDay?: string;
   initialMeal?: Meal;
+  initialTime?: string;
   entry?: FoodEntry;
   initialFood?: Food;
   initialAmount?: number;
   onPick?: (food: Food, amount: number) => void;
 }) {
   const { refresh } = useNutrition();
-  const { number } = useStore();
+  const { number, diaryLayout } = useStore();
   const [mode, setMode] = useState<"search" | "barcode" | "custom" | "portion">(
     entry || initialFood ? "portion" : "search"
   );
   const [food, setFood] = useState<Food | undefined>(entry?.food ?? initialFood);
   const [day, setDay] = useState(entry?.day ?? initialDay);
+  const [loggedTime, setLoggedTime] = useState(
+    entry ? (entry.loggedTime ?? "") : (initialTime ?? currentFoodTime())
+  );
   const [meal, setMeal] = useState<Meal>(entry?.meal ?? initialMeal);
   const [amount, setAmount] = useState(
     String(entry?.amount ?? initialAmount ?? (initialFood?.basis === "serving" ? 1 : 100))
@@ -284,10 +291,12 @@ export function FoodEditor({
         close();
         return;
       }
+      if (!entry && !loggedTime) throw new Error("Choose a time for this entry.");
       saveEntry({
         id: entry?.id,
         day,
-        meal,
+        meal: diaryLayout === "timeline" && loggedTime ? mealAtTime(loggedTime) : meal,
+        loggedTime: loggedTime || null,
         food,
         amount: value,
         portionLabel: `${value} ${food.basis === "serving" ? "serving(s)" : food.basis}`,
@@ -467,7 +476,14 @@ export function FoodEditor({
           {!onPick && (
             <>
               <DateInput label="Date" value={day} onChange={setDay} />
-              <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
+              <TimeField
+                value={loggedTime}
+                onChange={setLoggedTime}
+                allowEmpty={!!entry && !entry.loggedTime}
+              />
+              {diaryLayout !== "timeline" && (
+                <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
+              )}
             </>
           )}
           <Field
@@ -505,7 +521,13 @@ export function FoodEditor({
           )}
           <ErrorText message={error} />
           <SystemButton onPress={save}>
-            {onPick ? "Use ingredient" : entry ? "Save changes" : `Add to ${meal.toLowerCase()}`}
+            {onPick
+              ? "Use ingredient"
+              : entry
+                ? "Save changes"
+                : diaryLayout === "timeline"
+                  ? `Log at ${loggedTime}`
+                  : `Add to ${meal.toLowerCase()}`}
           </SystemButton>
           {entry && (
             <SystemButton

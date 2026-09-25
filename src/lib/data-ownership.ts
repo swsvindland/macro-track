@@ -44,6 +44,7 @@ export function exportDiaryCsv() {
       [
         "date",
         "meal",
+        "local_time",
         "food",
         "brand",
         "quantity",
@@ -62,6 +63,7 @@ export function exportDiaryCsv() {
       ...entries.map((row) => [
         row.day,
         row.meal,
+        row.loggedTime,
         row.food.name,
         row.food.brand,
         row.amount,

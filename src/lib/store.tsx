@@ -28,6 +28,8 @@ function read() {
       .orderBy(desc(measurements.measuredAt), desc(measurements.id))
       .all(),
     photos: db.select().from(photos).orderBy(desc(photos.measuredAt), desc(photos.id)).all(),
+    diaryLayout: (prefs.diaryLayout === "meals" ? "meals" : "timeline") as "meals" | "timeline",
+    hideEmptyHours: prefs.hideEmptyHours !== "false",
     units: (prefs.units ?? "metric") as Units,
     formula: (prefs.formula === "female" ? "female" : "male") as "male" | "female",
     theme: (prefs.theme === "dark" || prefs.theme === "light" ? prefs.theme : "system") as

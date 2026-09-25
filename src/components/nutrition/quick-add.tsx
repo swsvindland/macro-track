@@ -1,3 +1,6 @@
+import { useStore } from "@/lib/store";
+import { TimeField } from "./time-field";
+import { currentFoodTime, mealAtTime } from "@/lib/food-time";
 import { useRef, useState } from "react";
 import { SystemButton, SystemText as Text } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
@@ -8,6 +11,8 @@ import { useNutrition } from "@/lib/nutrition-store";
 
 export function QuickAdd({ day, close }: { day: string; close: () => void }) {
   const { refresh } = useNutrition();
+  const { diaryLayout } = useStore();
+  const [loggedTime, setLoggedTime] = useState(currentFoodTime);
   const [name, setName] = useState("");
   const [meal, setMeal] = useState<Meal>("Snacks");
   const [values, setValues] = useState({ calories: "", protein: "", carbs: "", fat: "" });
@@ -25,7 +30,8 @@ export function QuickAdd({ day, close }: { day: string; close: () => void }) {
         onChange={setName}
         placeholder="e.g. Lunch estimate"
       />
-      <Choices values={meals} value={meal} onChange={setMeal} />
+      <TimeField value={loggedTime} onChange={setLoggedTime} />
+      {diaryLayout !== "timeline" && <Choices values={meals} value={meal} onChange={setMeal} />}
       {(["calories", "protein", "carbs", "fat"] as const).map((key) => (
         <Field
           key={key}
@@ -46,7 +52,8 @@ export function QuickAdd({ day, close }: { day: string; close: () => void }) {
             locked.current = true;
             saveEntry({
               day,
-              meal,
+              meal: diaryLayout === "timeline" ? mealAtTime(loggedTime) : meal,
+              loggedTime,
               amount: 1,
               portionLabel: "1 estimated entry",
               food: {

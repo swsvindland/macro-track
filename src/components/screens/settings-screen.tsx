@@ -13,6 +13,8 @@ import { enableHealthSync, disableHealthSync } from "@/lib/health-schedule";
 export function SettingsScreen() {
   const {
     units,
+    diaryLayout,
+    hideEmptyHours,
     languagePreference,
     theme,
     healthSyncEnabled,
@@ -134,6 +136,29 @@ export function SettingsScreen() {
               {t(message)}
             </Text>
           )}
+        </SystemPanel.Body>
+      </SystemPanel>
+      <SystemPanel>
+        <SystemPanel.Body className="gap-3">
+          <Text className="text-xl font-semibold">Food diary</Text>
+          <SettingsSelect
+            title="Diary layout"
+            values={["timeline", "meals"] as const}
+            value={diaryLayout}
+            onChange={(value) => preference("diaryLayout", value)}
+            label={(value) => (value === "timeline" ? "Time-based timeline" : "Classic meals")}
+          />
+          <SettingsSelect
+            title="Empty hours"
+            values={["hidden", "shown"] as const}
+            value={hideEmptyHours ? "hidden" : "shown"}
+            onChange={(value) => preference("hideEmptyHours", String(value === "hidden"))}
+            label={(value) => (value === "hidden" ? "Hide empty hours" : "Show all 24 hours")}
+          />
+          <Text className="text-sm text-muted">
+            Times stay with entries when you switch layouts. Older foods without a recorded time
+            remain visible.
+          </Text>
         </SystemPanel.Body>
       </SystemPanel>
       <BackupPanel />

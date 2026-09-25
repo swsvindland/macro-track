@@ -39,6 +39,7 @@ function load(file, dependencies = {}, compile = false) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const metrics = load("src/lib/metrics.ts");
+const foodTime = load("src/lib/food-time.ts", { "./nutrition": nutrition });
 const schema = load("src/db/schema.ts");
 const food = {
   id: "custom:test",
@@ -54,7 +55,7 @@ const food = {
 
 // Exercise the actual compiler output with persistent hook/cache slots. Native
 // rendering is substituted; database reads/writes and compiler caching are real.
-function screenHarness(diary) {
+function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const slots = [];
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
@@ -115,7 +116,9 @@ function screenHarness(diary) {
     "@/lib/metrics": metrics,
     "./metrics": metrics,
     "@/lib/nutrition": nutrition,
+    "@/lib/food-time": foodTime,
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
+    "./time-field": { TimeField: "TimeField" },
     "./quick-add": { QuickAdd: "QuickAdd" },
     "./copy-day": { CopyDay: "CopyDay" },
     "./meal-editor": { MealEditor: "MealEditor" },
@@ -125,7 +128,14 @@ function screenHarness(diary) {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
   };
-  const store = { number: (n) => String(n), date: (day) => day };
+  Object.assign(dependencies, extraDependencies);
+  const store = {
+    diaryLayout: "meals",
+    hideEmptyHours: true,
+    number: (n) => String(n),
+    date: (day) => day,
+    ...storeOverrides,
+  };
   dependencies["@/lib/store"] = { useStore: () => store };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
@@ -175,10 +185,12 @@ function diaryDatabase() {
     "@/db": { db, ...schema },
     "./metrics": metrics,
     "./nutrition": nutrition,
+    "./food-time": foodTime,
   });
   const backup = load("src/lib/backup-data.ts", {
     "@/db": { db, ...schema },
     "./nutrition": nutrition,
+    "./food-time": foodTime,
   });
   return { sqlite, diary, backup, db };
 }
@@ -839,6 +851,7 @@ test("check-in acceptance is atomic, weekly, preserved in backups, and keeps pas
     "@/db": { db, ...schema },
     "./metrics": fakeMetrics,
     "./nutrition": nutrition,
+    "./food-time": foodTime,
     "./diary": diary,
     "./coaching": coaching,
     "./program": program,
@@ -1049,6 +1062,7 @@ test("program setup writes generated targets atomically and preserves learned ex
     "@/db": { db, ...schema },
     "./metrics": { ...metrics, localDay: () => "2024-02-01" },
     "./nutrition": nutrition,
+    "./food-time": foodTime,
     "./diary": diary,
     "./coaching": coaching,
     "./program": program,
@@ -1063,5 +1077,148 @@ test("program setup writes generated targets atomically and preserves learned ex
   store.createProgram("maintain", 0.25, { ...profile, targetWeightKg: 80, activity: "high" });
   assert.equal(store.currentGoal().program.initialExpenditure, expense);
   assert.equal(diary.targetsForDay("2024-01-31"), null);
+  sqlite.close();
+});
+
+test("food timeline groups by time, sorts minutes and preserves untimed historical meals", () => {
+  const entries = [
+    { id: 1, meal: "Breakfast", loggedTime: "08:45" },
+    { id: 2, meal: "Snacks", loggedTime: "08:15" },
+    { id: 3, meal: "Dinner", loggedTime: null },
+    { id: 4, meal: "Lunch", loggedTime: "23:59" },
+  ];
+  const groups = foodTime.timelineGroups(entries, true, false);
+  assert.deepEqual(
+    groups.map((row) => row.key),
+    ["08", "23", "untimed-Dinner"]
+  );
+  assert.deepEqual(
+    groups[0].entries.map((row) => row.id),
+    [2, 1]
+  );
+  assert.equal(foodTime.timelineGroups(entries, false, false).length, 25);
+  for (const value of ["00:00", "08:45", "23:59"]) assert.ok(foodTime.validFoodTime(value));
+  for (const value of ["24:00", "08:60", "8:00", "1 PM", ""])
+    assert.equal(foodTime.validFoodTime(value), false);
+});
+test("moving and reusing timeline hours preserves snapshots and separates legacy entries", () => {
+  const { diary, sqlite, backup } = diaryDatabase();
+  for (const [meal, loggedTime] of [
+    ["Breakfast", "08:15"],
+    ["Snacks", "08:45"],
+    ["Breakfast", "10:30"],
+    ["Breakfast", null],
+  ])
+    diary.saveEntry({
+      day: "2024-01-01",
+      meal,
+      loggedTime,
+      food,
+      amount: 100,
+      portionLabel: "100 g",
+    });
+  const saved = diary.saveMeal("Morning", "2024-01-01", "Breakfast", "08");
+  assert.equal(saved.items.length, 2);
+  assert.equal(
+    diary.saveMeal("Legacy breakfast", "2024-01-01", "Breakfast", "untimed").items.length,
+    1
+  );
+  diary.logSavedMeal(saved.id, "2024-01-02", "Dinner", 1, "18:35");
+  assert.deepEqual(
+    diary.entriesForDay("2024-01-02").map((row) => row.loggedTime),
+    ["18:35", "18:35"]
+  );
+  diary.copyDay("2024-01-01", "2024-01-03");
+  assert.deepEqual(
+    diary.entriesForDay("2024-01-03").map((row) => row.loggedTime),
+    ["08:15", "08:45", "10:30", null]
+  );
+  const entry = diary.entriesForDay("2024-01-01")[0];
+  diary.saveEntry({ ...entry, loggedTime: "12:15" });
+  assert.equal(diary.entriesForDay("2024-01-01")[0].loggedTime, "12:15");
+  assert.throws(() => diary.saveEntry({ ...entry, loggedTime: "25:00" }));
+  backup.restoreBackup(backup.createBackup());
+  assert.equal(diary.entriesForDay("2024-01-01")[0].loggedTime, "12:15");
+  const legacy = backup.createBackup();
+  legacy.data.entries.forEach((row) => delete row.loggedTime);
+  backup.restoreBackup(legacy);
+  assert.ok(diary.entriesForDay("2024-01-01").every((row) => row.loggedTime === null));
+  sqlite.close();
+});
+test("compiled timeline moves an edited entry between hours without changing the day", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const day = metrics.localDay();
+  diary.saveEntry({
+    day,
+    meal: "Breakfast",
+    loggedTime: "08:15",
+    food,
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  const harness = screenHarness(diary, { diaryLayout: "timeline", hideEmptyHours: true });
+  const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
+  const render = () => nodes(harness.render(TodayScreen));
+  assert.ok(render().some((node) => node.props.children === "Food timeline"));
+  assert.ok(render().some((node) => node.props.children === "08:00"));
+  const entry = diary.entriesForDay(day)[0];
+  diary.saveEntry({ ...entry, loggedTime: "17:25" });
+  harness.context.refresh();
+  const tree = render();
+  assert.ok(tree.some((node) => node.props.children === "17:00"));
+  assert.equal(tree.filter((node) => node.props.accessibilityLabel === "Edit Test food").length, 1);
+  const add = tree.find((node) => node.props.accessibilityLabel === "Add food to 17:00");
+  add.props.onPress();
+  assert.equal(render().find((node) => node.type === "FoodEditor").props.initialTime, "17:00");
+  sqlite.close();
+});
+
+test("compiled guided setup previews generated targets and starts the program once", () => {
+  const { diary, sqlite, db } = diaryDatabase();
+  const store = load("src/lib/coaching-store.ts", {
+    "@/db": { db, ...schema },
+    "./metrics": metrics,
+    "./nutrition": nutrition,
+    "./food-time": foodTime,
+    "./diary": diary,
+    "./coaching": coaching,
+    "./program": program,
+  });
+  const harness = screenHarness(
+    diary,
+    { weights: [], units: "metric" },
+    { "@/lib/coaching-store": store, "@/lib/program": program }
+  );
+  const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");
+  let closed = 0;
+  const render = () => nodes(harness.render(ProgramEditor, { close: () => closed++ }));
+  for (const [label, value] of [
+    ["Age", "30"],
+    ["Height (cm)", "180"],
+    ["Starting weight (kg)", "80"],
+    ["Goal weight (kg)", "75"],
+  ])
+    render()
+      .find((node) => node.type === "Field" && node.props.label === label)
+      .props.onChange(value);
+  render()
+    .find((node) => node.type === "Choices" && node.props.values.includes("female"))
+    .props.onChange("male");
+  const initial = render().find(
+    (node) => node.type === "Button" && node.props.children === "Start this program"
+  );
+  assert.equal(initial.props.isDisabled, true);
+  render()
+    .find((node) => node.type === "Button" && node.props.accessibilityState?.checked === false)
+    .props.onPress();
+  const start = render().find(
+    (node) => node.type === "Button" && node.props.children === "Start this program"
+  );
+  assert.equal(start.props.isDisabled, false);
+  start.props.onPress();
+  start.props.onPress();
+  assert.equal(closed, 1);
+  assert.equal(db.select().from(schema.coachingGoals).all().length, 1);
+  assert.ok(diary.targetsForDay(metrics.localDay()).calories > 1500);
   sqlite.close();
 });

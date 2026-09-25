@@ -5,7 +5,6 @@ import {
   validateProgram,
   type Program,
 } from "./program";
-import { weightTrend } from "./metrics";
 import { and, desc, gte, lte } from "drizzle-orm";
 import {
   db,
@@ -16,7 +15,7 @@ import {
   weightEntries,
   nutritionTargets,
 } from "@/db";
-import { dayOf, localDay } from "./metrics";
+import { dayOf, localDay, weightTrend } from "./metrics";
 import { shiftDay } from "./nutrition";
 import { targetsForDay } from "./diary";
 import { reviewWeek, type Goal } from "./coaching";
@@ -77,6 +76,17 @@ export function currentReview(day = localDay()) {
     weights: rows.map((row) => ({ day: dayOf(row.measuredAt), kg: row.weightKg })),
   };
   if (goal.program && input.targets) {
+    const completed = checkInHistory().find(
+      (row) => row.day === day && row.goalId === goal.id && row.review.method === 2
+    );
+    if (completed)
+      return {
+        ...completed.review,
+        proposed: null,
+        status: "holding" as const,
+        reason:
+          "This week’s review is saved. Your next check-in will use fresh logs and your latest normalized weight.",
+      };
     const last = checkInHistory().find(
       (row) => row.review.method === 2 && row.review.expenditure !== null
     );

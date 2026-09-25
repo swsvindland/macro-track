@@ -4,14 +4,14 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 
 ## Usable MVP
 
-- Today: date navigation, calories/macros, meals, logging status, add/edit/delete entries.
+- Today: an hourly food timeline with editable times, date navigation, calories/macros, logging status and add/edit/delete entries. Empty hours are hidden by default; Settings also offers the classic meal layout. Older entries remain visible with time unset.
 - Offline food search across **7,793 USDA SR Legacy foods** and **82,937 US packaged foods** from the full Open Food Facts CSV export.
 - Camera barcode scanning and typed barcode lookup, with a custom-food fallback.
 - Gram, milliliter, and serving quantities; source-provided common portions; nutrition snapshots that preserve historical totals.
 - Personal foods, favorites, and recent foods.
 - Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Tap **Reuse meal** below a logged meal, or open **Saved meals** from Today or Library. Copies preserve nutrition snapshots and remain independently editable.
 - Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
-- Manual calorie/macro baselines plus lose/maintain/gain goals and local weekly check-ins. Calibration requires 21 complete days and regular weights; adjustments require acceptance. See [coaching method and limits](docs/coaching.md).
+- Guided Cut/Bulk/Maintain programs generate calories and macros from your profile, goal and preferences. Weekly reviews use normalized weight and observed intake; maintenance gently corrects drift around a target weight. Goal changes preserve learning. Manual mode remains available. See [coaching method and limits](docs/coaching.md).
 - Quick-add estimates, whole-day copying, and optional cooked batch weights for gram-based recipe portions.
 - Progress includes complete-day intake averages and the next check-in.
 - Readable food/weight CSV exports and confirmed local personal-data erasure.
@@ -75,3 +75,5 @@ The September 24, 2026 foundation passed all 21 automated tests, TypeScript and 
 The documentation and store assets under `docs/app-store/` were inherited from Body Track and are reference material, not ready-to-submit Macro Track assets.
 
 See [MVP validation and release gates](docs/mvp-validation.md) for the latest verified scope.
+
+See [the MacroFactor feature review](docs/macrofactor-feature-review.md) for the researched comparison and remaining gaps.

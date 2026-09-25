@@ -1,3 +1,5 @@
+import { TimeField } from "./time-field";
+import { currentFoodTime, inFoodGroup, mealAtTime } from "@/lib/food-time";
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
@@ -21,26 +23,31 @@ export function MealEditor({
   saved,
   initialDay = localDay(),
   initialMeal = "Breakfast",
+  initialTime,
   close,
   onLogged,
 }: {
-  source?: { day: string; meal: Meal };
+  source?: { day: string; meal: Meal; group?: string };
   saved?: SavedMeal;
   initialDay?: string;
   initialMeal?: Meal;
+  initialTime?: string;
   close: () => void;
   onLogged?: (day: string) => void;
 }) {
   const { refresh } = useNutrition();
-  const { number, date } = useStore();
+  const { number, date, diaryLayout } = useStore();
   const available = useNutritionQuery(listSavedMeals);
   const sourceItems = useNutritionQuery(() =>
-    source ? entriesForDay(source.day).filter((entry) => entry.meal === source.meal) : []
+    source
+      ? entriesForDay(source.day).filter((entry) => inFoodGroup(entry, source.meal, source.group))
+      : []
   );
   const [selected, setSelected] = useState(saved);
   const [mode, setMode] = useState<"Save meal" | "Copy meal">("Save meal");
   const [name, setName] = useState(source?.meal ?? "");
   const [day, setDay] = useState(initialDay);
+  const [loggedTime, setLoggedTime] = useState(initialTime || currentFoodTime());
   const [meal, setMeal] = useState<Meal>(initialMeal);
   const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState("");
@@ -55,12 +62,14 @@ export function MealEditor({
     locked.current = true;
     try {
       if (source && mode === "Save meal") {
-        const result = saveMeal(name, source.day, source.meal);
+        const result = saveMeal(name, source.day, source.meal, source.group);
         refresh();
         setSuccess(`${result.name} is ready in your library.`);
       } else {
-        if (source) copyMeal(source.day, source.meal, day, meal);
-        else if (selected) logSavedMeal(selected.id, day, meal, factor);
+        const destinationMeal = diaryLayout === "timeline" ? mealAtTime(loggedTime) : meal;
+        if (source)
+          copyMeal(source.day, source.meal, day, destinationMeal, loggedTime, source.group);
+        else if (selected) logSavedMeal(selected.id, day, destinationMeal, factor, loggedTime);
         else throw new Error("Choose a saved meal first.");
         refresh();
         onLogged?.(day);
@@ -75,7 +84,11 @@ export function MealEditor({
   return (
     <Editor
       title={
-        source ? `Reuse ${source.meal.toLowerCase()}` : selected ? selected.name : "Saved meals"
+        source
+          ? `Reuse ${source.group && source.group !== "untimed" ? source.group + ":00" : source.meal.toLowerCase()}`
+          : selected
+            ? selected.name
+            : "Saved meals"
       }
       open
       close={close}
@@ -195,16 +208,24 @@ export function MealEditor({
                 </Text>
               )}
               <DateInput label="Add to date" value={day} onChange={setDay} />
-              <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
+              <TimeField value={loggedTime} onChange={setLoggedTime} />
+              {diaryLayout !== "timeline" && (
+                <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
+              )}
               <Text className="text-sm text-muted">
-                Adds {items.length} food entries to {meal.toLowerCase()} on {date(day)}. Existing
-                food stays in place.
+                Adds {items.length} food entries to{" "}
+                {diaryLayout === "timeline" ? loggedTime : meal.toLowerCase()} on {date(day)}.
+                Existing food stays in place.
               </Text>
             </>
           )}
           <ErrorText message={error} />
           <SystemButton onPress={submit}>
-            {source && mode === "Save meal" ? "Save to library" : `Add to ${meal.toLowerCase()}`}
+            {source && mode === "Save meal"
+              ? "Save to library"
+              : diaryLayout === "timeline"
+                ? `Log at ${loggedTime}`
+                : `Add to ${meal.toLowerCase()}`}
           </SystemButton>
           {!source && selected && (
             <SystemButton

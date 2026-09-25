@@ -1,3 +1,4 @@
+import { timelineGroups, currentFoodTime } from "@/lib/food-time";
 import { QuickAdd } from "./quick-add";
 import { CopyDay } from "./copy-day";
 import { useEffect, useRef, useState } from "react";
@@ -22,18 +23,20 @@ const statusLabels: Record<DayState, string> = {
 };
 
 export function TodayScreen() {
-  const { number, date } = useStore();
+  const { number, date, diaryLayout, hideEmptyHours } = useStore();
   const { refresh } = useNutrition();
   const [today, setToday] = useState(localDay());
   const todayRef = useRef(today);
   const [day, setDay] = useState(localDay());
   const [choosingDay, setChoosingDay] = useState(false);
-  const [editor, setEditor] = useState<{ meal: Meal; entry?: FoodEntry } | null>(null);
+  const [editor, setEditor] = useState<{ meal: Meal; entry?: FoodEntry; time?: string } | null>(
+    null
+  );
   const [quick, setQuick] = useState(false);
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState("");
   const [mealEditor, setMealEditor] = useState<{
-    source?: { day: string; meal: Meal };
+    source?: { day: string; meal: Meal; group?: string };
     meal: Meal;
   } | null>(null);
   useEffect(() => {
@@ -59,6 +62,17 @@ export function TodayScreen() {
     targets: targetsForDay(day),
     status: dayStatus(day),
   }));
+  const groups =
+    diaryLayout === "timeline"
+      ? timelineGroups(entries, hideEmptyHours, day === today)
+      : meals.map((meal) => ({
+          key: meal,
+          title: meal,
+          meal,
+          group: undefined,
+          time: currentFoodTime(),
+          entries: entries.filter((entry) => entry.meal === meal),
+        }));
   const totals = totalNutrients(entries.map((entry) => entry.nutrients));
   return (
     <>
@@ -201,28 +215,31 @@ export function TodayScreen() {
           </Text>
         )}
         <View className="flex-row items-center justify-between">
-          <Text className="text-xl font-semibold">Your meals</Text>
+          <Text className="text-xl font-semibold">
+            {diaryLayout === "timeline" ? "Food timeline" : "Your meals"}
+          </Text>
           <Text className="text-sm text-muted">
             {entries.length} {entries.length === 1 ? "food" : "foods"} logged
           </Text>
         </View>
-        {meals.map((meal) => {
-          const rows = entries.filter((entry) => entry.meal === meal);
+        {groups.map((group) => {
+          const meal = group.meal;
+          const rows = group.entries;
           const mealCalories = rows.reduce((total, item) => total + item.nutrients.calories, 0);
           return (
-            <SystemPanel key={meal}>
+            <SystemPanel key={group.key}>
               <SystemPanel.Body className="gap-3">
                 <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1 gap-1">
-                    <Text className="text-lg font-semibold">{meal}</Text>
+                    <Text className="text-lg font-semibold">{group.title}</Text>
                     <Text className="text-sm text-muted">
                       {rows.length ? `${number(mealCalories, 0)} kcal` : "Ready when you are"}
                     </Text>
                   </View>
                   <SystemButton
                     variant="secondary"
-                    accessibilityLabel={`Add food to ${meal}`}
-                    onPress={() => setEditor({ meal })}
+                    accessibilityLabel={`Add food to ${group.title}`}
+                    onPress={() => setEditor({ meal, time: group.time || currentFoodTime() })}
                   >
                     Add food
                   </SystemButton>
@@ -237,7 +254,12 @@ export function TodayScreen() {
                   >
                     <View className="flex-1 gap-1">
                       <Text numberOfLines={2}>{entry.food.name}</Text>
-                      <Text className="text-sm text-muted">{entry.portionLabel}</Text>
+                      <Text className="text-sm text-muted">
+                        {diaryLayout === "timeline" && entry.loggedTime
+                          ? `${entry.loggedTime} · `
+                          : ""}
+                        {entry.portionLabel}
+                      </Text>
                     </View>
                     <Text className="font-semibold tabular-nums text-sm">
                       {number(entry.nutrients.calories, 0)}
@@ -248,7 +270,9 @@ export function TodayScreen() {
                   <SystemButton
                     variant="ghost"
                     className="self-start px-0"
-                    onPress={() => setMealEditor({ source: { day, meal }, meal })}
+                    onPress={() =>
+                      setMealEditor({ source: { day, meal, group: group.group }, meal })
+                    }
                   >
                     Reuse meal
                   </SystemButton>
@@ -295,6 +319,7 @@ export function TodayScreen() {
         <FoodEditor
           initialDay={day}
           initialMeal={editor.meal}
+          initialTime={editor.time}
           entry={editor.entry}
           close={() => setEditor(null)}
         />

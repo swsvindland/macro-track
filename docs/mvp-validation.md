@@ -3,15 +3,15 @@
 ## What is ready for internal use
 
 - Offline search of 90,730 US foods, exact barcode lookup, camera scanner and personal-food fallback.
-- Dated four-meal diary with quantities, common portions, editing/deletion, favorites, recents and explicit completeness states.
+- Dated hourly timeline (with optional classic meals) with quantities, common portions, editing/deletion, favorites, recents and explicit completeness states.
 - Quick calorie/macro estimates, saved meals, whole-day and meal copying.
 - Recipes with ingredient snapshots, equal servings and optional cooked batch mass for weighed portions.
-- Manual calorie/macro baselines; lose/maintain/gain goals; local 21-day calibration and weekly review with explicit accept/keep decisions and conservative holds.
+- Guided Cut/Bulk/Maintain programs; generated calorie/macro baselines; normalized-weight learning and weekly review with explicit accept/keep decisions and conservative holds.
 - Weight history, trend charts, optional health integration, complete-day intake averages and next check-in.
 - Encrypted backup/restore with a verified pre-restore recovery copy, readable food/weight CSV export, and confirmed local erasure.
 - Bundled catalog version information and offline coaching-method explanation. Catalog refreshes arrive with app releases.
 
-The ordinary first-use path is Plan → enter daily targets and choose a goal → Today → add food → Progress → add weight. Mark each finished diary day complete. Coaching uses the preceding 21 days and requires three weigh-in days per week. Manual logging and targets are usable immediately without calibration, accounts, network calls or health permission.
+The ordinary first-use path is Plan → Build my program → Today → add food → Progress → add weight. Mark each finished diary day complete. Method 2 examines the preceding 21 days, using at least 12 covered days in complete blocks of seven or more and six weigh-in days. Gaps can pause updates without resetting learning. Manual logging and targets are usable immediately without calibration, accounts, network calls or health permission.
 
 ## Verification performed
 
@@ -27,12 +27,12 @@ The ordinary first-use path is Plan → enter daily targets and choose a goal �
 
 Tests include compiler-transformed UI refresh, food arithmetic, source catalogs/search/barcodes, immutable history, saved meals, weighed recipe portions, copy rollback, quick-add double taps, missing logging data, water-weight jumps, bounded check-ins, weekly cadence, target history, backward-compatible backups, encryption/tamper rejection, restore rollback/recovery, CSV escaping and transactional erasure. They do not substitute for real-device UX checks or clinical validation.
 
-Build logs and final bundle are in `/private/tmp/macro-track-mvp-*` on the development machine. These are temporary verification artifacts, not release builds.
+Latest program/timeline production exports are in `/private/tmp/macro-track-program-timeline`; prior native build logs are in `/private/tmp/macro-track-mvp-*` on the development machine. These are temporary verification artifacts, not release builds.
 
 ## Before public release
 
 1. Run the phone checklist below on actual iOS and Android devices. Native UI inspection through the available simulator automation repeatedly timed out, so no screenshot-based final visual QA is claimed.
-2. Review the coaching method with a qualified nutrition professional before marketing its recommendations as validated. The baseline is user supplied; the estimator is an approximate local method with documented limits, not MacroFactor's algorithm.
+2. Review the coaching method with a qualified nutrition professional before marketing its recommendations as validated. The baseline is a provisional profile-based estimate; the estimator is an approximate local method with documented limits, not MacroFactor's algorithm.
 3. Publish the distributed OFF-derived database and license notices, choose final branding, create a separate Macro Track EAS project, and complete store privacy/screenshots/signing setup. Do not reuse Vector Body's EAS project.
 4. Exercise OS health reconciliation after backup restore; reconnecting an existing history can duplicate external weight records. Restore and erasure switch sync off.
 5. Test large-backup performance, interrupted restores, low storage and app-upgrade catalog installation on supported phones.
@@ -50,4 +50,12 @@ Build logs and final bundle are in `/private/tmp/macro-track-mvp-*` on the devel
 
 ## Explicitly outside this MVP
 
-Local meal-photo AI, nutrition-label OCR, profile-based initial calorie estimates, optional signed food-pack downloads/cleanup, multi-food selection, advanced micronutrients, reminders/widgets, restaurant coverage, paid entitlements and translated nutrition screens. Photo AI/OCR need a separate native prototype and physical-device accuracy/performance validation. No cloud AI fallback is silently used.
+Local meal-photo AI, nutrition-label OCR, optional signed food-pack downloads/cleanup, multi-food selection, advanced micronutrients, reminders/widgets, restaurant coverage, paid entitlements and translated nutrition screens. Photo AI/OCR need a separate native prototype and physical-device accuracy/performance validation. No cloud AI fallback is silently used.
+
+## Program and timeline follow-up
+
+The official MacroFactor feature review identified important prototype gaps; the follow-up adds guided automatic targets, normalized weight in coaching, weight-based protein, dynamic maintenance, configurable check-in day and retained expenditure learning across goal changes. It does not claim to reproduce MacroFactor's private estimation algorithm. The remaining clinical/device QA gates above still apply.
+
+The diary now stores an explicit local `HH:mm` alongside the selected date. Changing time moves an entry between hourly groups; calendar-day totals do not change. Whole-day copies retain times. Saved meals and hour reuse log at the chosen destination time. Older entries and backups have null times and stay visible under their former meal labels. Times do not move when the phone changes timezone. CSV exports include local time. Food-diary layout preferences remain local settings and are not part of the portable nutrition backup.
+
+Additional tests cover guided program creation, fixed weight-based protein under calorie changes, maintenance drift, completed goals, incomplete intervals, retained learning, timeline grouping/order, edits between hours, hour reuse, whole-day time preservation and old-backup compatibility. The update changes no native dependencies; both production platform bundles were regenerated.

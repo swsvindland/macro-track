@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import { useStore } from "@/lib/store";
-import { useNutrition } from "@/lib/nutrition-store";
+import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { createProgram, currentGoal, previewProgram } from "@/lib/coaching-store";
 import { type Program } from "@/lib/program";
 import { parseNumber, weightTrend } from "@/lib/metrics";
@@ -11,7 +11,7 @@ import type { Goal } from "@/lib/coaching";
 export function ProgramEditor({ close }: { close: () => void }) {
   const { weights, units, number } = useStore();
   const { refresh } = useNutrition();
-  const existing = currentGoal();
+  const existing = useNutritionQuery(currentGoal);
   const saved = existing?.program;
   const factor = units === "metric" ? 1 : 2.2046226218;
   const [mode, setMode] = useState<Exclude<Goal["mode"], "manual">>(
@@ -48,12 +48,13 @@ export function ProgramEditor({ close }: { close: () => void }) {
     diet,
     checkInDay: Number(checkDay),
   };
-  let preview = null;
-  try {
-    preview = previewProgram(mode, Number(pace), draft).targets;
-  } catch {
-    /* Validate on save. */
-  }
+  const preview = useNutritionQuery(() => {
+    try {
+      return previewProgram(mode, Number(pace), draft).targets;
+    } catch {
+      return null;
+    }
+  });
   return (
     <Editor title={saved ? "Update your program" : "Build your program"} open close={close}>
       <Text className="text-muted">

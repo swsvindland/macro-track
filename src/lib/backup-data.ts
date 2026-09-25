@@ -130,7 +130,21 @@ const dataSchema = z.strictObject({
     )
     .max(10000)
     .default([]),
-  entries: z.array(item.extend({ id, day, meal, createdAt: timestamp })).max(100000),
+  entries: z
+    .array(
+      item.extend({
+        id,
+        day,
+        meal,
+        loggedTime: z
+          .string()
+          .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+          .nullable()
+          .optional(),
+        createdAt: timestamp,
+      })
+    )
+    .max(100000),
   customFoods: z
     .array(
       z

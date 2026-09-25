@@ -66,6 +66,7 @@ export const foodEntries = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     day: text("day").notNull(),
     meal: text("meal").$type<Meal>().notNull(),
+    loggedTime: text("logged_time"),
     food: text("food", { mode: "json" }).$type<Food>().notNull(),
     amount: real("amount").notNull(),
     portionLabel: text("portion_label").notNull(),

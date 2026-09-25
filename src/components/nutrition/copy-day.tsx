@@ -16,7 +16,7 @@ export function CopyDay({ destination, close }: { destination: string; close: ()
     <Editor title="Copy a day" open close={close}>
       <DateInput label="Copy food from" value={source} onChange={setSource} />
       <Text>
-        {entries.length} foods will be added to {date(destination)}, keeping their meals and
+        {entries.length} foods will be added to {date(destination)}, keeping their times, meals and
         quantities. Existing food stays in place.
       </Text>
       <ErrorText message={error} />
