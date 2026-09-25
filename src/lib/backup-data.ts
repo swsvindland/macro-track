@@ -72,7 +72,10 @@ const targetSchema = z.strictObject({
   fat: z.number().min(0).max(1500),
 });
 const reviewSchema = z.strictObject({
-  method: z.literal(1),
+  method: z.union([z.literal(1), z.literal(2)]),
+  trendWeightKg: positive.max(1000).optional(),
+  targetWeightKg: positive.max(1000).optional(),
+  observedDays: z.number().int().min(0).max(21).optional(),
   day,
   start: day,
   end: day,
@@ -95,6 +98,21 @@ const dataSchema = z.strictObject({
           mode: z.enum(["manual", "lose", "maintain", "gain"]),
           pace: z.number().min(0).max(0.5),
           startedDay: day,
+          program: z
+            .strictObject({
+              age: z.number().int().min(18).max(100),
+              heightCm: z.number().min(120).max(230),
+              weightKg: z.number().min(35).max(350),
+              formula: z.enum(["female", "male"]),
+              activity: z.enum(["low", "light", "moderate", "high"]),
+              protein: z.union([z.literal(1.4), z.literal(1.6), z.literal(2), z.literal(2.2)]),
+              diet: z.enum(["balanced", "lower-fat", "lower-carb"]),
+              targetWeightKg: z.number().min(35).max(350),
+              initialExpenditure: z.number().min(1200).max(5000),
+              checkInDay: z.number().int().min(0).max(6),
+            })
+            .nullable()
+            .optional(),
         })
         .refine((row) => row.mode !== "gain" || row.pace <= 0.25)
     )

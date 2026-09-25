@@ -21,9 +21,9 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 
 Label OCR, meal-photo AI, and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
-Start with **Plan → Daily targets**, then choose a goal. Log food in **Today**, add weights in **Progress**, and mark finished days complete. **Library** holds personal foods, saved meals and recipes. Check-ins explain their coverage and proposed changes; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
+Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food in **Today**, add weights in **Progress**, and mark finished days complete. **Library** holds personal foods, saved meals and recipes. Check-ins explain their coverage and proposed changes; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
 
-Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules. Initial targets are user supplied; there is no automatic profile-based calorie prescription in this MVP.
+Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules. Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
 
 ## Development
 

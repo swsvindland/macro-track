@@ -125,6 +125,7 @@ export const coachingGoals = sqliteTable("coaching_goals", {
   mode: text("mode").$type<import("@/lib/coaching").Goal["mode"]>().notNull(),
   pace: real("pace").notNull(),
   startedDay: text("started_day").notNull(),
+  program: text("program", { mode: "json" }).$type<import("@/lib/program").Program>(),
 });
 export const checkIns = sqliteTable("check_ins", {
   day: text("day").primaryKey(),

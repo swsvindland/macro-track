@@ -786,6 +786,7 @@ test("restore requires a readable recovery file before any replacement", async (
   sqlite.close();
 });
 
+const program = load("src/lib/program.ts", { "./nutrition": nutrition, "./metrics": metrics });
 const coaching = load("src/lib/coaching.ts", { "./nutrition": nutrition });
 function coachingInput() {
   const day = "2024-02-01";
@@ -840,6 +841,7 @@ test("check-in acceptance is atomic, weekly, preserved in backups, and keeps pas
     "./nutrition": nutrition,
     "./diary": diary,
     "./coaching": coaching,
+    "./program": program,
   });
   const input = coachingInput();
   db.insert(schema.coachingGoals).values(input.goal).run();
@@ -976,5 +978,90 @@ test("erase clears all personal tables, disables sync and rolls back database fa
       .find((row) => row.key === "healthSyncEnabled").value,
     "false"
   );
+  sqlite.close();
+});
+
+const profile = {
+  age: 30,
+  heightCm: 180,
+  weightKg: 80,
+  formula: "male",
+  activity: "moderate",
+  protein: 1.6,
+  diet: "balanced",
+  targetWeightKg: 75,
+  initialExpenditure: 2600,
+  checkInDay: 1,
+};
+test("automatic programs generate starting targets and preserve weight-based protein during calorie changes", () => {
+  assert.equal(program.initialExpenditure(profile), 2759);
+  const goal = { mode: "lose", pace: 0.5, startedDay: "2024-01-01" };
+  const cut = program.startingTargets(goal, profile);
+  assert.equal(cut.calories, 2160);
+  assert.equal(cut.protein, 128);
+  assert.equal(program.programMacros(2400, 80, profile).protein, 128);
+  assert.equal(
+    program.startingTargets(
+      { ...goal, mode: "gain", pace: 0.25 },
+      { ...profile, targetWeightKg: 85 }
+    ).calories,
+    2820
+  );
+  assert.throws(() => program.startingTargets(goal, { ...profile, targetWeightKg: 50 }));
+  assert.throws(() =>
+    program.startingTargets({ ...goal, mode: "maintain" }, { ...profile, targetWeightKg: 50 })
+  );
+});
+test("maintenance uses normalized target weight and stops chasing a completed cut or bulk", () => {
+  const maintain = { mode: "maintain", pace: 0, startedDay: "2024-01-01" };
+  assert.equal(program.goalRate(maintain, 80.4, 80), 0);
+  assert.ok(program.goalRate(maintain, 82, 80) < 0);
+  assert.ok(program.goalRate(maintain, 78, 80) > 0);
+  assert.equal(program.goalRate({ ...maintain, mode: "lose", pace: 0.5 }, 75, 75), 0);
+  assert.equal(program.goalRate({ ...maintain, mode: "gain", pace: 0.25 }, 85, 85), 0);
+});
+test("adaptive programs use normalized weight and complete intervals without resetting on goal changes", () => {
+  const input = coachingInput();
+  input.weights.unshift({ day: nutrition.shiftDay(input.days[0].day, -1), kg: 80 });
+  const config = {
+    ...input,
+    goal: { ...input.goal, startedDay: input.day },
+    program: profile,
+    priorExpenditure: 2600,
+  };
+  const result = program.reviewProgram(config);
+  assert.equal(result.status, "ready");
+  assert.equal(result.trendWeightKg, 80);
+  assert.equal(result.expenditure, 2530);
+  assert.equal(result.proposed.protein, 128);
+  config.days[10].status = "partial";
+  const gap = program.reviewProgram(config);
+  assert.equal(gap.status, "ready");
+  assert.equal(gap.observedDays, 20);
+  config.entries[10].nutrients.calories = 9000;
+  assert.deepEqual(program.reviewProgram(config), gap);
+  config.days.slice(0, 15).forEach((row) => (row.status = "partial"));
+  assert.equal(program.reviewProgram(config).proposed, null);
+});
+test("program setup writes generated targets atomically and preserves learned expenditure in backup", () => {
+  const { sqlite, diary, db, backup } = diaryDatabase();
+  const store = load("src/lib/coaching-store.ts", {
+    "@/db": { db, ...schema },
+    "./metrics": { ...metrics, localDay: () => "2024-02-01" },
+    "./nutrition": nutrition,
+    "./diary": diary,
+    "./coaching": coaching,
+    "./program": program,
+  });
+  const target = store.createProgram("lose", 0.25, profile);
+  assert.equal(diary.targetsForDay("2024-02-01").calories, target.calories);
+  assert.equal(store.currentGoal().program.targetWeightKg, 75);
+  const saved = backup.createBackup();
+  backup.restoreBackup(saved);
+  assert.equal(store.currentGoal().program.protein, 1.6);
+  const expense = store.currentGoal().program.initialExpenditure;
+  store.createProgram("maintain", 0.25, { ...profile, targetWeightKg: 80, activity: "high" });
+  assert.equal(store.currentGoal().program.initialExpenditure, expense);
+  assert.equal(diary.targetsForDay("2024-01-31"), null);
   sqlite.close();
 });

@@ -5,32 +5,40 @@ import { ErrorText, Screen } from "@/components/ui";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 const sections = [
   [
-    "Start with your own targets",
-    "Set daily calories and macros in Plan. They are your starting baseline, not a measured energy requirement. Choose lose, maintain or gain to enable coaching, or stay in manual mode. Changing your goal starts a fresh 21-day calibration.",
+    "A program built around your goal",
+    "Choose Cut, Bulk or Maintain, your goal weight and pace. Age, height, weight, the selected sex equation and activity provide a provisional starting estimate. Protein and diet preferences determine your macros. Manual targets remain available.",
   ],
   [
-    "Build a complete picture",
-    "Reviews use the 21 calendar days before today. Each day must be marked complete, with at least three weigh-in days in each week. Blank, partial and fasting days pause adjustments. A missed day is never counted as zero food. Multiple weights on one day are averaged.",
+    "Normalized weight",
+    "Coaching and Progress use the same recent-weighted trend with a seven-day half-life. Same-day readings are averaged. The trend reduces the influence of individual scale fluctuations. It is an estimate, not a measurement of body fat.",
   ],
   [
-    "How the estimate works",
-    "A straight-line trend summarizes your weight over those dates. Estimated daily expenditure is your average logged calories minus daily weight change in kg multiplied by 7,700. This short-term approximation is not a measurement of metabolism or a long-term prediction. Systematic logging errors and water shifts can bias it. Wearable exercise calories are not added again.",
+    "Learning from actual intake",
+    "Method 2 examines the previous 21 calendar days. It uses complete contiguous blocks of at least seven days, matching calories and weight changes over those dates. Twelve covered days and six weigh-in days are needed. Small gaps can leave enough usable blocks; missing intake is never assumed to be zero. Explicit fasting counts as zero. Long gaps pause learning without erasing the last estimate.",
   ],
   [
-    "Small changes, reviewed by you",
-    "The selected pace is a percentage of your average body weight per week. We suggest a calorie target toward that pace, limiting a weekly change to 100 kcal or 5% of the current target, whichever is smaller. Macros retain your chosen proportions. Nothing changes until you accept. You can keep or manually edit targets instead. Check-ins are seven days apart.",
+    "Gradual adjustments",
+    "Estimated expenditure uses reported calories and changes in normalized weight, with a short-term 7,700 kcal/kg approximation. New evidence is damped toward the previous reviewed estimate. Suggested weekly calorie changes are limited to 150 kcal or 7.5%, whichever is smaller. This is our own approximate method, not MacroFactor’s proprietary model or a clinically validated prediction.",
   ],
   [
-    "When we hold steady",
-    "We hold changes if weekly weight movement exceeds 1%, daily trend variability exceeds 1%, or consecutive readings differ by over 2% of average weight. Estimates outside 1,200–5,000 kcal/day or current/suggested targets outside 1,500–5,000 also pause coaching. These product limits are not personalized safety thresholds, and cannot detect every water shift or logging error.",
+    "Macros that follow your preferences",
+    "Protein follows normalized body weight and your chosen grams per kg. Remaining calories go to carbs and fat according to your preference, with a 0.6 g/kg fat floor. Changes are based on actual intake, not whether you hit your old targets.",
   ],
   [
-    "Who coaching is for",
-    "For adults 18+ who are not pregnant or breastfeeding. Medical nutrition needs and eating disorder care require professional guidance. This first coaching method has automated tests but has not been clinically validated. It is our own local calculation, not MacroFactor’s algorithm.",
+    "Maintenance and reaching your goal",
+    "Maintenance aims for your selected weight with a 0.7 kg band. Outside that band, a gentle 0.15% weekly correction nudges the plan toward your goal. A cut or bulk that reaches its goal stops requesting further loss or gain. Switch to Maintain to hold that weight.",
   ],
   [
-    "Your history stays yours",
-    "Reviews, goals and target changes are saved on your device and included in encrypted backups. Accepted changes start today and preserve earlier dates. Food entries retain their nutrition when catalogs or recipes change.",
+    "Review, then apply",
+    "Check-ins follow your chosen weekday. Review the generated plan and accept or keep your current targets. Accepted changes start today and preserve earlier days. Editing a goal keeps food, weight and learned expenditure history.",
+  ],
+  [
+    "Supported scope",
+    "Coaching is for adults 18+ who are not pregnant or breastfeeding. Medical nutrition needs and eating disorder care require professional guidance. Targets outside 1,500–5,000 kcal/day, implausible expenditure, rapid changes or sharp weight jumps hold adjustments. These product limits are not individualized safety thresholds.",
+  ],
+  [
+    "Older plans",
+    "Plans created before guided program setup keep method 1 until you choose Build my program. Earlier check-ins retain the method that produced them.",
   ],
 ];
 export default function CoachingMethod() {
@@ -38,7 +46,7 @@ export default function CoachingMethod() {
   return (
     <Screen
       title="How check-ins work"
-      subtitle="Local coaching · Method 1"
+      subtitle="Local coaching · Method 2"
       action={
         <SystemButton variant="ghost" onPress={() => router.back()}>
           Done

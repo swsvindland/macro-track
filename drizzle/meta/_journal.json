@@ -57,6 +57,13 @@
       "when": 1790345891444,
       "tag": "0007_reflective_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790347840940,
+      "tag": "0008_late_marauders",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,24 @@
-# Local coaching, method 1
+# Guided programs and local coaching, method 2
+
+Guided Cut/Bulk/Maintain programs supersede the manual-baseline prototype below. Existing method-1 goals keep their behavior until upgraded; review snapshots retain method versions.
+
+Starting energy uses the simplified Mifflin–St Jeor resting equation and a chosen activity multiplier (1.2, 1.375, 1.55, 1.725). These multipliers are coarse product assumptions, not individual measurements. Profile inputs are validated. Existing recent normalized weight and previously reviewed expenditure take precedence. Program changes do not reset food/weight history or the expenditure baseline.
+
+[Original Mifflin research](https://pubmed.ncbi.nlm.nih.gov/2305711/) supports the resting equation, not our activity multiplier or adaptive controller. [ISSN protein review](https://link.springer.com/article/10.1186/s12970-017-0177-8) informs selectable protein preferences; it does not validate the complete program.
+
+Weight normalization reuses the Progress seven-day half-life EWMA, averaging duplicate-day weights. Coaching interpolates trend boundaries only across gaps up to seven days. Over the previous 21 dates it uses complete contiguous runs of at least seven days, matched to weight-change boundaries; at least 12 covered dates and six weigh-in dates are required. Explicit fasting is zero; partial/missing dates break intervals and are never assigned zero or average intake. Recent weight is required. This is more conservative than MacroFactor's proprietary missing-intake estimation and is not claimed to replicate it.
+
+Observed expenditure = interval calories/day − interval normalized weight change/day × 7,700 kcal/kg. The controller moves 35% toward new evidence, capping the raw evidence difference at ±500 kcal before blending. The last reviewed estimate persists across holds and goal changes. Weekly targets move at most 150 kcal or 7.5%. No adherence penalties or wearable calories are added.
+
+Goal pace uses normalized weight. Protein uses 1.4/1.6/2.0/2.2 g/kg; fat receives 25/40/60% of non-protein calories depending on preference, with a 0.6 g/kg floor; carbs receive the remainder. Infeasible allocations hold or reject the setup. Negative energy changes below the supported BMI range are not generated. Target range and other prototype limits remain product heuristics, not personalized safety guarantees.
+
+Maintenance uses a ±0.7 kg band around the target and a 0.15% weekly correction outside it. Reaching a cut/bulk goal stops further directional movement and proposes transition toward maintenance. Goal weight is not silently changed. The user can switch to Maintain for ongoing control around it.
+
+Tests cover generation, protein stability under calorie changes, normalized maintenance drift, completed goals, gaps without imputed calories, goal-change continuity, automatic target persistence and backup compatibility. Clinical/device validation remains outstanding.
+
+---
+
+# Legacy local coaching, method 1
 
 The user chooses a manual calorie/macro baseline and a lose, maintain, gain, or manual goal. This MVP does not invent an initial metabolic estimate. Goal changes start a fresh 21-day calibration. Coaching is opt-in for adults who are not pregnant or breastfeeding; medical nutrition and eating-disorder care use professionally guided manual targets.
 

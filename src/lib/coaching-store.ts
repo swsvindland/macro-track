@@ -1,3 +1,11 @@
+import {
+  initialExpenditure,
+  reviewProgram,
+  startingTargets,
+  validateProgram,
+  type Program,
+} from "./program";
+import { weightTrend } from "./metrics";
 import { and, desc, gte, lte } from "drizzle-orm";
 import {
   db,
@@ -47,12 +55,12 @@ export function currentReview(day = localDay()) {
     .from(weightEntries)
     .where(
       and(
-        gte(weightEntries.measuredAt, shiftDay(start, -1)),
+        gte(weightEntries.measuredAt, shiftDay(start, -90)),
         lte(weightEntries.measuredAt, day + "T23:59:59Z")
       )
     )
     .all();
-  return reviewWeek({
+  const input = {
     day,
     goal,
     targets: targetsForDay(day),
@@ -67,13 +75,29 @@ export function currentReview(day = localDay()) {
       .where(and(gte(foodEntries.day, start), lte(foodEntries.day, end)))
       .all(),
     weights: rows.map((row) => ({ day: dayOf(row.measuredAt), kg: row.weightKg })),
-  });
+  };
+  if (goal.program && input.targets) {
+    const last = checkInHistory().find(
+      (row) => row.review.method === 2 && row.review.expenditure !== null
+    );
+    return reviewProgram({
+      ...input,
+      targets: input.targets,
+      program: goal.program,
+      priorExpenditure: last?.review.expenditure ?? goal.program.initialExpenditure,
+    });
+  }
+  return reviewWeek(input);
 }
 export function nextCheckInDay() {
   const latest = checkInHistory()[0];
   const goal = currentGoal();
   if (!goal) return localDay();
-  return [shiftDay(goal.startedDay, 21), latest ? shiftDay(latest.day, 7) : ""].sort().at(-1)!;
+  if (!goal.program)
+    return [shiftDay(goal.startedDay, 21), latest ? shiftDay(latest.day, 7) : ""].sort().at(-1)!;
+  let due = latest ? shiftDay(latest.day, 7) : shiftDay(goal.startedDay, 7);
+  while (new Date(due + "T12:00:00").getDay() !== goal.program.checkInDay) due = shiftDay(due, 1);
+  return due;
 }
 export function finishCheckIn(decision: "accepted" | "kept") {
   const day = localDay();
@@ -96,4 +120,64 @@ export function finishCheckIn(decision: "accepted" | "kept") {
         .run();
     return targets;
   });
+}
+
+export function previewProgram(
+  mode: Goal["mode"],
+  pace: number,
+  draft: Omit<Program, "initialExpenditure">
+) {
+  if (
+    !["lose", "maintain", "gain"].includes(mode) ||
+    !Number.isFinite(pace) ||
+    pace <= 0 ||
+    pace > (mode === "gain" ? 0.25 : 0.5)
+  )
+    throw new Error("Choose a supported goal and pace.");
+  const previous = currentGoal();
+  const recentWeights = db
+    .select()
+    .from(weightEntries)
+    .where(gte(weightEntries.measuredAt, shiftDay(localDay(), -90)))
+    .all();
+  const trend = weightTrend(recentWeights.filter((row) => dayOf(row.measuredAt) <= localDay())).at(
+    -1
+  );
+  const weight = trend && trend.day >= shiftDay(localDay(), -7) ? trend.trend : draft.weightKg;
+  if (
+    (mode === "lose" && draft.targetWeightKg >= weight) ||
+    (mode === "gain" && draft.targetWeightKg <= weight)
+  )
+    throw new Error(
+      "Choose a goal weight in the direction of your cut or bulk. For your current weight, choose Maintain."
+    );
+  const lastEstimate = checkInHistory().find(
+    (row) => row.review.method === 2 && row.review.expenditure !== null
+  )?.review.expenditure;
+  const program: Program = {
+    ...draft,
+    initialExpenditure:
+      lastEstimate ?? previous?.program?.initialExpenditure ?? initialExpenditure(draft),
+  };
+  validateProgram(program);
+  const goal: Goal = { mode, pace: mode === "maintain" ? 0 : pace, startedDay: localDay() };
+  const targets = startingTargets(goal, program, weight);
+  return { goal, program, targets };
+}
+export function createProgram(
+  mode: Goal["mode"],
+  pace: number,
+  draft: Omit<Program, "initialExpenditure">
+) {
+  const { goal, program, targets } = previewProgram(mode, pace, draft);
+  db.transaction((tx) => {
+    tx.insert(coachingGoals)
+      .values({ ...goal, program })
+      .run();
+    tx.insert(nutritionTargets)
+      .values({ effectiveDay: localDay(), targets })
+      .onConflictDoUpdate({ target: nutritionTargets.effectiveDay, set: { targets } })
+      .run();
+  });
+  return targets;
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `coaching_goals` ADD `program` text;

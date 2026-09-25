@@ -7,7 +7,10 @@ export type Goal = {
   startedDay: string;
 };
 export type Review = {
-  method: 1;
+  method: 1 | 2;
+  trendWeightKg?: number;
+  targetWeightKg?: number;
+  observedDays?: number;
   day: string;
   start: string;
   end: string;

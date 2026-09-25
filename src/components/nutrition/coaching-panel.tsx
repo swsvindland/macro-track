@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Choices, ErrorText } from "@/components/ui";
+import { ErrorText } from "@/components/ui";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import {
   currentGoal,
@@ -10,186 +10,149 @@ import {
   nextCheckInDay,
   checkInHistory,
 } from "@/lib/coaching-store";
-import type { Goal } from "@/lib/coaching";
+import { targetsForDay } from "@/lib/diary";
 import { localDay } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
+import { ProgramEditor } from "./program-editor";
 
 export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => void }) {
   const { refresh } = useNutrition();
   const { date, number, units } = useStore();
-  const goal = useNutritionQuery(currentGoal);
-  const review = useNutritionQuery(currentReview);
-  const history = useNutritionQuery(checkInHistory);
-  const due = useNutritionQuery(nextCheckInDay);
-  const [editing, setEditing] = useState(false);
-  const [mode, setMode] = useState<Goal["mode"]>(goal?.mode ?? "maintain");
-  const [pace, setPace] = useState("0.25");
-  const [eligible, setEligible] = useState(false);
-  const [error, setError] = useState("");
-  const convert = (kg: number) =>
-    `${number(kg * (units === "metric" ? 1 : 2.2046226), 2)} ${units === "metric" ? "kg" : "lb"}/week`;
+  const goal = useNutritionQuery(currentGoal),
+    review = useNutritionQuery(currentReview),
+    history = useNutritionQuery(checkInHistory),
+    due = useNutritionQuery(nextCheckInDay);
+  const targets = useNutritionQuery(() => targetsForDay(localDay()));
+  const [editing, setEditing] = useState(false),
+    [error, setError] = useState("");
+  const kg = (value: number) =>
+    `${number(value * (units === "metric" ? 1 : 2.2046226), 1)} ${units === "metric" ? "kg" : "lb"}`;
   function act(action: () => void) {
     try {
       action();
       refresh();
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save your plan.");
+      setError(e instanceof Error ? e.message : "Could not update your program.");
     }
   }
   return (
-    <SystemPanel>
-      <SystemPanel.Body className="gap-4">
-        <Text className="text-xl font-semibold">
-          {goal && goal.mode !== "manual" ? "Weekly check-in" : "Your goal"}
-        </Text>
-        {!goal || editing ? (
-          <>
+    <>
+      <SystemPanel>
+        <SystemPanel.Body className="gap-4">
+          <Text className="text-xl font-semibold">
+            {goal?.program
+              ? `${goal.mode === "lose" ? "Cut" : goal.mode === "gain" ? "Bulk" : "Maintain"} · Your program`
+              : "Let your plan do the math"}
+          </Text>
+          {goal?.program ? (
+            <>
+              <Text className="text-muted">
+                {goal.pace ? `${goal.pace}% per week · ` : ""}Goal {kg(goal.program.targetWeightKg)}{" "}
+                ·{" "}
+                {goal.program.diet === "balanced"
+                  ? "Balanced"
+                  : goal.program.diet === "lower-fat"
+                    ? "More carbs"
+                    : "More fat"}
+              </Text>
+              {targets && (
+                <>
+                  <Text className="text-4xl font-semibold">
+                    {number(targets.calories, 0)} kcal/day
+                  </Text>
+                  <Text>
+                    {targets.protein} g protein · {targets.carbs} g carbs · {targets.fat} g fat
+                  </Text>
+                </>
+              )}
+              {review?.trendWeightKg !== undefined && (
+                <Text>Normalized weight · {kg(review.trendWeightKg)}</Text>
+              )}
+            </>
+          ) : (
             <Text className="text-muted">
-              Start with the daily targets below. Coaching learns from three weeks of complete food
-              logs and regular weigh-ins.
+              Choose Cut, Bulk or Maintain. We’ll generate your starting calories and macros, then
+              adapt the program using food intake and normalized weight. Manual targets are also
+              available below.
             </Text>
-            <Choices
-              values={["lose", "maintain", "gain", "manual"] as const}
-              value={mode}
-              onChange={(value) => {
-                setMode(value);
-                setPace("0.25");
-              }}
-              label={(value) =>
-                ({ lose: "Lose", maintain: "Maintain", gain: "Gain", manual: "Manual" })[value]
-              }
-            />
-            {(mode === "lose" || mode === "gain") && (
+          )}
+          <SystemButton onPress={() => setEditing(true)}>
+            {goal?.program ? "Edit goal & program" : "Build my program"}
+          </SystemButton>
+          {goal?.program && (
+            <SystemButton variant="ghost" onPress={() => act(() => saveGoal("manual", 0))}>
+              Switch to manual targets
+            </SystemButton>
+          )}
+          <ErrorText message={error} />
+        </SystemPanel.Body>
+      </SystemPanel>
+      {goal && goal.mode !== "manual" && review && (
+        <SystemPanel>
+          <SystemPanel.Body className="gap-4">
+            <Text className="text-xl font-semibold">Weekly check-in</Text>
+            <Text className="text-2xl font-semibold">
+              {review.status === "ready"
+                ? "Your next adjustment"
+                : review.status === "learning"
+                  ? "Learning your energy needs"
+                  : "Holding steady"}
+            </Text>
+            <Text className="text-sm text-muted">
+              {date(review.start)} – {date(review.end)} · {review.completeDays} tracked days ·{" "}
+              {review.weightDays} weigh-in days
+            </Text>
+            <Text className="text-muted">{review.reason}</Text>
+            {review.expenditure !== null && (
+              <Text>
+                Estimated expenditure · {number(review.expenditure, 0)} kcal/day
+                {review.status === "learning" ? " (provisional)" : ""}
+              </Text>
+            )}
+            {review.weeklyKg !== null && <Text>Observed pace · {kg(review.weeklyKg)}/week</Text>}
+            {review.desiredWeeklyKg !== null && (
+              <Text>Goal pace · {kg(review.desiredWeeklyKg)}/week</Text>
+            )}
+            {review.proposed && (
               <>
-                <Text>Weekly pace (% of body weight)</Text>
-                <Choices
-                  values={mode === "lose" ? ["0.25", "0.5"] : ["0.1", "0.25"]}
-                  value={pace}
-                  onChange={setPace}
-                  label={(value) => `${value}%`}
-                />
+                <Text className="text-3xl font-semibold">
+                  {number(review.proposed.calories, 0)} kcal/day
+                </Text>
+                <Text className="text-muted">
+                  Suggested · {review.proposed.protein}g protein · {review.proposed.carbs}g carbs ·{" "}
+                  {review.proposed.fat}g fat
+                </Text>
               </>
             )}
-            {mode !== "manual" && (
+            {due > localDay() ? (
+              <Text className="text-muted">Next check-in · {date(due)}</Text>
+            ) : (
               <>
-                <Text className="text-sm text-muted">
-                  Coaching is for adults 18+ who are not pregnant or breastfeeding. Use manual
-                  targets with professional guidance for medical nutrition needs or eating disorder
-                  care.
-                </Text>
+                {review.proposed && (
+                  <SystemButton
+                    onPress={() =>
+                      act(() => {
+                        finishCheckIn("accepted");
+                        onTargetsChanged();
+                      })
+                    }
+                  >
+                    Accept this week’s plan
+                  </SystemButton>
+                )}
                 <SystemButton
                   variant="outline"
-                  onPress={() => setEligible((value) => !value)}
-                  accessibilityState={{ checked: eligible }}
+                  onPress={() =>
+                    act(() => {
+                      finishCheckIn("kept");
+                    })
+                  }
                 >
-                  {eligible ? "✓ " : ""}This applies to me
+                  Keep current plan
                 </SystemButton>
               </>
             )}
-            <SystemButton
-              isDisabled={mode !== "manual" && !eligible}
-              onPress={() =>
-                act(() => {
-                  saveGoal(mode, Number(pace));
-                  setEditing(false);
-                })
-              }
-            >
-              Save goal
-            </SystemButton>
-            {goal && (
-              <SystemButton variant="ghost" onPress={() => setEditing(false)}>
-                Keep current goal
-              </SystemButton>
-            )}
-          </>
-        ) : (
-          <>
-            <Text className="text-muted">
-              {goal.mode === "manual"
-                ? "Manual targets"
-                : `${goal.mode === "lose" ? "Lose" : goal.mode === "gain" ? "Gain" : "Maintain"}${goal.pace ? ` · ${goal.pace}% per week` : ""}`}
-            </Text>
-            {goal.mode !== "manual" && review && (
-              <>
-                <Text className="text-2xl font-semibold">
-                  {review.status === "ready"
-                    ? "Ready to review"
-                    : review.status === "learning"
-                      ? "Getting to know your routine"
-                      : "Holding steady"}
-                </Text>
-                <Text className="text-sm text-muted">
-                  {date(review.start)} – {date(review.end)}
-                </Text>
-                <Text>
-                  {review.completeDays}/21 complete days · {review.weightDays} weigh-in days
-                </Text>
-                <Text className="text-muted">{review.reason}</Text>
-                {review.intake !== null && (
-                  <Text>Average logged intake · {number(review.intake, 0)} kcal</Text>
-                )}
-                {review.weeklyKg !== null && (
-                  <Text>Observed trend · {convert(review.weeklyKg)}</Text>
-                )}
-                {review.desiredWeeklyKg !== null && (
-                  <Text>Goal pace · {convert(review.desiredWeeklyKg)}</Text>
-                )}
-                {review.expenditure !== null && (
-                  <Text>Estimated expenditure · {number(review.expenditure, 0)} kcal/day</Text>
-                )}
-                {review.proposed && (
-                  <>
-                    <Text className="text-2xl font-semibold">
-                      {number(review.proposed.calories, 0)} kcal/day
-                    </Text>
-                    <Text className="text-muted">
-                      Suggested · {review.proposed.protein}g protein · {review.proposed.carbs}g
-                      carbs · {review.proposed.fat}g fat
-                    </Text>
-                  </>
-                )}
-                {due > localDay() ? (
-                  <Text className="text-muted">Next check-in · {date(due)}</Text>
-                ) : (
-                  <>
-                    {review.proposed && (
-                      <SystemButton
-                        onPress={() =>
-                          act(() => {
-                            finishCheckIn("accepted");
-                            onTargetsChanged();
-                          })
-                        }
-                      >
-                        Accept targets starting today
-                      </SystemButton>
-                    )}
-                    <SystemButton
-                      variant="outline"
-                      onPress={() =>
-                        act(() => {
-                          finishCheckIn("kept");
-                        })
-                      }
-                    >
-                      Keep targets this week
-                    </SystemButton>
-                  </>
-                )}
-              </>
-            )}
-            <SystemButton
-              variant="ghost"
-              onPress={() => {
-                setMode(goal.mode);
-                setPace(String(goal.pace || 0.25));
-                setEditing(true);
-              }}
-            >
-              Change goal
-            </SystemButton>
             {history.length > 0 && (
               <>
                 <Text className="font-semibold">Recent check-ins</Text>
@@ -201,10 +164,10 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                 ))}
               </>
             )}
-          </>
-        )}
-        <ErrorText message={error} />
-      </SystemPanel.Body>
-    </SystemPanel>
+          </SystemPanel.Body>
+        </SystemPanel>
+      )}
+      {editing && <ProgramEditor close={() => setEditing(false)} />}
+    </>
   );
 }
