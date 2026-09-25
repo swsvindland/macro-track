@@ -118,3 +118,17 @@ export const recipes = sqliteTable("recipes", {
   ingredients: text("ingredients", { mode: "json" }).$type<RecipeIngredient[]>().notNull(),
   revision: integer("revision").notNull(),
 });
+
+export const coachingGoals = sqliteTable("coaching_goals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  mode: text("mode").$type<import("@/lib/coaching").Goal["mode"]>().notNull(),
+  pace: real("pace").notNull(),
+  startedDay: text("started_day").notNull(),
+});
+export const checkIns = sqliteTable("check_ins", {
+  day: text("day").primaryKey(),
+  goalId: integer("goal_id").notNull(),
+  decision: text("decision").$type<"accepted" | "kept">().notNull(),
+  review: text("review", { mode: "json" }).$type<import("@/lib/coaching").Review>().notNull(),
+  targets: text("targets", { mode: "json" }).$type<Targets>().notNull(),
+});

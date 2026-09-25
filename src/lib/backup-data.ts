@@ -12,6 +12,8 @@ import {
   weightEntries,
   preferences,
   healthLinks,
+  coachingGoals,
+  checkIns,
 } from "@/db";
 import { recipeFood, validateFood, type Food, type Recipe } from "./nutrition";
 
@@ -63,7 +65,53 @@ const item = z.strictObject({
   nutrients,
 });
 const iso = z.iso.datetime();
+const targetSchema = z.strictObject({
+  calories: positive.max(10000),
+  protein: z.number().min(0).max(1500),
+  carbs: z.number().min(0).max(1500),
+  fat: z.number().min(0).max(1500),
+});
+const reviewSchema = z.strictObject({
+  method: z.literal(1),
+  day,
+  start: day,
+  end: day,
+  completeDays: z.number().int().min(0).max(21),
+  weightDays: z.number().int().min(0).max(21),
+  status: z.enum(["learning", "holding", "ready"]),
+  reason: text,
+  intake: z.number().finite().nullable(),
+  expenditure: z.number().finite().nullable(),
+  weeklyKg: z.number().finite().nullable(),
+  desiredWeeklyKg: z.number().finite().nullable(),
+  proposed: targetSchema.nullable(),
+});
 const dataSchema = z.strictObject({
+  goals: z
+    .array(
+      z
+        .strictObject({
+          id,
+          mode: z.enum(["manual", "lose", "maintain", "gain"]),
+          pace: z.number().min(0).max(0.5),
+          startedDay: day,
+        })
+        .refine((row) => row.mode !== "gain" || row.pace <= 0.25)
+    )
+    .max(10000)
+    .default([]),
+  checkIns: z
+    .array(
+      z.strictObject({
+        day,
+        goalId: id,
+        decision: z.enum(["accepted", "kept"]),
+        review: reviewSchema,
+        targets: targetSchema,
+      })
+    )
+    .max(10000)
+    .default([]),
   entries: z.array(item.extend({ id, day, meal, createdAt: timestamp })).max(100000),
   customFoods: z
     .array(
@@ -171,6 +219,9 @@ const schema = z
       if (new Set(keys).size !== keys.length)
         context.addIssue({ code: "custom", message: `Duplicate keys in ${name}` });
     }
+    const goalIds = new Set(backup.data.goals.map((row) => row.id));
+    if (backup.data.checkIns.some((row) => !goalIds.has(row.goalId) || row.day !== row.review.day))
+      context.addIssue({ code: "custom", message: "Invalid check-in goal or date" });
     const logged = new Set(backup.data.entries.map((entry) => entry.day));
     if (
       backup.data.days.some(
@@ -205,6 +256,8 @@ export function createBackup(): Backup {
     version: 1,
     createdAt: new Date().toISOString(),
     data: {
+      goals: tx.select().from(coachingGoals).all(),
+      checkIns: tx.select().from(checkIns).all(),
       entries: tx.select().from(foodEntries).all(),
       customFoods: tx.select().from(customFoods).all(),
       favorites: tx.select().from(savedFoods).all(),
@@ -223,6 +276,10 @@ export function createBackup(): Backup {
 export function restoreBackup(value: unknown, recoveryUri?: string) {
   const { data } = validateBackup(value);
   db.transaction((tx) => {
+    tx.delete(checkIns).run();
+    tx.delete(coachingGoals).run();
+    for (const row of data.goals) tx.insert(coachingGoals).values(row).run();
+    for (const row of data.checkIns) tx.insert(checkIns).values(row).run();
     tx.delete(foodEntries).run();
     tx.delete(customFoods).run();
     tx.delete(savedFoods).run();

@@ -1,3 +1,4 @@
+import { CoachingPanel } from "./coaching-panel";
 import { useState } from "react";
 import { View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
@@ -24,6 +25,19 @@ export function PlanScreen() {
     parseNumber(values.protein) * 4 + parseNumber(values.carbs) * 4 + parseNumber(values.fat) * 9;
   return (
     <Screen title="Plan" subtitle="Your targets, on your terms.">
+      <CoachingPanel
+        onTargetsChanged={() => {
+          const next = targetsForDay(localDay());
+          if (next)
+            setValues({
+              calories: String(next.calories),
+              protein: String(next.protein),
+              carbs: String(next.carbs),
+              fat: String(next.fat),
+            });
+          setSaved(false);
+        }}
+      />
       <SystemPanel>
         <SystemPanel.Body className="gap-5">
           <View className="gap-2">
@@ -89,8 +103,10 @@ export function PlanScreen() {
         </SystemPanel.Body>
       </SystemPanel>
       <Text className="text-sm text-muted">
-        Targets are currently manual. Food and weight history will stay available as coaching is
-        added.
+        Coaching estimates are approximate, not a measurement of metabolism. They use a 21-day
+        weight trend and logged intake with a short-term 7,700 kcal/kg approximation. Water shifts
+        and incomplete logs pause adjustments. This is not a long-term weight prediction or a
+        clinically validated model.
       </Text>
     </Screen>
   );

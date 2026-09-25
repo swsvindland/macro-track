@@ -782,3 +782,89 @@ test("restore requires a readable recovery file before any replacement", async (
   );
   sqlite.close();
 });
+
+const coaching = load("src/lib/coaching.ts", { "./nutrition": nutrition });
+function coachingInput() {
+  const day = "2024-02-01";
+  const days = Array.from({ length: 21 }, (_, i) => ({
+    day: nutrition.shiftDay(day, i - 21),
+    status: "complete",
+  }));
+  return {
+    day,
+    goal: { mode: "lose", pace: 0.25, startedDay: "2024-01-01" },
+    targets: { calories: 2200, protein: 150, carbs: 250, fat: 66.667 },
+    days,
+    entries: days.map((row) => ({ day: row.day, nutrients: { calories: 2400 } })),
+    weights: days.map((row) => ({ day: row.day, kg: 80 })),
+  };
+}
+test("coaching caps changes, aligns 21 days, excludes today and averages duplicate weigh-ins", () => {
+  const input = coachingInput();
+  const result = coaching.reviewWeek(input);
+  assert.equal(result.status, "ready");
+  assert.equal(result.expenditure, 2400);
+  assert.equal(result.proposed.calories, 2180);
+  assert.equal(result.desiredWeeklyKg, -0.2);
+  input.weights.push(...input.weights, { day: input.day, kg: 150 });
+  input.entries.push({ day: input.day, nutrients: { calories: 9999 } });
+  assert.deepEqual(coaching.reviewWeek(input), result);
+  input.entries = input.entries.map((row) => ({ ...row, nutrients: { calories: 3000 } }));
+  assert.equal(coaching.reviewWeek(input).proposed.calories, 2300);
+});
+test("coaching holds on incomplete weekends, fasting, calibration, sparse weights and water jumps", () => {
+  for (const mutate of [
+    (input) => (input.days[6].status = "partial"),
+    (input) => (input.days[6].status = "fasting"),
+    (input) => input.entries.splice(6, 1),
+    (input) => (input.goal.startedDay = "2024-01-20"),
+    (input) => (input.weights = input.weights.filter((_, i) => i < 14)),
+    (input) => (input.weights[20].kg = 85),
+    (input) => input.weights.forEach((row, i) => (row.kg += i > 10 ? 3 : 0)),
+    (input) => (input.targets.calories = 1000),
+  ]) {
+    const input = coachingInput();
+    mutate(input);
+    assert.equal(coaching.reviewWeek(input).proposed, null);
+  }
+});
+test("check-in acceptance is atomic, weekly, preserved in backups, and keeps past targets", () => {
+  const { sqlite, diary, db, backup } = diaryDatabase();
+  const fakeMetrics = { ...metrics, localDay: () => "2024-02-01" };
+  const store = load("src/lib/coaching-store.ts", {
+    "@/db": { db, ...schema },
+    "./metrics": fakeMetrics,
+    "./nutrition": nutrition,
+    "./diary": diary,
+    "./coaching": coaching,
+  });
+  const input = coachingInput();
+  db.insert(schema.coachingGoals).values(input.goal).run();
+  diary.saveTargets("2024-01-01", input.targets);
+  for (const row of input.days) {
+    diary.saveEntry({
+      day: row.day,
+      meal: "Breakfast",
+      food: { ...food, basis: "serving", nutrients: { ...food.nutrients, calories: 2400 } },
+      amount: 1,
+      portionLabel: "1 serving",
+    });
+    diary.setDayStatus(row.day, "complete");
+    db.insert(schema.weightEntries)
+      .values({ weightKg: 80, measuredAt: row.day + "T12:00:00Z" })
+      .run();
+  }
+  store.finishCheckIn("accepted");
+  assert.equal(diary.targetsForDay("2024-02-01").calories, 2180);
+  assert.equal(diary.targetsForDay("2024-01-31").calories, 2200);
+  assert.throws(() => store.finishCheckIn("accepted"));
+  assert.equal(store.nextCheckInDay(), "2024-02-08");
+  const saved = backup.createBackup();
+  backup.restoreBackup(saved);
+  assert.equal(store.checkInHistory().length, 1);
+  const legacy = structuredClone(saved);
+  delete legacy.data.goals;
+  delete legacy.data.checkIns;
+  assert.deepEqual(backup.validateBackup(legacy).data.goals, []);
+  sqlite.close();
+});
