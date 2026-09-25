@@ -10,7 +10,7 @@ import {
   shareBackupFile,
 } from "@/lib/backup-files";
 import type { Backup } from "@/lib/backup-data";
-import { useNutrition } from "@/lib/nutrition-store";
+import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 
 export function BackupPanel() {
@@ -23,7 +23,7 @@ export function BackupPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [recovery, setRecovery] = useState(recoveryBackupUri);
+  const recovery = useNutritionQuery(recoveryBackupUri);
   const locked = useRef(false);
   async function run(work: () => Promise<void>) {
     if (locked.current) return;
@@ -153,7 +153,6 @@ export function BackupPanel() {
                           await restoreWithRecovery(preview, password);
                           refresh();
                           refreshNutrition();
-                          setRecovery(recoveryBackupUri());
                           setPreview(null);
                           setPassword("");
                           setMessage(

@@ -130,6 +130,14 @@ export function LibraryScreen() {
               {number((catalogManifest.usda.bytes + catalogManifest.off.bytes) / 1000000, 1)} MB of
               food data. Bundled with the app; no account or connection needed for food search.
             </Text>
+            <Text className="text-sm text-muted">
+              Food updates arrive with app updates. Your diary keeps its original nutrition when the
+              catalog changes.
+            </Text>
+            <Text className="text-xs text-muted">
+              USDA · {catalogManifest.usda.version}
+              {"\n"}Open Food Facts · {catalogManifest.off.version}
+            </Text>
             {catalogManifest.off.developmentSample && (
               <Text className="text-sm text-muted">
                 The packaged catalog is a development sample. Create a custom food when a barcode is

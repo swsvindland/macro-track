@@ -113,6 +113,7 @@ function screenHarness(diary) {
     },
     "@/lib/diary": diary,
     "@/lib/metrics": metrics,
+    "./metrics": metrics,
     "@/lib/nutrition": nutrition,
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./quick-add": { QuickAdd: "QuickAdd" },
@@ -926,5 +927,54 @@ test("compiled quick add logs entered calories once and keeps unknown nutrients"
   assert.equal(closed, 1);
   assert.equal(diary.entriesForDay("2024-01-01")[0].nutrients.calories, 650);
   assert.equal(diary.entriesForDay("2024-01-01")[0].nutrients.fiber, null);
+  sqlite.close();
+});
+
+test("CSV preserves unknown nutrients, quotes names and neutralizes spreadsheet formulas", () => {
+  const { diary, sqlite, db } = diaryDatabase();
+  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food: { ...food, name: '=HYPERLINK("bad")' },
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  const exported = ownership.exportDiaryCsv();
+  assert.ok(exported.includes('"\'=HYPERLINK(""bad"")"'));
+  assert.ok(exported.includes('"6","","125"'));
+  assert.ok(exported.includes('"in-progress"'));
+  assert.equal(ownership.csv([["a\nb", "c,d", -5]]), '\uFEFF"a\nb","c,d","-5"\r\n');
+  sqlite.close();
+});
+test("erase clears all personal tables, disables sync and rolls back database failure", () => {
+  const { diary, sqlite, db } = diaryDatabase();
+  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  diary.saveCustomFood(food);
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food,
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  db.insert(schema.preferences).values({ key: "healthSyncEnabled", value: "true" }).run();
+  sqlite.exec(
+    "CREATE TRIGGER fail_erase BEFORE DELETE ON custom_foods BEGIN SELECT RAISE(ABORT, 'disk failure'); END"
+  );
+  assert.throws(() => ownership.erasePersonalRecords());
+  assert.equal(diary.entriesForDay("2024-01-01").length, 1);
+  sqlite.exec("DROP TRIGGER fail_erase");
+  ownership.erasePersonalRecords();
+  assert.equal(diary.entriesForDay("2024-01-01").length, 0);
+  assert.equal(diary.personalFoods().length, 0);
+  assert.equal(
+    db
+      .select()
+      .from(schema.preferences)
+      .all()
+      .find((row) => row.key === "healthSyncEnabled").value,
+    "false"
+  );
   sqlite.close();
 });

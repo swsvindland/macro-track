@@ -1,3 +1,4 @@
+import { DataPanel } from "@/components/nutrition/data-panel";
 import { BackupPanel } from "@/components/nutrition/backup-panel";
 import { useState } from "react";
 import { Switch } from "heroui-native";
@@ -136,6 +137,7 @@ export function SettingsScreen() {
         </SystemPanel.Body>
       </SystemPanel>
       <BackupPanel />
+      <DataPanel />
       <ErrorText message={error || healthSyncError ? t(error || healthSyncError) : ""} />
     </Screen>
   );

@@ -1,3 +1,4 @@
+import { IntakeSummary } from "@/components/nutrition/intake-summary";
 import { SystemButton } from "@/components/system";
 import { Screen } from "@/components/ui";
 import { useStore } from "@/lib/store";
@@ -13,6 +14,7 @@ export function WeightLog() {
   return (
     <>
       <Screen title="Progress" subtitle="Follow your weight over time.">
+        <IntakeSummary />
         <Dashboard weightOnly />
 
         <SystemButton onPress={() => launch(null)}>

@@ -1,3 +1,4 @@
+import type { Targets } from "@/lib/nutrition";
 import { CoachingPanel } from "./coaching-panel";
 import { useState } from "react";
 import { View } from "react-native";
@@ -9,10 +10,12 @@ import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 
 export function PlanScreen() {
+  const targets = useNutritionQuery(() => targetsForDay(localDay()));
+  return <PlanContent key={JSON.stringify(targets)} targets={targets} />;
+}
+function PlanContent({ targets }: { targets: Targets | null }) {
   const { refresh } = useNutrition();
   const { number } = useStore();
-  const day = localDay();
-  const targets = useNutritionQuery(() => targetsForDay(day));
   const [values, setValues] = useState(() => ({
     calories: targets ? String(targets.calories) : "",
     protein: targets ? String(targets.protein) : "",
