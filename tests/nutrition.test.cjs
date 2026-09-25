@@ -104,6 +104,8 @@ function screenHarness(diary) {
       SystemText: "Text",
     },
     "@/components/ui": {
+      Editor: "Editor",
+      Field: "Field",
       Choices: "Choices",
       DateInput: "DateInput",
       ErrorText: "Error",
@@ -113,6 +115,7 @@ function screenHarness(diary) {
     "@/lib/metrics": metrics,
     "@/lib/nutrition": nutrition,
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
+    "./meal-editor": { MealEditor: "MealEditor" },
     "@/lib/food-catalog": {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
@@ -123,9 +126,9 @@ function screenHarness(diary) {
   return {
     context,
     load: (file) => load(file, dependencies, true),
-    render(Component) {
+    render(Component, props) {
       cursor = 0;
-      return Component();
+      return Component(props);
     },
   };
 }
@@ -365,4 +368,135 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
     }
     database.close();
   }
+});
+
+test("saved meals preserve snapshots and scale quantities without changing previous entries", () => {
+  const { diary, sqlite } = diaryDatabase();
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food,
+    amount: 50,
+    portionLabel: "Half serving",
+  });
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food: { ...food, id: "custom:second", name: "Second food" },
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  const saved = diary.saveMeal("  Usual breakfast  ", "2024-01-01", "Breakfast");
+  assert.equal(saved.name, "Usual breakfast");
+  assert.equal(saved.items.length, 2);
+  const original = diary.entriesForDay("2024-01-01");
+  diary.saveEntry({
+    ...original[0],
+    amount: 200,
+    food: { ...food, nutrients: { ...food.nutrients, calories: 999 } },
+  });
+  diary.setDayStatus("2024-01-02", "fasting");
+  assert.equal(diary.logSavedMeal(saved.id, "2024-01-02", "Lunch", 0.5), 2);
+  const logged = diary.entriesForDay("2024-01-02");
+  assert.deepEqual(
+    logged.map((entry) => entry.nutrients.calories),
+    [45, 90]
+  );
+  assert.equal(logged[0].amount, 25);
+  assert.equal(logged[0].nutrients.fiber, null);
+  assert.equal(logged[0].food.nutrients.calories, 180);
+  assert.equal(diary.dayStatus("2024-01-02"), "in-progress");
+  diary.deleteSavedMeal(saved.id);
+  assert.equal(diary.listSavedMeals().length, 0);
+  assert.equal(diary.entriesForDay("2024-01-02").length, 2);
+  assert.throws(() => diary.logSavedMeal(saved.id, "2024-01-03", "Dinner"));
+  sqlite.close();
+});
+
+test("copying a meal appends independent entries and only reopens the destination day", () => {
+  const { diary, sqlite } = diaryDatabase();
+  diary.saveEntry({ day: "2024-02-01", meal: "Breakfast", food, amount: 50, portionLabel: "50 g" });
+  diary.setDayStatus("2024-02-01", "complete");
+  diary.saveEntry({ day: "2024-02-02", meal: "Lunch", food, amount: 100, portionLabel: "100 g" });
+  diary.setDayStatus("2024-02-02", "partial");
+  diary.copyMeal("2024-02-01", "Breakfast", "2024-02-02", "Dinner");
+  const entries = diary.entriesForDay("2024-02-02");
+  assert.equal(entries.length, 2);
+  assert.equal(entries[1].meal, "Dinner");
+  assert.equal(entries[1].nutrients.calories, 90);
+  assert.equal(diary.dayStatus("2024-02-01"), "complete");
+  assert.equal(diary.dayStatus("2024-02-02"), "partial");
+  diary.deleteEntry(entries[1]);
+  assert.equal(diary.entriesForDay("2024-02-01").length, 1);
+  diary.copyMeal("2024-02-01", "Breakfast", "2024-02-01", "Breakfast");
+  assert.equal(diary.entriesForDay("2024-02-01").length, 2);
+  assert.equal(diary.dayStatus("2024-02-01"), "in-progress");
+  sqlite.close();
+});
+
+test("meal validation and a failed batch leave the destination unchanged", () => {
+  const { diary, sqlite } = diaryDatabase();
+  assert.throws(() => diary.saveMeal("Empty", "2024-03-01", "Breakfast"));
+  diary.saveEntry({ day: "2024-03-01", meal: "Breakfast", food, amount: 50, portionLabel: "50 g" });
+  diary.saveEntry({
+    day: "2024-03-01",
+    meal: "Breakfast",
+    food,
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  assert.throws(() => diary.saveMeal(" ", "2024-03-01", "Breakfast"));
+  const saved = diary.saveMeal("Usual", "2024-03-01", "Breakfast");
+  for (const factor of [0, -1, NaN, Infinity, 101])
+    assert.throws(() => diary.logSavedMeal(saved.id, "2024-03-02", "Lunch", factor));
+  assert.throws(() => diary.copyMeal("2024-03-01", "Breakfast", "2999-01-01", "Lunch"));
+  diary.setDayStatus("2024-03-02", "fasting");
+  sqlite.exec(`CREATE TRIGGER fail_second_food BEFORE INSERT ON food_entries
+    WHEN NEW.day = '2024-03-02' AND NEW.amount = 100
+    BEGIN SELECT RAISE(ABORT, 'Simulated storage failure'); END;`);
+  assert.throws(() => diary.logSavedMeal(saved.id, "2024-03-02", "Lunch"));
+  assert.equal(diary.entriesForDay("2024-03-02").length, 0);
+  assert.equal(diary.dayStatus("2024-03-02"), "fasting");
+  sqlite.close();
+});
+
+test("compiled saved-meal form logs the chosen quantity once and closes after success", () => {
+  const { diary, sqlite } = diaryDatabase();
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food,
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  const saved = diary.saveMeal("My breakfast", "2024-01-01", "Breakfast");
+  const harness = screenHarness(diary);
+  const { MealEditor } = harness.load("src/components/nutrition/meal-editor.tsx");
+  let closed = 0;
+  let selectedDay;
+  const props = {
+    saved,
+    initialDay: "2024-01-02",
+    initialMeal: "Lunch",
+    close: () => closed++,
+    onLogged: (day) => (selectedDay = day),
+  };
+  let tree = nodes(harness.render(MealEditor, props));
+  tree
+    .find((node) => node.type === "Field" && node.props.label === "Meal quantity")
+    .props.onChange("0.5");
+  tree = nodes(harness.render(MealEditor, props));
+  const submit = tree.find(
+    (node) => node.type === "Button" && node.props.children === "Add to lunch"
+  ).props.onPress;
+  submit();
+  submit();
+  assert.equal(closed, 1);
+  assert.equal(selectedDay, "2024-01-02");
+  assert.equal(harness.context.revision, 1);
+  const logged = diary.entriesForDay("2024-01-02");
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].amount, 50);
+  assert.equal(logged[0].nutrients.calories, 90);
+  sqlite.close();
 });

@@ -6,6 +6,7 @@ import {
   foodEntries,
   nutritionTargets,
   savedFoods,
+  savedMeals,
   type FoodEntry,
 } from "@/db";
 import { validDay } from "./metrics";
@@ -18,6 +19,7 @@ import {
   type DayState,
   type Food,
   type Meal,
+  type MealItem,
   type Targets,
 } from "./nutrition";
 
@@ -173,4 +175,92 @@ export function recentFoods(): Food[] {
   const latest = new Map<string, Food>();
   for (const row of rows) if (!latest.has(row.food.id)) latest.set(row.food.id, row.food);
   return [...latest.values()].slice(0, 20);
+}
+
+export function listSavedMeals() {
+  return db
+    .select()
+    .from(savedMeals)
+    .orderBy(desc(savedMeals.createdAt), desc(savedMeals.id))
+    .all();
+}
+
+function mealItems(day: string, meal: Meal): MealItem[] {
+  if (!validDay(day) || !meals.includes(meal)) throw new Error("Choose a valid day and meal.");
+  const items = entriesForDay(day).filter((entry) => entry.meal === meal);
+  if (!items.length) throw new Error("Add food to this meal first.");
+  return items.map(({ food, amount, portionLabel, nutrients }) => ({
+    food,
+    amount,
+    portionLabel,
+    nutrients,
+  }));
+}
+
+export function saveMeal(name: string, day: string, meal: Meal) {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 80)
+    throw new Error("Give your meal a name up to 80 characters.");
+  return db
+    .insert(savedMeals)
+    .values({ name: trimmed, items: mealItems(day, meal), createdAt: Date.now() })
+    .returning()
+    .get();
+}
+
+export function deleteSavedMeal(id: number) {
+  db.delete(savedMeals).where(eq(savedMeals.id, id)).run();
+}
+
+function addMealItems(items: MealItem[], day: string, meal: Meal, multiplier: number) {
+  if (!validDay(day) || !meals.includes(meal))
+    throw new Error("Choose today or an earlier date and a meal.");
+  if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 100)
+    throw new Error("Enter a meal quantity above 0 and no greater than 100.");
+  if (!items.length) throw new Error("This meal has no food.");
+  // Validate the whole batch before writing. Keep the original food and nutrient
+  // snapshots, even when the catalog or personal food has since changed.
+  const entries = items.map((item) => {
+    validateFood(item.food);
+    const amount = item.amount * multiplier;
+    scaleNutrients(item.food, amount);
+    const nutrients = Object.fromEntries(
+      Object.entries(item.nutrients).map(([key, value]) => [
+        key,
+        value === null ? null : value * multiplier,
+      ])
+    ) as MealItem["nutrients"];
+    return {
+      food: item.food,
+      amount,
+      nutrients,
+      day,
+      meal,
+      createdAt: Date.now(),
+      portionLabel:
+        multiplier === 1
+          ? item.portionLabel
+          : `${Number(amount.toFixed(4))} ${item.food.basis === "serving" ? "serving(s)" : item.food.basis}`,
+    };
+  });
+  db.transaction((tx) => {
+    for (const entry of entries) tx.insert(foodEntries).values(entry).run();
+    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, day)).get();
+    const status = previous?.status === "partial" ? "partial" : "in-progress";
+    tx.insert(diaryDays)
+      .values({ day, status })
+      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
+      .run();
+  });
+  return entries.length;
+}
+
+export function copyMeal(sourceDay: string, sourceMeal: Meal, day: string, meal: Meal) {
+  return addMealItems(mealItems(sourceDay, sourceMeal), day, meal, 1);
+}
+
+export function logSavedMeal(id: number, day: string, meal: Meal, multiplier = 1) {
+  const saved = db.select().from(savedMeals).where(eq(savedMeals.id, id)).get();
+  if (!saved) throw new Error("This saved meal no longer exists.");
+  return addMealItems(saved.items, day, meal, multiplier);
 }

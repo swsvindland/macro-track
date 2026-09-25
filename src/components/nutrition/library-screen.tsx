@@ -2,10 +2,13 @@ import { useState } from "react";
 import { Linking, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Screen } from "@/components/ui";
-import { favoriteFoods, personalFoods, recentFoods } from "@/lib/diary";
+import { favoriteFoods, personalFoods, recentFoods, listSavedMeals } from "@/lib/diary";
 import { catalogManifest } from "@/lib/food-catalog";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import type { SavedMeal } from "@/db";
+import { totalNutrients } from "@/lib/nutrition";
+import { MealEditor } from "./meal-editor";
 import type { Food } from "@/lib/nutrition";
 import { FoodEditor, FoodRow } from "./food-editor";
 
@@ -19,6 +22,8 @@ export function LibraryScreen() {
       ] as [string, Food[]][]
   );
   const { number } = useStore();
+  const savedMeals = useNutritionQuery(listSavedMeals);
+  const [mealEditor, setMealEditor] = useState<SavedMeal | null>(null);
   const [editor, setEditor] = useState<{ food?: Food } | null>(null);
   const [sourceError, setSourceError] = useState("");
   async function openSource(url: string) {
@@ -33,6 +38,32 @@ export function LibraryScreen() {
     <>
       <Screen title="Library" subtitle="Foods you know. Ready to log again.">
         <SystemButton onPress={() => setEditor({})}>Find or create a food</SystemButton>
+        <View className="gap-3">
+          <Text className="text-xl font-semibold">Saved meals</Text>
+          <Text className="text-sm text-muted">
+            {savedMeals.length
+              ? "Your usuals, ready to log again."
+              : "Tap Reuse meal in your diary to save a combination you enjoy."}
+          </Text>
+          {savedMeals.map((meal) => (
+            <SystemButton
+              key={meal.id}
+              variant="secondary"
+              className="justify-start bg-surface p-5"
+              onPress={() => setMealEditor(meal)}
+            >
+              <View className="flex-1 gap-1">
+                <Text className="font-semibold">{meal.name}</Text>
+                <Text className="text-sm text-muted">
+                  {meal.items.length} foods ·{" "}
+                  {number(totalNutrients(meal.items.map((item) => item.nutrients)).calories, 0)}{" "}
+                  kcal
+                </Text>
+              </View>
+              <Text className="text-sm text-accent-soft-foreground">Log meal</Text>
+            </SystemButton>
+          ))}
+        </View>
         {sections.map(([title, foods]) => (
           <View key={title} className="gap-2">
             <Text className="text-xl font-semibold">{title}</Text>
@@ -104,6 +135,7 @@ export function LibraryScreen() {
           </SystemPanel.Body>
         </SystemPanel>
       </Screen>
+      {mealEditor && <MealEditor saved={mealEditor} close={() => setMealEditor(null)} />}
       {editor && <FoodEditor initialFood={editor.food} close={() => setEditor(null)} />}
     </>
   );

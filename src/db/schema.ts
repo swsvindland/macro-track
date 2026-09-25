@@ -1,5 +1,5 @@
 import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import type { DayState, Food, Meal, Nutrients, Targets } from "@/lib/nutrition";
+import type { DayState, Food, Meal, MealItem, Nutrients, Targets } from "@/lib/nutrition";
 
 export const counterLogs = sqliteTable("counter_logs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -94,3 +94,11 @@ export const nutritionTargets = sqliteTable("nutrition_targets", {
   effectiveDay: text("effective_day").primaryKey(),
   targets: text("targets", { mode: "json" }).$type<Targets>().notNull(),
 });
+
+export const savedMeals = sqliteTable("saved_meals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  items: text("items", { mode: "json" }).$type<MealItem[]>().notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export type SavedMeal = typeof savedMeals.$inferSelect;

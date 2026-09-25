@@ -6,9 +6,7 @@
 @source '../node_modules/heroui-native/lib';
 @source '../node_modules/heroui-native-pro/lib';
 
-/* SIBYL semantic source of truth. Native code reads colors with useThemeColor.
-   Operational accents and links share the same cyan colors in both modes.
-   Status text uses the darker primitive shades to meet AA on white. */
+/* Calm surfaces with a shared cyan accent in light and dark modes. */
 @theme {
   --font-sans: "Inter";
   --font-normal: "Inter";
@@ -16,16 +14,16 @@
   --font-semibold: "Inter";
   --font-bold: "Inter";
   --font-mono: "IBMPlexMono";
-  --radius: 4px;
+  --radius: 12px;
   --radius-xs: 2px;
   --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
-  --radius-2xl: 8px;
-  --radius-3xl: 4px;
-  --radius-4xl: 8px;
-  --field-radius: 4px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 18px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+  --radius-4xl: 28px;
+  --field-radius: 14px;
   --field-border-width: 1px;
   --text-2xl: 22px;
   --text-3xl: 28px;
@@ -47,7 +45,7 @@
 @layer theme {
   :root {
     @variant light {
-      --background: #ffffff;
+      --background: #f3f6f8;
       --foreground: #15212b;
       --surface: #ffffff;
       --surface-secondary: #f7f9fa;
@@ -61,7 +59,7 @@
       --accent-soft: #ecfeff;
       --accent-soft-foreground: #007f9b;
       --field-background: #ffffff;
-      --field-border: #aab5bc;
+      --field-border: #d9e1e6;
       --success: #087c70;
       --success-foreground: #ffffff;
       --success-soft: #effcf9;
@@ -95,7 +93,7 @@
       --background: #071017;
       --foreground: #f3f6f7;
       --surface: #0d171e;
-      --surface-secondary: #0d171e;
+      --surface-secondary: #14232d;
       --surface-tertiary: #102029;
       --overlay: #0d171e;
       --backdrop: rgba(0, 0, 0, 0.45);

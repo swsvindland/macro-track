@@ -10,6 +10,7 @@ import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import type { FoodEntry } from "@/db";
 import { FoodEditor } from "./food-editor";
+import { MealEditor } from "./meal-editor";
 
 const statusLabels: Record<DayState, string> = {
   "in-progress": "In progress",
@@ -27,6 +28,10 @@ export function TodayScreen() {
   const [choosingDay, setChoosingDay] = useState(false);
   const [editor, setEditor] = useState<{ meal: Meal; entry?: FoodEntry } | null>(null);
   const [error, setError] = useState("");
+  const [mealEditor, setMealEditor] = useState<{
+    source?: { day: string; meal: Meal };
+    meal: Meal;
+  } | null>(null);
   useEffect(() => {
     function checkDay() {
       const current = localDay();
@@ -61,7 +66,7 @@ export function TodayScreen() {
           </SystemButton>
         }
       >
-        <View className="flex-row items-center justify-between gap-2">
+        <View className="flex-row items-center justify-between gap-1 rounded-2xl bg-surface p-1">
           <SystemButton
             variant="ghost"
             onPress={() => {
@@ -99,11 +104,11 @@ export function TodayScreen() {
             }}
           />
         )}
-        <SystemPanel>
-          <SystemPanel.Body className="gap-5">
+        <SystemPanel className="p-6">
+          <SystemPanel.Body className="gap-6">
             <View className="gap-1">
               <Text className="text-sm text-muted">Calories eaten</Text>
-              <Text className="font-mono text-5xl">
+              <Text className="text-5xl font-semibold tabular-nums">
                 {number(totals.calories, 0)} <Text className="text-base text-muted">kcal</Text>
               </Text>
               <Text className="text-sm text-muted">
@@ -116,7 +121,7 @@ export function TodayScreen() {
               {(["protein", "carbs", "fat"] as const).map((key) => (
                 <View className="flex-1 gap-2" key={key}>
                   <Text className="text-sm text-muted">{key[0].toUpperCase() + key.slice(1)}</Text>
-                  <Text className="font-mono text-xl">
+                  <Text className="text-2xl font-semibold tabular-nums">
                     {number(totals[key], 0)}{" "}
                     <Text className="text-xs text-muted">
                       {targets ? `/ ${number(targets[key], 0)} g` : "g"}
@@ -124,7 +129,7 @@ export function TodayScreen() {
                   </Text>
                   {targets && targets[key] > 0 && (
                     <View
-                      className="h-1 rounded-full bg-surface-tertiary"
+                      className="h-1.5 rounded-full bg-surface-tertiary"
                       accessibilityRole="progressbar"
                       accessibilityValue={{
                         min: 0,
@@ -134,7 +139,7 @@ export function TodayScreen() {
                       accessibilityLabel={key}
                     >
                       <View
-                        className="h-1 rounded-full bg-accent"
+                        className="h-1.5 rounded-full bg-accent"
                         style={{ width: `${Math.min(100, (totals[key] / targets[key]) * 100)}%` }}
                       />
                     </View>
@@ -144,71 +149,93 @@ export function TodayScreen() {
             </View>
           </SystemPanel.Body>
         </SystemPanel>
-        <SystemButton
-          onPress={() =>
-            setEditor({
-              meal:
-                new Date().getHours() < 11
-                  ? "Breakfast"
-                  : new Date().getHours() < 16
-                    ? "Lunch"
-                    : "Dinner",
-            })
-          }
-        >
-          Add food
-        </SystemButton>
-        {!entries.length && (
-          <View className="gap-2 py-2">
-            <Text className="text-xl font-semibold">
-              {status === "fasting" ? "A fasting day" : "Your day starts here"}
-            </Text>
-            <Text className="text-muted">
-              {status === "fasting"
-                ? "You've marked today as fasting. Adding food will reopen the diary."
-                : "Search a food, scan its barcode, or save a food from the label. Everything you log stays on this phone."}
-            </Text>
-          </View>
+        <View className="flex-row gap-3">
+          <SystemButton
+            className="flex-1"
+            onPress={() =>
+              setEditor({
+                meal:
+                  new Date().getHours() < 11
+                    ? "Breakfast"
+                    : new Date().getHours() < 16
+                      ? "Lunch"
+                      : "Dinner",
+              })
+            }
+          >
+            Add food
+          </SystemButton>
+          <SystemButton
+            className="flex-1"
+            variant="secondary"
+            onPress={() => setMealEditor({ meal: "Breakfast" })}
+          >
+            Saved meals
+          </SystemButton>
+        </View>
+        {status === "fasting" && (
+          <Text className="text-sm text-muted">
+            Marked as fasting. Adding food reopens this day.
+          </Text>
         )}
+        <View className="flex-row items-center justify-between">
+          <Text className="text-xl font-semibold">Your meals</Text>
+          <Text className="text-sm text-muted">
+            {entries.length} {entries.length === 1 ? "food" : "foods"} logged
+          </Text>
+        </View>
         {meals.map((meal) => {
           const rows = entries.filter((entry) => entry.meal === meal);
+          const mealCalories = rows.reduce((total, item) => total + item.nutrients.calories, 0);
           return (
-            <View key={meal} className="gap-1">
-              <View className="flex-row items-center justify-between gap-3">
-                <Text className="text-lg font-semibold">{meal}</Text>
-                <SystemButton variant="ghost" onPress={() => setEditor({ meal })}>
-                  Add
-                </SystemButton>
-              </View>
-              {rows.length > 0 && (
-                <Text className="text-xs font-mono text-muted">
-                  {number(
-                    rows.reduce((total, item) => total + item.nutrients.calories, 0),
-                    0
-                  )}{" "}
-                  kcal
-                </Text>
-              )}
-              {rows.map((entry) => (
-                <SystemButton
-                  key={entry.id}
-                  variant="ghost"
-                  className="justify-start px-0 py-3"
-                  onPress={() => setEditor({ meal, entry })}
-                  accessibilityLabel={`Edit ${entry.food.name}`}
-                >
+            <SystemPanel key={meal}>
+              <SystemPanel.Body className="gap-3">
+                <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1 gap-1">
-                    <Text>{entry.food.name}</Text>
-                    <Text className="text-sm text-muted">{entry.portionLabel}</Text>
+                    <Text className="text-lg font-semibold">{meal}</Text>
+                    <Text className="text-sm text-muted">
+                      {rows.length ? `${number(mealCalories, 0)} kcal` : "Ready when you are"}
+                    </Text>
                   </View>
-                  <Text className="font-mono text-sm">{number(entry.nutrients.calories, 0)}</Text>
-                </SystemButton>
-              ))}
-              {!rows.length && <Text className="text-sm text-muted">No food logged</Text>}
-            </View>
+                  <SystemButton
+                    variant="secondary"
+                    accessibilityLabel={`Add food to ${meal}`}
+                    onPress={() => setEditor({ meal })}
+                  >
+                    Add food
+                  </SystemButton>
+                </View>
+                {rows.map((entry) => (
+                  <SystemButton
+                    key={entry.id}
+                    variant="ghost"
+                    className="justify-start px-0 py-3"
+                    onPress={() => setEditor({ meal, entry })}
+                    accessibilityLabel={`Edit ${entry.food.name}`}
+                  >
+                    <View className="flex-1 gap-1">
+                      <Text numberOfLines={2}>{entry.food.name}</Text>
+                      <Text className="text-sm text-muted">{entry.portionLabel}</Text>
+                    </View>
+                    <Text className="font-semibold tabular-nums text-sm">
+                      {number(entry.nutrients.calories, 0)}
+                    </Text>
+                  </SystemButton>
+                ))}
+                {!!rows.length && (
+                  <SystemButton
+                    variant="ghost"
+                    className="self-start px-0"
+                    onPress={() => setMealEditor({ source: { day, meal }, meal })}
+                  >
+                    Reuse meal
+                  </SystemButton>
+                )}
+              </SystemPanel.Body>
+            </SystemPanel>
           );
         })}
-        <View className="gap-3 border-t border-separator pt-5">
+        <View className="gap-3 py-2">
           <Text className="font-semibold">Logging status</Text>
           <Choices
             values={["in-progress", "complete", "partial", "fasting"] as const}
@@ -231,6 +258,15 @@ export function TodayScreen() {
           <ErrorText message={error} />
         </View>
       </Screen>
+      {mealEditor && (
+        <MealEditor
+          source={mealEditor.source}
+          initialDay={mealEditor.source ? today : day}
+          initialMeal={mealEditor.meal}
+          close={() => setMealEditor(null)}
+          onLogged={setDay}
+        />
+      )}
       {editor && (
         <FoodEditor
           initialDay={day}

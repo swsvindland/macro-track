@@ -49,18 +49,18 @@ export function Screen({
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
           paddingTop: 24,
           paddingBottom: 40,
-          gap: 24,
+          gap: 20,
           width: "100%",
           maxWidth: 1440,
           alignSelf: "center",
         }}
       >
         {!nativeHeader && (
-          <View className="gap-2 border-b border-border pb-6">
+          <View className="gap-2 pb-1">
             <View className="flex-row items-center justify-between gap-3">
               <Text
                 accessibilityRole="header"
-                className="flex-1 text-4xl font-semibold text-foreground"
+                className="flex-1 text-3xl font-semibold text-foreground"
               >
                 {title}
               </Text>
@@ -234,8 +234,8 @@ export function Choices<T extends string>({
           variant="ghost"
           className={
             value === option
-              ? "rounded-none border-b-2 border-link bg-surface-secondary"
-              : "rounded-none border-b-2 border-transparent"
+              ? "bg-accent-soft border-accent-soft"
+              : "bg-surface-secondary border-transparent"
           }
           accessibilityState={{ selected: value === option }}
           onPress={() => onChange(option)}
@@ -280,7 +280,7 @@ export function Editor({
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={{
                   padding: 24,
-                  gap: 24,
+                  gap: 20,
                   paddingBottom: 40,
                   maxWidth: 640,
                   width: "100%",

@@ -17,6 +17,12 @@ export type Food = {
   source: "usda" | "off" | "custom";
   sourceVersion: string;
 };
+export type MealItem = {
+  food: Food;
+  amount: number;
+  portionLabel: string;
+  nutrients: Nutrients;
+};
 export const meals = ["Breakfast", "Lunch", "Dinner", "Snacks"] as const;
 export type Meal = (typeof meals)[number];
 export const dayStates = ["in-progress", "complete", "partial", "fasting"] as const;

@@ -25,12 +25,14 @@ export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) 
   return (
     <SystemButton
       variant="ghost"
-      className="justify-start px-0 py-4"
+      className="justify-start rounded-2xl bg-surface px-4 py-4"
       accessibilityLabel={`Log ${food.name}`}
       onPress={onPress}
     >
       <View className="flex-1 gap-1">
-        <Text className="font-medium">{food.name}</Text>
+        <Text className="font-medium" numberOfLines={2}>
+          {food.name}
+        </Text>
         <Text className="text-sm text-muted">
           {food.brand ||
             (food.source === "usda"
@@ -42,7 +44,7 @@ export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) 
           {food.basis === "serving" ? "serving" : `100 ${food.basis}`}
         </Text>
       </View>
-      <Text className="text-muted">＋</Text>
+      <Text className="text-sm text-accent-soft-foreground">Add</Text>
     </SystemButton>
   );
 }
@@ -470,7 +472,7 @@ export function FoodEditor({
           {preview && (
             <SystemPanel>
               <SystemPanel.Body className="gap-2">
-                <Text className="font-mono text-3xl">
+                <Text className="font-semibold tabular-nums text-3xl">
                   {number(preview.calories, 0)} <Text className="text-base text-muted">kcal</Text>
                 </Text>
                 <Text className="text-sm text-muted">
