@@ -307,3 +307,23 @@ function resolveRecipeSnapshots(foods: Food[]): Food[] {
     food.source === "recipe" ? (current.has(food.id) ? [current.get(food.id)!] : []) : [food]
   );
 }
+
+export function copyDay(sourceDay: string, destination: string) {
+  if (!validDay(sourceDay) || !validDay(destination) || sourceDay === destination)
+    throw new Error("Choose two different dates, today or earlier.");
+  const entries = entriesForDay(sourceDay);
+  if (!entries.length) throw new Error("There is no food to copy on that day.");
+  db.transaction((tx) => {
+    for (const { id: _id, ...entry } of entries)
+      tx.insert(foodEntries)
+        .values({ ...entry, day: destination, createdAt: Date.now() })
+        .run();
+    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, destination)).get();
+    const status = previous?.status === "partial" ? "partial" : "in-progress";
+    tx.insert(diaryDays)
+      .values({ day: destination, status })
+      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
+      .run();
+  });
+  return entries.length;
+}

@@ -149,6 +149,7 @@ const dataSchema = z.strictObject({
           id: text.min(1),
           name: text.min(1).max(80),
           servings: positive.max(1000),
+          yieldGrams: positive.max(100000).nullable().optional(),
           ingredients: z
             .array(z.strictObject({ food, amount: positive.max(100000) }))
             .min(1)

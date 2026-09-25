@@ -8,6 +8,7 @@ import m0003 from "./0003_gray_proteus.sql";
 import m0004 from "./0004_handy_cannonball.sql";
 import m0005 from "./0005_cooing_tempest.sql";
 import m0006 from "./0006_spotty_ser_duncan.sql";
+import m0007 from "./0007_reflective_golden_guardian.sql";
 
 export default {
   journal,
@@ -19,5 +20,6 @@ export default {
     m0004,
     m0005,
     m0006,
+    m0007,
   },
 };

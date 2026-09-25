@@ -115,6 +115,8 @@ function screenHarness(diary) {
     "@/lib/metrics": metrics,
     "@/lib/nutrition": nutrition,
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
+    "./quick-add": { QuickAdd: "QuickAdd" },
+    "./copy-day": { CopyDay: "CopyDay" },
     "./meal-editor": { MealEditor: "MealEditor" },
     "./recipe-editor": { RecipeEditor: "RecipeEditor" },
     "expo-camera": { CameraView: "CameraView", useCameraPermissions: () => [] },
@@ -866,5 +868,63 @@ test("check-in acceptance is atomic, weekly, preserved in backups, and keeps pas
   delete legacy.data.goals;
   delete legacy.data.checkIns;
   assert.deepEqual(backup.validateBackup(legacy).data.goals, []);
+  sqlite.close();
+});
+
+test("cooked batch mass supports weighed and equal portions and survives backups", () => {
+  const { diary, sqlite, backup } = diaryDatabase();
+  const recipe = diary.saveRecipe({
+    name: "Cooked rice bowl",
+    servings: 4,
+    yieldGrams: 800,
+    ingredients: [{ food, amount: 1000 }],
+  });
+  const cooked = nutrition.recipeFood(recipe);
+  assert.equal(cooked.basis, "g");
+  assert.equal(cooked.portions[0].amount, 200);
+  assert.equal(nutrition.scaleNutrients(cooked, 200).calories, 450);
+  assert.equal(nutrition.scaleNutrients(cooked, 400).calories, 900);
+  backup.restoreBackup(backup.createBackup());
+  assert.equal(diary.listRecipes()[0].yieldGrams, 800);
+  assert.throws(() => nutrition.recipeFood({ ...recipe, yieldGrams: 0 }));
+  sqlite.close();
+});
+test("whole-day copy preserves meal snapshots, appends, reopens only destination and rolls back failures", () => {
+  const { diary, sqlite } = diaryDatabase();
+  for (const meal of ["Breakfast", "Dinner"])
+    diary.saveEntry({ day: "2024-01-01", meal, food, amount: 100, portionLabel: "100 g" });
+  diary.setDayStatus("2024-01-01", "complete");
+  diary.saveEntry({ day: "2024-01-02", meal: "Snacks", food, amount: 50, portionLabel: "50 g" });
+  diary.setDayStatus("2024-01-02", "complete");
+  assert.equal(diary.copyDay("2024-01-01", "2024-01-02"), 2);
+  assert.equal(diary.entriesForDay("2024-01-02").length, 3);
+  assert.equal(diary.dayStatus("2024-01-01"), "complete");
+  assert.equal(diary.dayStatus("2024-01-02"), "in-progress");
+  assert.throws(() => diary.copyDay("2024-01-01", "2024-01-01"));
+  sqlite.exec(
+    "CREATE TRIGGER fail_day_copy BEFORE INSERT ON food_entries WHEN NEW.day = '2024-01-03' AND NEW.meal = 'Dinner' BEGIN SELECT RAISE(ABORT, 'disk failure'); END"
+  );
+  assert.throws(() => diary.copyDay("2024-01-01", "2024-01-03"));
+  assert.equal(diary.entriesForDay("2024-01-03").length, 0);
+  sqlite.close();
+});
+test("compiled quick add logs entered calories once and keeps unknown nutrients", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const harness = screenHarness(diary);
+  const { QuickAdd } = harness.load("src/components/nutrition/quick-add.tsx");
+  let closed = 0;
+  const render = () =>
+    nodes(harness.render(QuickAdd, { day: "2024-01-01", close: () => closed++ }));
+  render()
+    .find((node) => node.props.label === "Calories (kcal)")
+    .props.onChange("650");
+  const button = render().find(
+    (node) => node.type === "Button" && node.props.children === "Add to diary"
+  );
+  button.props.onPress();
+  button.props.onPress();
+  assert.equal(closed, 1);
+  assert.equal(diary.entriesForDay("2024-01-01")[0].nutrients.calories, 650);
+  assert.equal(diary.entriesForDay("2024-01-01")[0].nutrients.fiber, null);
   sqlite.close();
 });

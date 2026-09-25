@@ -14,11 +14,17 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
   const { number } = useStore();
   const [name, setName] = useState(recipe?.name ?? "");
   const [servings, setServings] = useState(String(recipe?.servings ?? 4));
+  const [yieldGrams, setYieldGrams] = useState(recipe?.yieldGrams ? String(recipe.yieldGrams) : "");
   const [ingredients, setIngredients] = useState<RecipeIngredient[]>(recipe?.ingredients ?? []);
   const [picker, setPicker] = useState<{ index?: number } | null>(null);
   const [error, setError] = useState("");
   const locked = useRef(false);
-  const draft = { name, servings: parseNumber(servings), ingredients };
+  const draft = {
+    name,
+    servings: parseNumber(servings),
+    yieldGrams: yieldGrams.trim() ? parseNumber(yieldGrams) : null,
+    ingredients,
+  };
   let preview = null;
   try {
     preview = recipeFood({ ...draft, name: name.trim() || "Recipe", id: "preview", revision: 1 });
@@ -55,6 +61,15 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
       <Field label="Servings in the whole batch" value={servings} onChange={setServings} numeric />
       <Text className="text-sm text-muted">
         A batch split into four equal portions makes 4 servings.
+      </Text>
+      <Field
+        label="Cooked batch weight (g, optional)"
+        value={yieldGrams}
+        onChange={setYieldGrams}
+        numeric
+      />
+      <Text className="text-sm text-muted">
+        Weigh the finished food without its container to log portions by grams.
       </Text>
       <View className="gap-3">
         <Text className="text-lg font-semibold">Ingredients</Text>
@@ -102,7 +117,8 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
         <SystemPanel>
           <SystemPanel.Body className="gap-2">
             <Text className="text-sm text-muted">
-              Per serving · {number(draft.servings, 2)} in batch
+              {draft.yieldGrams ? "Per 100 g" : "Per serving"} · {number(draft.servings, 2)}{" "}
+              servings in batch
             </Text>
             <Text className="text-3xl font-semibold tabular-nums">
               {number(preview.nutrients.calories, 0)}{" "}

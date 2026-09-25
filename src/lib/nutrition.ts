@@ -103,6 +103,7 @@ export type Recipe = {
   id: string;
   name: string;
   servings: number;
+  yieldGrams?: number | null;
   ingredients: RecipeIngredient[];
   revision: number;
 };
@@ -114,6 +115,12 @@ export function recipeFood(recipe: Recipe): Food {
     throw new Error("Enter a batch yield above 0 and no greater than 1,000 servings.");
   if (!recipe.ingredients.length || recipe.ingredients.length > 100)
     throw new Error("Add between 1 and 100 ingredients.");
+  if (
+    recipe.yieldGrams != null &&
+    (!Number.isFinite(recipe.yieldGrams) || recipe.yieldGrams <= 0 || recipe.yieldGrams > 100000)
+  )
+    throw new Error("Enter a cooked batch weight above 0 and no greater than 100,000 g.");
+  const divisor = recipe.yieldGrams ? recipe.yieldGrams / 100 : recipe.servings;
   const totals = totalNutrients(
     recipe.ingredients.map(({ food, amount }) => {
       validateFood(food);
@@ -125,16 +132,15 @@ export function recipeFood(recipe: Recipe): Food {
     name: recipe.name.trim(),
     brand: "",
     barcode: null,
-    basis: "serving",
+    basis: recipe.yieldGrams ? "g" : "serving",
     source: "recipe",
     sourceVersion: String(recipe.revision),
     nutrients: Object.fromEntries(
-      Object.entries(totals).map(([key, value]) => [
-        key,
-        value === null ? null : value / recipe.servings,
-      ])
+      Object.entries(totals).map(([key, value]) => [key, value === null ? null : value / divisor])
     ) as Nutrients,
-    portions: [{ label: "1 serving", amount: 1 }],
+    portions: [
+      { label: "1 serving", amount: recipe.yieldGrams ? recipe.yieldGrams / recipe.servings : 1 },
+    ],
   };
   validateFood(food);
   return food;

@@ -115,6 +115,7 @@ export const recipes = sqliteTable("recipes", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   servings: real("servings").notNull(),
+  yieldGrams: real("yield_grams"),
   ingredients: text("ingredients", { mode: "json" }).$type<RecipeIngredient[]>().notNull(),
   revision: integer("revision").notNull(),
 });

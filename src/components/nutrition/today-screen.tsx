@@ -1,3 +1,5 @@
+import { QuickAdd } from "./quick-add";
+import { CopyDay } from "./copy-day";
 import { useEffect, useRef, useState } from "react";
 import { AppState, View } from "react-native";
 import { router } from "expo-router";
@@ -27,6 +29,8 @@ export function TodayScreen() {
   const [day, setDay] = useState(localDay());
   const [choosingDay, setChoosingDay] = useState(false);
   const [editor, setEditor] = useState<{ meal: Meal; entry?: FoodEntry } | null>(null);
+  const [quick, setQuick] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [error, setError] = useState("");
   const [mealEditor, setMealEditor] = useState<{
     source?: { day: string; meal: Meal };
@@ -173,6 +177,14 @@ export function TodayScreen() {
             Saved meals
           </SystemButton>
         </View>
+        <View className="flex-row gap-3">
+          <SystemButton variant="ghost" className="flex-1" onPress={() => setQuick(true)}>
+            Quick add
+          </SystemButton>
+          <SystemButton variant="ghost" className="flex-1" onPress={() => setCopying(true)}>
+            Copy a day
+          </SystemButton>
+        </View>
         {status === "fasting" && (
           <Text className="text-sm text-muted">
             Marked as fasting. Adding food reopens this day.
@@ -258,6 +270,8 @@ export function TodayScreen() {
           <ErrorText message={error} />
         </View>
       </Screen>
+      {quick && <QuickAdd day={day} close={() => setQuick(false)} />}
+      {copying && <CopyDay destination={day} close={() => setCopying(false)} />}
       {mealEditor && (
         <MealEditor
           source={mealEditor.source}
