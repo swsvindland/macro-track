@@ -153,7 +153,11 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "@/lib/local-ai": {
       modelStatus: async () => ({ state: "unavailable", engine: "none", vision: false }),
+      textRecognitionAvailable: () => false,
+      recognizeText: async () => [],
     },
+    "@/lib/nutrition-label": load("src/lib/nutrition-label.ts"),
+    "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
     "./copy-day": { CopyDay: "CopyDay" },
     "./meal-editor": { MealEditor: "MealEditor" },
     "./recipe-editor": { RecipeEditor: "RecipeEditor" },

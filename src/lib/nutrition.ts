@@ -92,6 +92,57 @@ export function validateFood(food: Food): void {
   if (food.barcode && !normalizeBarcode(food.barcode)) throw new Error("Check the barcode digits.");
 }
 
+export type CustomFoodInput = {
+  name: string;
+  brand: string;
+  barcode: string | null;
+  basis: Food["basis"];
+  /** Per 100 g or ml, or per serving. */
+  nutrients: Nutrients;
+  /** For per-serving values: the household measure and, when known, its weight or volume. */
+  serving?: { label: string; amount: number | null; unit: "g" | "ml" };
+};
+
+/**
+ * A food entered from a label. Per-serving values with a known serving weight are stored per
+ * 100 g or ml with the serving as a portion, so the food can be logged by serving or by weight.
+ */
+export function customFood(
+  input: CustomFoodInput,
+  id = `custom:${Date.now()}:${Math.random().toString(36).slice(2)}`
+): Food {
+  const measure = input.serving?.label.trim().slice(0, 40) ?? "";
+  const servingName = measure ? `1 serving (${measure})` : "1 serving";
+  const weight = input.serving?.amount;
+  const byWeight = input.basis === "serving" && weight != null;
+  if (byWeight && (!Number.isFinite(weight) || weight <= 0 || weight > 5000))
+    throw new Error("Enter a serving weight above 0 and no greater than 5,000.");
+  const food: Food = {
+    id,
+    name: input.name.trim(),
+    brand: input.brand.trim(),
+    barcode: input.barcode,
+    basis: byWeight ? input.serving!.unit : input.basis,
+    nutrients: byWeight
+      ? (Object.fromEntries(
+          Object.entries(input.nutrients).map(([key, value]) => [
+            key,
+            value === null ? null : (value * 100) / weight!,
+          ])
+        ) as Nutrients)
+      : input.nutrients,
+    portions: byWeight
+      ? [{ label: servingName, amount: weight! }]
+      : input.basis === "serving" && measure
+        ? [{ label: servingName, amount: 1 }]
+        : [],
+    source: "custom",
+    sourceVersion: "1",
+  };
+  validateFood(food);
+  return food;
+}
+
 export function shiftDay(day: string, offset: number): string {
   const date = new Date(`${day}T12:00:00`);
   date.setDate(date.getDate() + offset);

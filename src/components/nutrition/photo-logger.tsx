@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Linking, Platform, View } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import * as ImagePicker from "expo-image-picker";
-import { File, Paths } from "expo-file-system";
+import { ActivityIndicator, Image, Platform, View } from "react-native";
 import {
   SystemButton,
   SystemIconButton,
@@ -36,6 +33,7 @@ import {
 import { useNutrition } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import { FoodEditor } from "./food-editor";
+import { discardPhoto, PhotoCapture } from "./photo-capture";
 import { TimeField } from "./time-field";
 
 type Phase =
@@ -79,17 +77,6 @@ function describeError(error: unknown) {
     : "Couldn't analyze this meal. Try again.";
 }
 
-// Photos are only needed until the draft exists; nothing is kept after logging.
-function discard(uri: string | null) {
-  if (!uri) return;
-  try {
-    const file = new File(uri);
-    if (file.uri.startsWith(`${Paths.cache.uri.replace(/\/$/, "")}/`) && file.exists) file.delete();
-  } catch {
-    // A leftover cache file is cleared by the system.
-  }
-}
-
 /** The person's own, saved and recently logged foods, preferred when they match. */
 function knownFoods(): Food[] {
   return [
@@ -99,95 +86,6 @@ function knownFoods(): Food[] {
         .map((food) => [food.id, food])
     ).values(),
   ];
-}
-
-function MealCamera({
-  onPhoto,
-  onError,
-}: {
-  onPhoto: (uri: string) => void;
-  onError: (message: string) => void;
-}) {
-  const [permission, requestPermission] = useCameraPermissions();
-  const [broken, setBroken] = useState(false);
-  const [taking, setTaking] = useState(false);
-  const camera = useRef<CameraView>(null);
-  async function choose() {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        quality: 0.8,
-        allowsEditing: false,
-      });
-      if (!result.canceled && result.assets[0]) onPhoto(result.assets[0].uri);
-    } catch {
-      onError("Couldn't open your photos.");
-    }
-  }
-  async function take() {
-    if (taking) return;
-    setTaking(true);
-    try {
-      const picture = await camera.current?.takePictureAsync({ quality: 0.7 });
-      if (picture?.uri) onPhoto(picture.uri);
-    } catch {
-      onError("Couldn't take the photo. Try again or choose one from your library.");
-    } finally {
-      setTaking(false);
-    }
-  }
-  const library = (
-    <SystemButton variant="secondary" icon="images-outline" onPress={() => void choose()}>
-      Choose photo
-    </SystemButton>
-  );
-  if (!permission) return <Text className="text-muted">Checking camera access…</Text>;
-  if (!permission.granted || broken)
-    return (
-      <View className="gap-3">
-        <Text className="text-muted">
-          {broken
-            ? "The camera is unavailable. Choose a photo or describe your meal."
-            : "Allow camera access to photograph your meal, or choose a photo you already took."}
-        </Text>
-        {!broken && (
-          <SystemButton
-            variant="secondary"
-            icon="camera-outline"
-            onPress={() => {
-              void (permission.canAskAgain ? requestPermission() : Linking.openSettings()).catch(
-                () => setBroken(true)
-              );
-            }}
-          >
-            {permission.canAskAgain ? "Allow camera" : "Open camera settings"}
-          </SystemButton>
-        )}
-        {library}
-      </View>
-    );
-  return (
-    <View className="gap-2">
-      <CameraView
-        ref={camera}
-        style={{ width: "100%", aspectRatio: 4 / 3, borderRadius: 16, overflow: "hidden" }}
-        facing="back"
-        onMountError={() => setBroken(true)}
-      />
-      <View className="flex-row gap-2">
-        <SystemButton
-          className="flex-1"
-          icon="camera"
-          isDisabled={taking}
-          accessibilityLabel="Take photo of your meal"
-          onPress={() => void take()}
-        >
-          {taking ? "Taking…" : "Take photo"}
-        </SystemButton>
-        {library}
-      </View>
-    </View>
-  );
 }
 
 /**
@@ -237,7 +135,7 @@ export function PhotoLogger({
     });
   }
   useEffect(check, []);
-  useEffect(() => () => discard(photo), [photo]);
+  useEffect(() => () => discardPhoto(photo), [photo]);
 
   async function install() {
     setInstalling(true);
@@ -745,7 +643,12 @@ export function PhotoLogger({
                 </SystemButton>
               </View>
             ) : (
-              <MealCamera onPhoto={setPhoto} onError={setError} />
+              <PhotoCapture
+                subject="your meal"
+                alternative="describe your meal"
+                onPhoto={setPhoto}
+                onError={setError}
+              />
             )
           ) : (
             <Text className="text-sm text-muted">

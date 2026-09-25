@@ -2,12 +2,13 @@ import CoreGraphics
 import ExpoModulesCore
 import Foundation
 import ImageIO
+import Vision
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
 
-/// Thin bridge to Apple's on-device model. Prompts and schemas live in JavaScript so both
-/// platforms share them; this side only checks availability and runs one request.
+/// Thin bridge to Apple's on-device model and text recognition. Prompts, schemas and parsing
+/// live in JavaScript so both platforms share them; this side only runs one request.
 /// Only `SystemLanguageModel` is used, never Private Cloud Compute, so nothing leaves the phone.
 public final class LocalAIModule: Module {
   nonisolated(unsafe) static var warm: AnyObject?
@@ -43,6 +44,46 @@ public final class LocalAIModule: Module {
       #endif
       throw LocalAIError("unavailable", "On-device models need iOS 26 or later.")
     }
+
+    // Vision's text recognition runs on every supported iPhone, with or without Apple Intelligence.
+    AsyncFunction("recognizeText") { (imageUri: String) async throws -> [[String: Any]] in
+      try LocalAIModule.recognizeText(imageUri)
+    }
+  }
+
+  /// Text lines as normalized boxes with a top-left origin, like ML Kit's on Android. A label
+  /// photographed sideways is read again in the other orientations.
+  static func recognizeText(_ uri: String) throws -> [[String: Any]] {
+    let image = try loadImage(uri, maxSide: 2400)
+    let keywords = try NSRegularExpression(
+      pattern: "calor|total fat|protein|carb|sodium|serving", options: .caseInsensitive)
+    func hits(_ lines: [[String: Any]]) -> Int {
+      lines.filter { line in
+        let text = line["text"] as? String ?? ""
+        return keywords.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+      }.count
+    }
+    var best: [[String: Any]] = []
+    for orientation in [CGImagePropertyOrientation.up, .right, .left] {
+      let request = VNRecognizeTextRequest()
+      request.recognitionLevel = .accurate
+      request.usesLanguageCorrection = false
+      do {
+        try VNImageRequestHandler(cgImage: image, orientation: orientation).perform([request])
+      } catch {
+        throw LocalAIError("failed", "Text recognition failed on this photo.")
+      }
+      let lines: [[String: Any]] = (request.results ?? []).compactMap { observation in
+        guard let text = observation.topCandidates(1).first?.string else { return nil }
+        let box = observation.boundingBox
+        return [
+          "text": text, "x": box.minX, "y": 1 - box.maxY, "width": box.width, "height": box.height,
+        ]
+      }
+      if hits(lines) > hits(best) { best = lines }
+      if hits(best) >= 4 { break }
+    }
+    return best
   }
 
   static func status() -> [String: Any] {
@@ -75,6 +116,21 @@ public final class LocalAIModule: Module {
     result["reason"] = "os"
     #endif
     return result
+  }
+
+  /// Photos can be 48 MP; the models only need a modest, upright image.
+  static func loadImage(_ uri: String, maxSide: Int = 1280) throws -> CGImage {
+    guard let url = URL(string: uri), url.isFileURL,
+      let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+      let image = CGImageSourceCreateThumbnailAtIndex(
+        source, 0,
+        [
+          kCGImageSourceCreateThumbnailFromImageAlways: true,
+          kCGImageSourceCreateThumbnailWithTransform: true,
+          kCGImageSourceThumbnailMaxPixelSize: maxSide,
+        ] as CFDictionary)
+    else { throw LocalAIError("invalid-image", "This photo could not be read.") }
+    return image
   }
 
   #if canImport(FoundationModels)
@@ -113,21 +169,6 @@ public final class LocalAIModule: Module {
     } catch {
       throw classify(error)
     }
-  }
-
-  /// Photos can be 48 MP; the model only needs a modest, upright image.
-  static func loadImage(_ uri: String) throws -> CGImage {
-    guard let url = URL(string: uri), url.isFileURL,
-      let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-      let image = CGImageSourceCreateThumbnailAtIndex(
-        source, 0,
-        [
-          kCGImageSourceCreateThumbnailFromImageAlways: true,
-          kCGImageSourceCreateThumbnailWithTransform: true,
-          kCGImageSourceThumbnailMaxPixelSize: 1280,
-        ] as CFDictionary)
-    else { throw LocalAIError("invalid-image", "This photo could not be read.") }
-    return image
   }
 
   @available(iOS 26.0, *)

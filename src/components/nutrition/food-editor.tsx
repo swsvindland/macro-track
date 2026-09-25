@@ -1,7 +1,7 @@
 import { TimeField } from "./time-field";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Linking, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
@@ -18,10 +18,20 @@ import {
   toggleFavorite,
 } from "@/lib/diary";
 import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
+import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
+import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
-import { meals, normalizeBarcode, scaleNutrients, type Food, type Meal } from "@/lib/nutrition";
+import {
+  customFood,
+  meals,
+  normalizeBarcode,
+  scaleNutrients,
+  type Food,
+  type Meal,
+} from "@/lib/nutrition";
 import { localDay, parseNumber } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
+import { discardPhoto, PhotoCapture } from "./photo-capture";
 
 export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) {
   const { number } = useStore();
@@ -102,46 +112,180 @@ function BarcodeCamera({ onScan }: { onScan: (value: string) => void }) {
   );
 }
 
-function CustomFoodForm({ barcode, onSave }: { barcode: string; onSave: (food: Food) => void }) {
+const macroFields = [
+  ["calories", "Calories (kcal)"],
+  ["protein", "Protein (g)"],
+  ["carbs", "Carbs (g)"],
+  ["fat", "Fat (g)"],
+  ["fiber", "Fiber (g, optional)"],
+  ["sodium", "Sodium (mg, optional)"],
+] as const;
+type LabelNote = { lines: string[]; warn: boolean };
+
+/** Photographs a Nutrition Facts panel and reads it with on-device text recognition. */
+function LabelScanner({
+  onRead,
+  onCancel,
+}: {
+  onRead: (reading: LabelReading) => void;
+  onCancel: () => void;
+}) {
+  const [reading, setReading] = useState(false);
+  const [error, setError] = useState("");
+  async function read(uri: string) {
+    setReading(true);
+    setError("");
+    try {
+      const label = readNutritionLabel(await recognizeText(uri));
+      if (labelFound(label)) onRead(label);
+      else
+        setError(
+          "Couldn't find Nutrition Facts in that photo. Fill the frame with the label, hold it flat and avoid glare."
+        );
+    } catch {
+      setError("Couldn't read that photo. Try again.");
+    } finally {
+      discardPhoto(uri);
+      setReading(false);
+    }
+  }
+  if (reading)
+    return (
+      <View className="flex-row items-center gap-3 py-6" accessibilityLiveRegion="polite">
+        <ActivityIndicator />
+        <Text className="font-medium">Reading the label…</Text>
+      </View>
+    );
+  return (
+    <View className="gap-3">
+      <PhotoCapture
+        subject="the Nutrition Facts label"
+        alternative="enter the values"
+        aspectRatio={3 / 4}
+        onPhoto={(uri) => void read(uri)}
+        onError={setError}
+      />
+      <ErrorText message={error} />
+      <Text className="text-sm text-muted">
+        Read on this phone. You can check every value before saving.
+      </Text>
+      <SystemButton variant="ghost" className="self-start" onPress={onCancel}>
+        Enter values by hand
+      </SystemButton>
+    </View>
+  );
+}
+
+const shown = (value: number | null) => (value === null ? "" : String(Number(value.toFixed(1))));
+
+function CustomFoodForm({
+  barcode,
+  scanFirst = false,
+  onSave,
+}: {
+  barcode: string;
+  /** Opens the label camera straight away, e.g. after an unknown barcode. */
+  scanFirst?: boolean;
+  onSave: (food: Food) => void;
+}) {
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
   const [code, setCode] = useState(barcode);
   const [basis, setBasis] = useState<Food["basis"]>("g");
-  const [values, setValues] = useState({ calories: "", protein: "", carbs: "", fat: "" });
+  const [values, setValues] = useState({
+    calories: "",
+    protein: "",
+    carbs: "",
+    fat: "",
+    fiber: "",
+    sodium: "",
+  });
+  const [serving, setServing] = useState({ label: "", amount: "", unit: "g" as "g" | "ml" });
+  const [scanning, setScanning] = useState(scanFirst && textRecognitionAvailable());
+  const [note, setNote] = useState<LabelNote | null>(null);
   const [error, setError] = useState("");
+  function fill(label: LabelReading) {
+    setBasis("serving");
+    setValues({
+      calories: shown(label.calories),
+      protein: shown(label.protein),
+      carbs: shown(label.carbs),
+      fat: shown(label.fat),
+      fiber: shown(label.fiber),
+      sodium: shown(label.sodium),
+    });
+    setServing({
+      label: label.servingLabel,
+      amount: label.servingAmount === null ? "" : String(label.servingAmount),
+      unit: label.servingUnit ?? "g",
+    });
+    const missing = (["calories", "protein", "carbs", "fat"] as const).filter(
+      (key) => label[key] === null
+    );
+    const lines = [
+      ...label.warnings,
+      ...(label.estimatedCalories
+        ? ["Calories weren't in the photo, so they're estimated from fat, carbs and protein."]
+        : []),
+      ...(missing.length ? [`Not found: ${missing.join(", ")}. Enter them from the label.`] : []),
+      ...(label.servingAmount === null ? ["Add the serving weight to log by grams too."] : []),
+    ];
+    setNote({
+      lines: ["Filled from the label. Check each value.", ...lines],
+      warn: lines.length > 0,
+    });
+    setScanning(false);
+    setError("");
+  }
   function save() {
     const normalized = code.trim() ? normalizeBarcode(code) : null;
     if (code.trim() && !normalized) {
       setError("Check the barcode digits, or leave the barcode blank.");
       return;
     }
-    const food: Food = {
-      id: `custom:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-      name: name.trim(),
-      brand: brand.trim(),
-      barcode: normalized,
-      basis,
-      nutrients: {
-        calories: parseNumber(values.calories),
-        protein: parseNumber(values.protein),
-        carbs: parseNumber(values.carbs),
-        fat: parseNumber(values.fat),
-        fiber: null,
-        sodium: null,
-      },
-      portions: [],
-      source: "custom",
-      sourceVersion: "1",
-    };
+    const optional = (text: string) => (text.trim() ? parseNumber(text) : null);
     try {
+      const food = customFood({
+        name,
+        brand,
+        barcode: normalized,
+        basis,
+        nutrients: {
+          calories: parseNumber(values.calories),
+          protein: parseNumber(values.protein),
+          carbs: parseNumber(values.carbs),
+          fat: parseNumber(values.fat),
+          fiber: optional(values.fiber),
+          sodium: optional(values.sodium),
+        },
+        serving:
+          basis === "serving"
+            ? { label: serving.label, amount: optional(serving.amount), unit: serving.unit }
+            : undefined,
+      });
       saveCustomFood(food);
       onSave(food);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save this food.");
     }
   }
+  if (scanning) return <LabelScanner onRead={fill} onCancel={() => setScanning(false)} />;
   return (
     <View className="gap-4">
+      {textRecognitionAvailable() && (
+        <SystemButton variant="secondary" icon="scan-outline" onPress={() => setScanning(true)}>
+          {note ? "Scan the label again" : "Scan nutrition label"}
+        </SystemButton>
+      )}
+      {note && (
+        <View className="gap-1 rounded-2xl bg-surface p-3" accessibilityLiveRegion="polite">
+          {note.lines.map((line, i) => (
+            <Text key={i} className={`text-sm ${i && note.warn ? "text-warning" : "text-muted"}`}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      )}
       <Field
         label="Food name"
         value={name}
@@ -156,15 +300,37 @@ function CustomFoodForm({ barcode, onSave }: { barcode: string; onSave: (food: F
         onChange={setBasis}
         label={(value) => (value === "serving" ? "1 serving" : `100 ${value}`)}
       />
+      {basis === "serving" && (
+        <View className="flex-row flex-wrap gap-4">
+          <View style={{ flexBasis: "44%", flexGrow: 1 }}>
+            <Field
+              label="Serving size (optional)"
+              value={serving.label}
+              onChange={(label) => setServing((old) => ({ ...old, label }))}
+              placeholder="e.g. 2/3 cup"
+            />
+          </View>
+          <View style={{ flexBasis: "44%", flexGrow: 1 }}>
+            <Field
+              label={`Serving weight (${serving.unit}, optional)`}
+              value={serving.amount}
+              numeric
+              onChange={(amount) => setServing((old) => ({ ...old, amount }))}
+            />
+          </View>
+          <Choices
+            values={["g", "ml"] as const}
+            value={serving.unit}
+            onChange={(unit) => setServing((old) => ({ ...old, unit }))}
+            label={(value) => (value === "g" ? "Grams" : "Milliliters")}
+          />
+        </View>
+      )}
       <View className="flex-row flex-wrap gap-4">
-        {(["calories", "protein", "carbs", "fat"] as const).map((key) => (
+        {macroFields.map(([key, label]) => (
           <View key={key} style={{ flexBasis: "44%", flexGrow: 1 }}>
             <Field
-              label={
-                key === "calories"
-                  ? "Calories (kcal)"
-                  : `${key[0].toUpperCase()}${key.slice(1)} (g)`
-              }
+              label={label}
               value={values[key]}
               numeric
               onChange={(value) => setValues((old) => ({ ...old, [key]: value }))}
@@ -231,6 +397,8 @@ export function FoodEditor({
   const [error, setError] = useState("");
   const [barcode, setBarcode] = useState("");
   const [notFound, setNotFound] = useState(false);
+  // An unknown barcode goes straight to photographing its label.
+  const [scanLabel, setScanLabel] = useState(false);
   const [favorites, setFavorites] = useState(() => favoriteFoods());
   const saveLock = useRef(false);
   useEffect(() => {
@@ -458,14 +626,26 @@ export function FoodEditor({
               it by barcode next time.
             </Text>
           )}
+          {notFound && textRecognitionAvailable() && (
+            <SystemButton
+              icon="scan-outline"
+              onPress={() => {
+                setScanLabel(true);
+                setMode("custom");
+              }}
+            >
+              Scan its nutrition label
+            </SystemButton>
+          )}
           <SystemButton variant="outline" onPress={() => setMode("custom")}>
-            Create this food
+            {notFound ? "Enter the label by hand" : "Create this food"}
           </SystemButton>
         </>
       )}
       {mode === "custom" && (
         <CustomFoodForm
           barcode={barcode}
+          scanFirst={scanLabel}
           onSave={(value) => {
             refresh();
             select(value);

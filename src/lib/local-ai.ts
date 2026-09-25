@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import { describeJson, extractJson, type JsonSchema } from "./model-json";
+import type { TextBox } from "./nutrition-label";
 
 export type ModelStatus = {
   state: "available" | "downloadable" | "downloading" | "unavailable";
@@ -31,6 +32,7 @@ type NativeLocalAI = {
     imageUri: string | null,
     maxTokens: number
   ): Promise<string>;
+  recognizeText(imageUri: string): Promise<TextBox[]>;
 };
 
 // Expo Go and builds from before this module simply report the feature as unavailable.
@@ -49,6 +51,15 @@ export async function modelStatus(): Promise<ModelStatus> {
       detail: e instanceof Error ? e.message : "",
     };
   }
+}
+
+/** Text recognition needs only this build's module, not Apple Intelligence or Gemini Nano. */
+export const textRecognitionAvailable = () => !!native;
+
+/** Reads the text in a photo on the phone (Vision on iOS, ML Kit on Android). */
+export async function recognizeText(imageUri: string): Promise<TextBox[]> {
+  if (!native) throw new Error("Text recognition isn't available in this build.");
+  return native.recognizeText(imageUri);
 }
 
 /** Gemini Nano is installed by Android's AICore on request; Apple installs its model itself. */

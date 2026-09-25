@@ -17,4 +17,7 @@ android {
 dependencies {
   // Gemini Nano through AICore. The model itself is installed and updated by the system.
   implementation "com.google.mlkit:genai-prompt:1.0.0-beta4"
+  // Nutrition labels. The bundled model works offline on every phone, without a first-use download.
+  implementation "com.google.mlkit:text-recognition:16.0.1"
+  implementation "androidx.exifinterface:exifinterface:1.3.7"
 }
