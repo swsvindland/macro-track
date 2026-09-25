@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import type { Targets } from "@/lib/nutrition";
 import { CoachingPanel } from "./coaching-panel";
 import { useState } from "react";
@@ -105,6 +106,9 @@ function PlanContent({ targets }: { targets: Targets | null }) {
           </SystemButton>
         </SystemPanel.Body>
       </SystemPanel>
+      <SystemButton variant="ghost" onPress={() => router.push("/coaching-method")}>
+        How check-ins work
+      </SystemButton>
       <Text className="text-sm text-muted">
         Coaching estimates are approximate, not a measurement of metabolism. They use a 21-day
         weight trend and logged intake with a short-term 7,700 kcal/kg approximation. Water shifts

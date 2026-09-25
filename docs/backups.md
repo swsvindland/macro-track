@@ -2,7 +2,7 @@
 
 Open **Settings → Backup & restore**. Create a password of at least 10 characters and save the encrypted file using the phone's share sheet. A backup exists outside the app only after the user saves it to a destination. Macro Track has no password recovery or backup server. Choosing a cloud destination in the system share sheet uses that provider.
 
-The file contains food entries and their nutrition snapshots, custom foods, favorites, saved meals, recipes, logging status, dated calorie/macro targets, and weight history. It excludes reference food catalogs, progress photos, body/height measurements, appearance preferences, health permissions and health synchronization mappings. Photos and body measurements already on the destination phone are left untouched. This is a nutrition-and-weight backup, not a complete archive of the inherited Body Track features.
+The file contains food entries and their nutrition snapshots, custom foods, favorites, saved meals, recipes, logging status, dated calorie/macro targets, goal revisions, check-in history, and weight history. It excludes reference food catalogs, progress photos, body/height measurements, appearance preferences, health permissions and health synchronization mappings. Photos and body measurements already on the destination phone are left untouched. This is a nutrition-and-weight backup, not a complete archive of the inherited Body Track features.
 
 To restore, enter the backup password, choose the file, review its date and record counts, then confirm replacement. Restore replaces the included categories; it does not merge them. Input is authenticated and structurally validated before database writes. The app saves, reads back and authenticates an encrypted copy of the current records before replacing anything. That recovery file uses the password entered for the incoming backup. Export the latest recovery copy from Settings; to undo a restore, select that exported file through the ordinary restore flow. Recovery copies on the phone are not protection against losing or uninstalling the app.
 
@@ -17,3 +17,9 @@ Version 1 uses AES-256-GCM authenticated encryption, a fresh 12-byte nonce and 1
 The decrypted payload is versioned JSON with strict field validation, unique record IDs, bounded numbers/arrays, and consistent logging statuses. The current limit is 20 MiB of plaintext; hexadecimal encoding makes encrypted files roughly twice that size. File paths and SQL statements are never loaded from the payload. Catalog databases are not copied, keeping ordinary backups small.
 
 The feature adds Expo DocumentPicker, Sharing and Crypto native modules. Rebuild a development client after installing dependencies (`pnpm ios` or `pnpm android`). A JavaScript refresh alone cannot add native modules. Physical-device share-sheet/provider workflows and large-backup performance still require QA.
+
+## CSV export and erasure
+
+Settings also exports readable food-entry and weight CSV files. Unknown fiber/sodium stay blank, food names are quoted, and formula-like strings are neutralized for spreadsheet use. CSV is unencrypted and is not a restore format. Use an encrypted backup for transfer or recovery.
+
+Erasure requires a separate destructive confirmation. It clears all personal database tables, app-held recovery backups, inherited progress photos, and Macro Track export cache files while preserving reference food catalogs. It disables health sync. It does not delete copies the user shared outside the app or records in Apple Health/Health Connect. Database deletion is transactional; file deletion cannot be part of that transaction. A file/storage failure can leave a partial file cleanup and is surfaced to the user for retry.

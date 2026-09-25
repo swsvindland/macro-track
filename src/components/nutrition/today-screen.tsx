@@ -151,6 +151,16 @@ export function TodayScreen() {
                 </View>
               ))}
             </View>
+            <Text className="text-sm text-muted">
+              Fiber · {totals.fiber === null ? "incomplete data" : `${number(totals.fiber, 1)} g`}{" "}
+              Sodium ·{" "}
+              {totals.sodium === null ? "incomplete data" : `${number(totals.sodium, 0)} mg`}
+            </Text>
+            {!targets && (
+              <SystemButton variant="secondary" onPress={() => router.push("/(tabs)/plan")}>
+                Set up your daily targets
+              </SystemButton>
+            )}
           </SystemPanel.Body>
         </SystemPanel>
         <View className="flex-row gap-3">

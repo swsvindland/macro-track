@@ -2,7 +2,7 @@
 
 An offline nutrition tracker for iPhone and Android, forked from Vector Body. Public branding is still undecided. See [the product plan](docs/macro-track-plan.md).
 
-## Working foundation
+## Usable MVP
 
 - Today: date navigation, calories/macros, meals, logging status, add/edit/delete entries.
 - Offline food search across **7,793 USDA SR Legacy foods** and **82,937 US packaged foods** from the full Open Food Facts CSV export.
@@ -11,16 +11,19 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Personal foods, favorites, and recent foods.
 - Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Tap **Reuse meal** below a logged meal, or open **Saved meals** from Today or Library. Copies preserve nutrition snapshots and remain independently editable.
 - Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
-- Manual targets with effective dates; later revisions preserve earlier days.
+- Manual calorie/macro baselines plus lose/maintain/gain goals and local weekly check-ins. Calibration requires 21 complete days and regular weights; adjustments require acceptance. See [coaching method and limits](docs/coaching.md).
+- Quick-add estimates, whole-day copying, and optional cooked batch weights for gram-based recipe portions.
+- Progress includes complete-day intake averages and the next check-in.
+- Readable food/weight CSV exports and confirmed local personal-data erasure.
 - Inherited weight history, smoothed trend, and opt-in HealthKit / Health Connect integration.
 - Password-protected local backup and restore in Settings, with an automatic encrypted recovery copy before replacement. See [backup scope and recovery](docs/backups.md).
 - Distinct `dev.svindland.macrotrack` application IDs, `macrotrack://` scheme, private `macro_track.db`, and app icon.
 
-Adaptive coaching/check-ins, label OCR, meal-photo AI, and downloadable catalog updates are not implemented yet. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
+Label OCR, meal-photo AI, and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
-The September 25 update adds reusable meals and refreshes the diary, meal cards, food results, shared controls and light/dark surfaces. Reload a running development app after pulling this update so the new saved-meals migration runs. The saved-meal flow supports half/double quantities, retains existing destination entries, and never changes past logs when a saved meal is removed.
+Start with **Plan → Daily targets**, then choose a goal. Log food in **Today**, add weights in **Progress**, and mark finished days complete. **Library** holds personal foods, saved meals and recipes. Check-ins explain their coverage and proposed changes; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
 
-The recipe follow-up adds its own local storage migration, so reload once before trying **Library → Create recipe**. Recipe yield currently uses equal servings, not finished batch weight. Ingredients retain the nutrition selected when the recipe was built; previously saved meals also retain their own snapshots. Recipe deletion removes it from reusable search/favorites while preserving logged history.
+Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules. Initial targets are user supplied; there is no automatic profile-based calorie prescription in this MVP.
 
 ## Development
 
@@ -70,3 +73,5 @@ Tests use real SQLite with the production Drizzle driver and cover migrations, h
 The September 24, 2026 foundation passed all 21 automated tests, TypeScript and lint checks, iOS simulator compilation/installation, Android arm64 debug compilation, and production JavaScript/asset exports for both platforms. See [the milestone report](docs/foundation-validation.md) for catalog measurements and remaining QA.
 
 The documentation and store assets under `docs/app-store/` were inherited from Body Track and are reference material, not ready-to-submit Macro Track assets.
+
+See [MVP validation and release gates](docs/mvp-validation.md) for the latest verified scope.
