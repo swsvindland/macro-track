@@ -1139,6 +1139,62 @@ test("Maintain at the goal weight answers a due check-in in one tap", () => {
   for (const database of [data, done, later]) database.sqlite.close();
 });
 
+test("a flagged misread under the goal weight doesn't offer Maintain, before or after checking in", () => {
+  const data = coachingDatabase("2024-02-01");
+  const { db, store, weighIn } = data;
+  seedProgram(data, "2024-02-01", { weight: () => 75.25, changes: { targetWeightKg: 75 } });
+  assert.equal(store.reachedGoal(store.currentGoal(), store.currentReview()), false);
+  db.insert(schema.weightEntries)
+    .values({ weightKg: 72, measuredAt: new Date("2024-02-01T07:00:00").toISOString() })
+    .run();
+  const held = store.currentReview();
+  assert.equal(held.outlier.kg, 72);
+  assert.ok(held.trendWeightKg < 75);
+  assert.equal(store.reachedGoal(store.currentGoal(), held), false);
+  assert.throws(() => store.maintainGoal(), /reached your goal/);
+  const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
+  const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
+  const tree = renderCheckIn(home, HomeCheckIn);
+  assert.equal(shown(tree, "Button", "Keep targets this week").props.variant, "primary");
+  assert.ok(!tree.some((node) => String(node.props.children).startsWith("Maintain")));
+
+  // Kept, the saved review still names the reading; ignored, the trend is back above the goal.
+  store.finishCheckIn("kept");
+  const kept = store.currentReview();
+  assert.equal(kept.outlier.id, held.outlier.id);
+  assert.equal(store.reachedGoal(store.currentGoal(), kept), false);
+  weighIn.setWeightExcluded(held.outlier.id, true);
+  const ignored = store.currentReview();
+  assert.equal(ignored.outlier, undefined);
+  assert.equal(ignored.trendWeightKg, 75.25);
+  assert.equal(store.reachedGoal(store.currentGoal(), ignored), false);
+  assert.throws(() => store.maintainGoal(), /reached your goal/);
+  assert.equal(store.currentGoal().mode, "lose");
+  data.sqlite.close();
+});
+
+test("protein set at a check-in rises with the trend to 1.4 g/kg, so Adjust accepts the proposal", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", {
+    weight: () => 85.13,
+    changes: { custom: { proteinG: 112 }, targetWeightKg: 70 },
+  });
+  const own = data.store.currentGoal().program;
+  assert.equal(program.programMacros(2400, 80, own).protein, 112);
+  const { proposed, trendWeightKg } = data.store.currentReview();
+  assert.equal(proposed.protein, 119);
+  assert.equal(program.adjustedProgram(own, proposed, trendWeightKg).custom.proteinG, 112);
+  const stepped = program.programTargets(
+    program.stepTargets(proposed, -50, trendWeightKg),
+    trendWeightKg,
+    own
+  );
+  assert.equal(stepped.protein, 119);
+  assert.deepEqual(data.store.finishCheckIn("adjusted", stepped), stepped);
+  assert.deepEqual(data.store.currentGoal().program.custom, { proteinG: 112 });
+  data.sqlite.close();
+});
+
 test("ignored weigh-ins stay in history but leave the trend, check-ins, CSV and backups flagged", async () => {
   assert.deepEqual(
     metrics
@@ -1853,6 +1909,45 @@ test("daily expenditure is intake minus the trend's change and settles on the tr
   assert.ok(during.at(-1).high - during.at(-1).low > during[0].high - during[0].low);
   assert.equal(held.at(-1).holding, false);
   sqlite.close();
+});
+
+test("a program built after manual targets and eight weeks without evidence restarts the estimate", () => {
+  const { insights, sqlite } = insightsDatabase("2024-06-01");
+  const january = steadyDays("2024-01-01", 30, 2500, () => 80);
+  const on = (day, fresh) =>
+    insights
+      .estimateExpenditure({
+        from: "2024-01-01",
+        to: "2024-04-29",
+        intake: january.intake,
+        trend: metrics.weightTrend(january.weights),
+        provisional: [{ day, kcal: 2300, fresh }],
+      })
+      .find((point) => point.day === day);
+  assert.deepEqual(on("2024-04-29", true), {
+    day: "2024-04-29",
+    kcal: 2300,
+    low: 2000,
+    high: 2600,
+    holding: true,
+  });
+  assert.equal(on("2024-04-29", false).kcal, 2500, "an edit keeps the estimate");
+  assert.equal(on("2024-03-15", true).kcal, 2500, "evidence under eight weeks old is kept");
+  sqlite.close();
+
+  // Progress starts the new program from the same estimate as Plan.
+  const data = insightsDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  const { clock, insights: progress, store, weights } = data;
+  store.finishCheckIn("kept");
+  clock.today = "2024-02-02";
+  store.saveGoal("manual", 0);
+  clock.today = "2024-06-03";
+  store.createProgram("lose", 0.25, profile);
+  const last = progress.expenditureSeries("", "2024-06-03", weights()).at(-1);
+  assert.equal(last.kcal, store.currentReview().expenditure);
+  assert.equal(last.holding, true);
+  data.sqlite.close();
 });
 
 test("the expenditure series spans every logged day and every check-in, not the last 12", () => {

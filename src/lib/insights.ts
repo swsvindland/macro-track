@@ -1,4 +1,4 @@
-import { and, asc, gte, isNotNull, lte, sql } from "drizzle-orm";
+import { and, asc, gte, lte, sql } from "drizzle-orm";
 import { checkIns, coachingGoals, db, diaryDays, foodEntries, nutritionTargets } from "@/db";
 import { currentGoal, nextCheckInDay } from "./coaching-store";
 import { weightTrend, type TrendPoint } from "./metrics";
@@ -75,16 +75,20 @@ const smoothing = 1 - 0.5 ** (1 / 4);
  * (intake − trend change × 7,700 kcal/kg) to the usable days among the 21 ending that day, and the
  * result is smoothed with a four-day half-life, each step capped at 500 kcal. Days without 12
  * usable days and six weigh-ins hold the last estimate; before any evidence, a program's starting
- * estimate holds. The range narrows with more usable days and steadier weigh-ins. Coaching's own
- * check-ins are unaffected.
+ * estimate holds, as it does for a program built after manual targets once the last evidence is
+ * over eight weeks old. The range narrows with more usable days and steadier weigh-ins. Coaching's
+ * own check-ins are unaffected.
  */
 export function estimateExpenditure(input: {
   from: string;
   to: string;
   intake: Map<string, DayIntake>;
   trend: TrendPoint[];
-  /** Programs' starting estimates from the day each took effect, oldest first. */
-  provisional?: { day: string; kcal: number }[];
+  /**
+   * Programs' starting estimates from the day each took effect, oldest first; `fresh` for one
+   * built after manual targets.
+   */
+  provisional?: { day: string; kcal: number; fresh?: boolean }[];
 }): ExpenditurePoint[] {
   const start = Date.parse(input.from) - WINDOW * DAY,
     length = (Date.parse(input.to) - start) / DAY + 1;
@@ -108,11 +112,20 @@ export function estimateExpenditure(input: {
     spread = 0,
     learned = false,
     seed: number | null = null,
-    next = 0;
+    next = 0,
+    evidence = 0;
   for (let i = WINDOW; i < length; i++) {
     const { day } = days[i];
-    while (next < provisional.length && provisional[next].day <= day)
-      seed = provisional[next++].kcal;
+    while (next < provisional.length && provisional[next].day <= day) {
+      const program = provisional[next++];
+      seed = program.kcal;
+      // Like Plan, a program built after manual targets doesn't reuse an estimate over eight
+      // weeks old.
+      if (program.fresh && learned && i - evidence > 56) {
+        learned = false;
+        kcal = seed;
+      }
+    }
     const first = i - WINDOW + 1;
     const { used, calories, deltaKg } = observeRuns(
       days.slice(first, i + 1),
@@ -129,6 +142,7 @@ export function estimateExpenditure(input: {
       kcal = kcal === null ? raw : kcal + smoothing * Math.max(-500, Math.min(500, raw - kcal));
       spread = learned ? spread + smoothing * (width - spread) : width;
       learned = true;
+      evidence = i;
     } else if (!learned) {
       if (seed === null) continue;
       kcal = seed;
@@ -146,13 +160,16 @@ export function estimateExpenditure(input: {
 }
 /** Each program's starting estimate from the day it took effect. */
 function provisionalEstimates() {
-  return db
+  const goals = db
     .select({ day: coachingGoals.startedDay, program: coachingGoals.program })
     .from(coachingGoals)
-    .where(isNotNull(coachingGoals.program))
     .orderBy(asc(coachingGoals.id))
-    .all()
-    .map((row) => ({ day: row.day, kcal: row.program!.initialExpenditure }));
+    .all();
+  return goals.flatMap((row, i) =>
+    row.program
+      ? [{ day: row.day, kcal: row.program.initialExpenditure, fresh: !goals[i - 1]?.program }]
+      : []
+  );
 }
 /** Estimates saved by method 2 check-ins, oldest first. */
 export function checkInEstimates() {

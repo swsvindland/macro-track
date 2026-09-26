@@ -1,7 +1,6 @@
 import {
   adjustedProgram,
   checkAdjustment,
-  goalRate,
   initialExpenditure,
   reviewProgram,
   startingTargets,
@@ -93,28 +92,28 @@ export function currentReview(day = localDay(), goal = currentGoal(), history?: 
   };
   if (goal.program && input.targets) {
     history ??= checkInHistory();
-    // Today's review stays done when the program is edited afterwards, so it isn't blended twice.
-    const completed = history.find((row) => row.day === day && row.review.method === 2);
-    if (completed)
-      return {
-        ...completed.review,
-        targetWeightKg: goal.program.targetWeightKg,
-        desiredWeeklyKg: goalRate(
-          goal,
-          completed.review.trendWeightKg ?? goal.program.weightKg,
-          goal.program.targetWeightKg
-        ),
-        proposed: null,
-        status: "holding" as const,
-        reason:
-          "This week’s review is saved. Your next check-in will use fresh logs and your latest normalized weight.",
-      };
-    return reviewProgram({
+    const review = reviewProgram({
       ...input,
       targets: input.targets,
       program: goal.program,
       priorExpenditure: priorExpenditure(goal.startedDay, goal.program, history),
     });
+    // Today's review stays done when the program is edited afterwards, so it isn't blended twice.
+    // Its trend, goal pace and any flagged reading follow the weights as they are now.
+    const completed = history.find((row) => row.day === day && row.review.method === 2);
+    if (!completed) return review;
+    const { trendWeightKg, targetWeightKg, desiredWeeklyKg, outlier } = review;
+    return {
+      ...completed.review,
+      trendWeightKg,
+      targetWeightKg,
+      desiredWeeklyKg,
+      outlier,
+      proposed: null,
+      status: "holding" as const,
+      reason:
+        "This week’s review is saved. Your next check-in will use fresh logs and your latest normalized weight.",
+    };
   }
   return reviewWeek(input);
 }
@@ -224,11 +223,15 @@ export function finishCheckIn(decision: "accepted" | "kept" | "adjusted", overri
     return targets;
   });
 }
-/** A cut or bulk whose trend has reached its goal weight, so it can switch to Maintain. */
+/**
+ * A cut or bulk whose trend has reached its goal weight, so it can switch to Maintain. Not while
+ * a flagged weigh-in, likely a misread, still moves the trend.
+ */
 export function reachedGoal(goal: ReturnType<typeof currentGoal>, review: Review | null) {
   return (
     !!goal?.program &&
     (goal.mode === "lose" || goal.mode === "gain") &&
+    !review?.outlier &&
     review?.desiredWeeklyKg === 0 &&
     review.trendWeightKg !== undefined
   );

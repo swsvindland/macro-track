@@ -53,8 +53,13 @@ export function initialExpenditure(
     10 * p.weightKg + 6.25 * p.heightCm - 5 * p.age + (p.formula === "male" ? 5 : -161);
   return Math.round(resting * { low: 1.2, light: 1.375, moderate: 1.55, high: 1.725 }[p.activity]);
 }
+/** Protein at this weight: the program's g/kg, or grams set at a check-in but at least 1.4 g/kg. */
+function programProtein(weight: number, p: Program) {
+  const grams = p.custom?.proteinG;
+  return Math.round(grams === undefined ? weight * p.protein : Math.max(grams, weight * 1.4));
+}
 export function programMacros(calories: number, weight: number, p: Program): Targets {
-  const protein = Math.round(p.custom?.proteinG ?? weight * p.protein);
+  const protein = programProtein(weight, p);
   const remaining = calories - protein * 4;
   const fatShare =
     p.custom?.carbPct !== undefined
@@ -134,7 +139,7 @@ export function adjustedProgram(p: Program, targets: Targets, weight: number): P
     return Object.keys(set).length ? { ...own, custom: set } : own;
   };
   const near = (a: number, b: number) => Math.abs(a - b) <= 1;
-  const proteinG = near(targets.protein, Math.round(custom?.proteinG ?? weight * p.protein))
+  const proteinG = near(targets.protein, programProtein(weight, p))
     ? custom?.proteinG
     : near(targets.protein, Math.round(weight * p.protein))
       ? undefined
