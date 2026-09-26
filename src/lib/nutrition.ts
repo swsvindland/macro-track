@@ -53,20 +53,36 @@ export type NutrientInfo = {
   daily?: number;
   /** Listed under another nutrient on a label: "Saturated Fat" under "Total Fat". */
   indent?: boolean;
+  /** Its Daily Value is a most to eat, not a least: sodium, saturated fat. */
+  limit?: boolean;
 };
 
 export const nutrientInfo: Record<Detail, NutrientInfo> = {
   fiber: { label: "Fiber", unit: "g", group: "Carbohydrates", daily: 28, indent: true },
   sugar: { label: "Sugars", unit: "g", group: "Carbohydrates", indent: true },
-  addedSugar: { label: "Added sugars", unit: "g", group: "Carbohydrates", daily: 50, indent: true },
-  saturatedFat: { label: "Saturated fat", unit: "g", group: "Fats", daily: 20, indent: true },
+  addedSugar: {
+    label: "Added sugars",
+    unit: "g",
+    group: "Carbohydrates",
+    daily: 50,
+    indent: true,
+    limit: true,
+  },
+  saturatedFat: {
+    label: "Saturated fat",
+    unit: "g",
+    group: "Fats",
+    daily: 20,
+    indent: true,
+    limit: true,
+  },
   transFat: { label: "Trans fat", unit: "g", group: "Fats", indent: true },
   monounsaturatedFat: { label: "Monounsaturated fat", unit: "g", group: "Fats", indent: true },
   polyunsaturatedFat: { label: "Polyunsaturated fat", unit: "g", group: "Fats", indent: true },
   omega3: { label: "Omega-3", unit: "g", group: "Fats", indent: true },
   omega6: { label: "Omega-6", unit: "g", group: "Fats", indent: true },
-  cholesterol: { label: "Cholesterol", unit: "mg", group: "Fats", daily: 300 },
-  sodium: { label: "Sodium", unit: "mg", group: "Minerals", daily: 2300 },
+  cholesterol: { label: "Cholesterol", unit: "mg", group: "Fats", daily: 300, limit: true },
+  sodium: { label: "Sodium", unit: "mg", group: "Minerals", daily: 2300, limit: true },
   potassium: { label: "Potassium", unit: "mg", group: "Minerals", daily: 4700 },
   calcium: { label: "Calcium", unit: "mg", group: "Minerals", daily: 1300 },
   iron: { label: "Iron", unit: "mg", group: "Minerals", daily: 18 },

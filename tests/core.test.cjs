@@ -393,7 +393,10 @@ test("the diary database writes ahead to a log that copies include and erase emp
     "expo-sharing": {},
     "@/db": { expoDb, migrationSnapshot: null },
     "@/db/snapshot": snapshot,
-    "./data-ownership": load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } }),
+    "./data-ownership": load("src/lib/data-ownership.ts", {
+      "@/db": { db, ...schema },
+      "./nutrition": load("src/lib/nutrition.ts"),
+    }),
     "./health": { withHealthPaused: (work) => work() },
     "./health-schedule": { configureHealthSchedule: async () => {} },
   });
@@ -873,7 +876,16 @@ test("HealthKit writes a diary entry as named nutrient samples and removes stale
     name: "Greek yogurt",
     meal: "Breakfast",
     eatenAt: "2024-01-01T08:00:00.000Z",
-    nutrients: { calories: 150, protein: 15, carbs: 8, fat: 0, fiber: null, sodium: 60 },
+    nutrients: {
+      calories: 150,
+      protein: 15,
+      carbs: 8,
+      fat: 0,
+      fiber: null,
+      sodium: 60,
+      calcium: 200,
+      vitaminD: 2.5,
+    },
     replacing: false,
   };
   assert.equal(await adapter.writeFood(food), "uuid-1");
@@ -910,20 +922,45 @@ test("HealthKit writes a diary entry as named nutrient samples and removes stale
           HKFoodType: "Greek yogurt",
         },
       ],
+      [
+        calciumType,
+        "mg",
+        200,
+        {
+          HKSyncIdentifier: `${food.clientId}:calcium`,
+          HKSyncVersion: 5,
+          HKFoodType: "Greek yogurt",
+        },
+      ],
+      [
+        vitaminDType,
+        "mcg",
+        2.5,
+        {
+          HKSyncIdentifier: `${food.clientId}:vitaminD`,
+          HKSyncVersion: 5,
+          HKFoodType: "Greek yogurt",
+        },
+      ],
     ],
     "zero and unknown nutrients are skipped, and sodium isn't allowed"
   );
   assert.deepEqual(deletes, [], "a first write has nothing to clean up");
   await adapter.writeFood({ ...food, replacing: true });
-  assert.deepEqual(deletes, [
+  // Every allowed nutrient the entry no longer has is removed, micronutrients included.
+  assert.deepEqual(deletes.slice(0, 2), [
     [foodTypes[3], `${food.clientId}:fat`],
     [foodTypes[4], `${food.clientId}:fiber`],
   ]);
+  assert.deepEqual(
+    deletes.slice(2).map(([type]) => type),
+    foodTypes.slice(6).filter((type) => type !== calciumType && type !== vitaminDType)
+  );
   deletes.length = 0;
   await adapter.removeFood(food.clientId, "uuid-1");
   assert.deepEqual(
     deletes.map(([type]) => type),
-    foodTypes.slice(0, 5)
+    foodTypes.filter((_, i) => i !== 5)
   );
 });
 
@@ -985,7 +1022,18 @@ test("Health Connect requests body-fat write permission and uses percentage poin
     name: "Rice",
     meal: "Dinner",
     eatenAt: "2024-01-01T18:00:00.000Z",
-    nutrients: { calories: 200, protein: 4, carbs: 44, fat: 0, fiber: null, sodium: 2 },
+    nutrients: {
+      calories: 200,
+      protein: 4,
+      carbs: 44,
+      fat: 0,
+      fiber: null,
+      sodium: 2,
+      iron: 1.9,
+      folate: 97,
+      addedSugar: 3,
+      vitaminC: 0,
+    },
     replacing: true,
   });
   assert.deepEqual(saved[0], {
@@ -1000,6 +1048,9 @@ test("Health Connect requests body-fat write permission and uses percentage poin
     totalFat: undefined,
     dietaryFiber: undefined,
     sodium: { value: 2, unit: "milligrams" },
+    // Micronutrients in their units; zeros and ones Health Connect has no field for are left out.
+    iron: { value: 1.9, unit: "milligrams" },
+    folate: { value: 97, unit: "micrograms" },
     metadata: {
       clientRecordId: "macro-track:1:food:7",
       clientRecordVersion: 5,
@@ -1159,7 +1210,38 @@ const foodTypes = [
   "HKQuantityTypeIdentifierDietaryFatTotal",
   "HKQuantityTypeIdentifierDietaryFiber",
   "HKQuantityTypeIdentifierDietarySodium",
+  ...[
+    "Sugar",
+    "FatSaturated",
+    "FatMonounsaturated",
+    "FatPolyunsaturated",
+    "Cholesterol",
+    "Potassium",
+    "Calcium",
+    "Iron",
+    "Magnesium",
+    "Phosphorus",
+    "Zinc",
+    "Copper",
+    "Manganese",
+    "Selenium",
+    "VitaminA",
+    "VitaminC",
+    "VitaminD",
+    "VitaminE",
+    "VitaminK",
+    "Thiamin",
+    "Riboflavin",
+    "Niacin",
+    "PantothenicAcid",
+    "VitaminB6",
+    "Folate",
+    "VitaminB12",
+    "Caffeine",
+  ].map((name) => `HKQuantityTypeIdentifierDietary${name}`),
 ];
+const calciumType = "HKQuantityTypeIdentifierDietaryCalcium";
+const vitaminDType = "HKQuantityTypeIdentifierDietaryVitaminD";
 
 test("HealthKit reports granted writes and reads only requested kinds", async () => {
   const samples = { [mass]: [] };

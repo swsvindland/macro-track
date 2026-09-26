@@ -182,6 +182,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/food-rank": rank,
     "@/lib/food-icons": load("src/lib/food-icons.ts"),
     "./food-icon": { FoodIcon: "FoodIcon" },
+    "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
   };
   Object.assign(dependencies, extraDependencies);
   const store = {
@@ -301,6 +302,53 @@ test("portion arithmetic handles mass, volume and servings without replacing unk
   assert.equal(total.fiber, null);
   assert.equal(total.calories, 360);
   assert.equal(total.sodium, 250);
+});
+
+test("micronutrients scale, total and validate without treating unknown as zero", () => {
+  const oats = { ...food, nutrients: { ...food.nutrients, iron: 4, vitaminC: 0, calcium: 50 } };
+  const half = nutrition.scaleNutrients(oats, 50);
+  assert.deepEqual([half.iron, half.vitaminC, half.calcium, half.potassium], [2, 0, 25, undefined]);
+  // A recipe or meal total lists a micronutrient only when every item has it.
+  const withMilk = nutrition.totalNutrients([half, { ...food.nutrients, calcium: 120 }]);
+  assert.equal(withMilk.calcium, 145);
+  assert.equal(withMilk.iron, undefined);
+  assert.equal(nutrition.totalNutrients([]).iron, undefined);
+  // A day's totals count what is known, and how many foods that covers.
+  const day = nutrition.knownTotals([half, { ...food.nutrients, calcium: 120 }, food.nutrients]);
+  assert.deepEqual(day.calcium, { amount: 145, known: 2 });
+  assert.deepEqual(day.iron, { amount: 2, known: 1 });
+  assert.deepEqual(day.vitaminB12, { amount: 0, known: 0 });
+  assert.deepEqual(day.sodium, { amount: 62.5 + 125 + 125, known: 3 });
+  assert.throws(() =>
+    nutrition.validateFood({ ...oats, nutrients: { ...oats.nutrients, iron: -1 } })
+  );
+  assert.throws(() =>
+    nutrition.validateFood({ ...oats, nutrients: { ...oats.nutrients, iron: NaN } })
+  );
+  // A blank label nutrient is left out; a per-serving one is stored per 100 g like the rest.
+  const bar = nutrition.customFood({
+    name: "Protein bar",
+    brand: "",
+    barcode: null,
+    basis: "serving",
+    nutrients: {
+      calories: 200,
+      protein: 20,
+      carbs: 20,
+      fat: 5,
+      fiber: null,
+      sodium: null,
+      calcium: 100,
+      iron: undefined,
+    },
+    serving: { label: "1 bar", amount: 50, unit: "g" },
+  });
+  assert.equal(bar.nutrients.calcium, 200);
+  assert.ok(!("iron" in bar.nutrients));
+  assert.equal(bar.nutrients.fiber, null);
+  // Every micronutrient has a label, unit and group; the listed groups cover each one once.
+  const listed = nutrition.nutrientGroups.flatMap(({ keys }) => keys);
+  assert.deepEqual([...listed].sort(), ["fiber", "sodium", ...nutrition.microKeys].sort());
 });
 
 test("diary snapshots survive custom-food edits; updates move entries and reopen affected days", () => {
@@ -769,6 +817,19 @@ test("portable backup round-trips nutrition and weights while preserving exclude
   const { diary, sqlite, backup } = diaryDatabase();
   diary.saveCustomFood(food);
   diary.saveEntry({ day: "2024-01-01", meal: "Breakfast", food, amount: 50, portionLabel: "50 g" });
+  // A catalog food's micronutrients survive a backup too.
+  const fortified = {
+    ...food,
+    id: "off:1",
+    nutrients: { ...food.nutrients, iron: 8, folate: 200 },
+  };
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food: fortified,
+    amount: 50,
+    portionLabel: "50 g",
+  });
   diary.toggleFavorite(food);
   diary.saveMeal("Breakfast", "2024-01-01", "Breakfast");
   diary.saveRecipe({ name: "Batch", servings: 4, ingredients: [{ food, amount: 100 }] });
@@ -784,6 +845,10 @@ test("portable backup round-trips nutrition and weights while preserving exclude
   );
   backup.restoreBackup(backup.parseBackup(JSON.stringify(original)));
   assert.deepEqual(backup.createBackup().data, original.data);
+  assert.ok(
+    diary.entriesForDay("2024-01-01").some((entry) => entry.nutrients.iron === 4),
+    "micronutrients are restored"
+  );
   assert.equal(
     sqlite.prepare("SELECT value FROM preferences WHERE key='theme'").get().value,
     "dark"
@@ -1088,7 +1153,10 @@ test("compiled quick add logs entered calories once and keeps unknown nutrients"
 
 test("CSV preserves unknown nutrients, quotes names and neutralizes spreadsheet formulas", () => {
   const { diary, sqlite, db } = diaryDatabase();
-  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  const ownership = load("src/lib/data-ownership.ts", {
+    "@/db": { db, ...schema },
+    "./nutrition": load("src/lib/nutrition.ts"),
+  });
   diary.saveEntry({
     day: "2024-01-01",
     meal: "Breakfast",
@@ -1105,7 +1173,10 @@ test("CSV preserves unknown nutrients, quotes names and neutralizes spreadsheet 
 });
 test("erase clears all personal tables, disables sync and rolls back database failure", () => {
   const { diary, sqlite, db } = diaryDatabase();
-  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  const ownership = load("src/lib/data-ownership.ts", {
+    "@/db": { db, ...schema },
+    "./nutrition": load("src/lib/nutrition.ts"),
+  });
   diary.saveCustomFood(food);
   diary.saveEntry({
     day: "2024-01-01",

@@ -78,7 +78,10 @@ function fileDatabase(t) {
     .sort())
     sqlite.exec(readFileSync(`drizzle/${migration}`, "utf8"));
   const db = drizzle(expoClient(sqlite), { schema });
-  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  const ownership = load("src/lib/data-ownership.ts", {
+    "@/db": { db, ...schema },
+    "./nutrition": load("src/lib/nutrition.ts"),
+  });
   t.after(() => {
     sqlite.close();
     rmSync(folder, { recursive: true, force: true });
@@ -147,8 +150,18 @@ test("diary CSV follows eating time within each day and gives fasting days a zer
   );
   assert.equal(
     lines.at(-1),
-    '"2024-01-03","","","","","","","","0","0","0","0","0","0","fasting","",""'
+    '"2024-01-03","","","","","","","","0","0","0","0","0","0","fasting","",""' + ',"0"'.repeat(32)
   );
+  // Micronutrients follow the original columns, each named with its unit.
+  assert.deepEqual(rows[0].slice(14, 20), [
+    "day_status",
+    "source",
+    "source_version",
+    "sugar_g",
+    "added_sugar_g",
+    "saturated_fat_g",
+  ]);
+  assert.ok(rows[0].includes("vitamin_b12_mcg") && rows[0].includes("cholesterol_mg"));
 });
 
 function captureWarnings(run) {
@@ -1244,7 +1257,10 @@ test("ignored weigh-ins stay in history but leave the trend, check-ins, CSV and 
   assert.equal(weights().length, 22);
   assert.equal(store.currentReview().status, "ready");
 
-  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  const ownership = load("src/lib/data-ownership.ts", {
+    "@/db": { db, ...schema },
+    "./nutrition": load("src/lib/nutrition.ts"),
+  });
   const lines = ownership.exportWeightCsv().replace(/^﻿/, "").trimEnd().split("\r\n");
   assert.equal(lines[0], '"measured_at","weight_kg","excluded"');
   assert.ok(lines.includes(`"${sample.measuredAt}","77.1","true"`));
