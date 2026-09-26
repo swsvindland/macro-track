@@ -43,6 +43,10 @@
   --color-warning-soft: var(--warning-soft);
   --color-warning-soft-foreground: var(--warning-soft-foreground);
   --color-field-border-focus: var(--focus);
+  --color-chart-calories: var(--chart-calories);
+  --color-chart-protein: var(--chart-protein);
+  --color-chart-fat: var(--chart-fat);
+  --color-chart-carbs: var(--chart-carbs);
 }
 
 @layer theme {
@@ -83,6 +87,11 @@
       --separator: #e9eef1;
       --focus: #007088;
       --link: #007088;
+      /* Progress bars for calories and each macro keep 3:1 against their surface-secondary track. */
+      --chart-calories: #007088;
+      --chart-protein: #c2410c;
+      --chart-fat: #a16207;
+      --chart-carbs: #15803d;
       --surface-foreground: var(--foreground);
       --surface-secondary-foreground: var(--foreground);
       --surface-tertiary-foreground: var(--foreground);
@@ -131,6 +140,10 @@
       --separator: #1b2931;
       --focus: #22d3ee;
       --link: #67e8f9;
+      --chart-calories: #22d3ee;
+      --chart-protein: #fb923c;
+      --chart-fat: #facc15;
+      --chart-carbs: #4ade80;
       --surface-foreground: var(--foreground);
       --surface-secondary-foreground: var(--foreground);
       --surface-tertiary-foreground: var(--foreground);
