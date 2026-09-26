@@ -9,6 +9,7 @@ import {
 } from "@/components/system";
 import { requestAppAction, type AppAction } from "@/lib/app-actions";
 import { modelStatus, type ModelStatus } from "@/lib/local-ai";
+import { AiMark } from "./ai-mark";
 import { photoLoggingOffered } from "./photo-logger";
 
 export type QuickLogAction = Extract<AppAction, "search" | "scan" | "photo">;
@@ -31,7 +32,7 @@ function useKeyboardShown() {
 }
 
 /**
- * Pinned above the tab bar: the pill opens the logger ready to search, the sparkle the photo or
+ * Pinned above the tab bar: the pill opens the logger ready to search, the AI mark the photo or
  * description logger where this phone can run it, and the barcode button the scanner.
  */
 export function QuickLogBar({
@@ -64,7 +65,7 @@ export function QuickLogBar({
       {photoLoggingOffered(ai) && (
         <View className="rounded-full border border-border bg-overlay shadow-overlay">
           <SystemIconButton
-            icon="sparkles"
+            icon={<AiMark />}
             className="h-12 w-12 min-w-12"
             accessibilityLabel={
               ai?.vision ? "Log a meal from a photo" : "Describe a meal to log it"
