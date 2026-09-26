@@ -15,6 +15,7 @@ import {
   saveCustomFood,
   saveEntry,
   deleteEntry,
+  editedPortionLabel,
   toggleFavorite,
 } from "@/lib/diary";
 import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
@@ -22,6 +23,7 @@ import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
 import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import {
+  barcodeCandidates,
   customFood,
   meals,
   normalizeBarcode,
@@ -64,10 +66,17 @@ export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) 
   );
 }
 
-function BarcodeCamera({ onScan }: { onScan: (value: string) => void }) {
+export function BarcodeCamera({
+  onScan,
+}: {
+  onScan: (value: string, symbology: string) => Promise<void>;
+}) {
   const [permission, requestPermission] = useCameraPermissions();
   const [error, setError] = useState("");
-  const scanned = useRef(false);
+  // One lookup at a time. A code that was rejected or not found is skipped while it
+  // stays in view, so the camera keeps scanning for the next one.
+  const scanning = useRef(false);
+  const last = useRef("");
   if (!permission) return <Text className="text-muted">Checking camera access…</Text>;
   if (!permission.granted)
     return (
@@ -94,13 +103,15 @@ function BarcodeCamera({ onScan }: { onScan: (value: string) => void }) {
         <CameraView
           style={{ height: 220, borderRadius: 8 }}
           facing="back"
-          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "itf14"] }}
+          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "itf14"] }}
           onMountError={() => setError("The camera is unavailable. Enter the barcode below.")}
-          onBarcodeScanned={({ data }) => {
-            if (!scanned.current) {
-              scanned.current = true;
-              onScan(data);
-            }
+          onBarcodeScanned={({ data, type }) => {
+            if (scanning.current || data === last.current) return;
+            scanning.current = true;
+            last.current = data;
+            void onScan(data, type).finally(() => {
+              scanning.current = false;
+            });
           }}
         />
       )}
@@ -351,7 +362,7 @@ function CustomFoodForm({
 export function FoodEditor({
   close,
   initialDay = localDay(),
-  initialMeal = "Breakfast",
+  initialMeal,
   initialTime,
   entry,
   initialFood,
@@ -387,7 +398,9 @@ export function FoodEditor({
   const [loggedTime, setLoggedTime] = useState(
     entry ? (entry.loggedTime ?? "") : (initialTime ?? currentFoodTime())
   );
-  const [meal, setMeal] = useState<Meal>(entry?.meal ?? initialMeal);
+  const [meal, setMeal] = useState<Meal>(
+    () => entry?.meal ?? initialMeal ?? mealAtTime(initialTime ?? currentFoodTime())
+  );
   const [amount, setAmount] = useState(
     String(entry?.amount ?? initialAmount ?? (initialFood?.basis === "serving" ? 1 : 100))
   );
@@ -438,18 +451,21 @@ export function FoodEditor({
     setMode("portion");
     setError("");
   }
-  async function scan(input: string) {
+  async function scan(input: string, symbology?: string) {
     setBarcode(input);
     setBusy(true);
     setError("");
     setNotFound(false);
-    if (!normalizeBarcode(input)) {
+    // An 8-digit code can be EAN-8 or UPC-E; catalogs hold products under either form.
+    const codes = barcodeCandidates(input, symbology);
+    if (!codes.length) {
       setError("Enter a valid 8, 12, 13, or 14-digit food barcode.");
       setBusy(false);
       return;
     }
     try {
-      const found = findPersonalBarcode(input) ?? (await lookupBarcode(input));
+      let found = findPersonalBarcode(input, symbology);
+      for (let i = 0; !found && i < codes.length; i++) found = await lookupBarcode(codes[i]);
       if (found) select(found);
       else setNotFound(true);
     } catch {
@@ -477,7 +493,7 @@ export function FoodEditor({
         loggedTime: loggedTime || null,
         food,
         amount: value,
-        portionLabel: `${value} ${food.basis === "serving" ? "serving(s)" : food.basis}`,
+        portionLabel: editedPortionLabel(entry, food, value),
       });
       refresh();
       close();
@@ -607,13 +623,7 @@ export function FoodEditor({
       )}
       {mode === "barcode" && (
         <>
-          {!notFound && !busy && (
-            <BarcodeCamera
-              onScan={(value) => {
-                void scan(value);
-              }}
-            />
-          )}
+          <BarcodeCamera onScan={scan} />
           <Field label="Barcode digits" value={barcode} onChange={setBarcode} />
           <SystemButton
             isDisabled={busy}

@@ -317,7 +317,7 @@ test("blank days, fasting and partial logging remain distinct", () => {
   diary.saveEntry({ ...entry, amount: 200 });
   assert.equal(diary.dayStatus("2024-02-01"), "partial");
   diary.deleteEntry(entry);
-  assert.equal(diary.dayStatus("2024-02-01"), "in-progress");
+  assert.equal(diary.dayStatus("2024-02-01"), "partial");
   assert.equal(diary.entriesForDay("2024-02-01").length, 0);
   sqlite.close();
 });

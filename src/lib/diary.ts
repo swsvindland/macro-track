@@ -19,6 +19,7 @@ import {
   recipeFood,
   type Recipe,
   meals,
+  barcodeCandidates,
   normalizeBarcode,
   scaleNutrients,
   validateFood,
@@ -92,7 +93,7 @@ export function saveEntry({
     const time =
       loggedTime === undefined ? (existing ? existing.loggedTime : currentFoodTime()) : loggedTime;
     if (time !== null && !validFoodTime(time))
-      throw new Error("Enter a time in 24-hour format, such as 14:30.");
+      throw new Error("Enter a time such as 9:30 or 21:30.");
     const data = { day, meal, food, amount, portionLabel, nutrients, loggedTime: time };
     if (id === undefined)
       tx.insert(foodEntries)
@@ -112,11 +113,19 @@ export function saveEntry({
 export function deleteEntry(entry: FoodEntry) {
   db.transaction((tx) => {
     tx.delete(foodEntries).where(eq(foodEntries.id, entry.id)).run();
+    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, entry.day)).get();
+    const status = previous?.status === "partial" ? "partial" : "in-progress";
     tx.insert(diaryDays)
-      .values({ day: entry.day, status: "in-progress" })
-      .onConflictDoUpdate({ target: diaryDays.day, set: { status: "in-progress" } })
+      .values({ day: entry.day, status })
+      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
       .run();
   });
+}
+/** An edit keeps the entry's label, including an "≈" estimate, unless its amount or basis changed. */
+export function editedPortionLabel(entry: FoodEntry | undefined, food: Food, amount: number) {
+  return entry && entry.amount === amount && entry.food.basis === food.basis
+    ? entry.portionLabel
+    : `${amount} ${food.basis === "serving" ? "serving(s)" : food.basis}`;
 }
 export function saveTargets(day: string, targets: Targets) {
   if (!validDay(day)) throw new Error("Choose a valid starting date.");
@@ -158,11 +167,11 @@ export function personalFoods(): Food[] {
     .all()
     .map((row) => row.food);
 }
-export function findPersonalBarcode(barcode: string): Food | null {
-  const code = normalizeBarcode(barcode);
-  return code
-    ? (db.select().from(customFoods).where(eq(customFoods.barcode, code)).get()?.food ?? null)
-    : null;
+export function findPersonalBarcode(barcode: string, symbology?: string): Food | null {
+  const codes = barcodeCandidates(barcode, symbology);
+  if (!codes.length) return null;
+  const rows = db.select().from(customFoods).where(inArray(customFoods.barcode, codes)).all();
+  return codes.map((code) => rows.find((row) => row.barcode === code)).find(Boolean)?.food ?? null;
 }
 export function favoriteFoods(): Food[] {
   return resolveRecipeSnapshots(
@@ -238,7 +247,7 @@ function addMealItems(
   if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 100)
     throw new Error("Enter a meal quantity above 0 and no greater than 100.");
   if (!items.length) throw new Error("This meal has no food.");
-  if (!validFoodTime(loggedTime)) throw new Error("Enter a time in 24-hour format, such as 14:30.");
+  if (!validFoodTime(loggedTime)) throw new Error("Enter a time such as 9:30 or 21:30.");
   // Validate the whole batch before writing. Keep the original food and nutrient
   // snapshots, even when the catalog or personal food has since changed.
   const entries = items.map((item) => {

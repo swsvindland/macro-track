@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { db, diaryDays, foodEntries, type FoodEntry } from "@/db";
 import { entriesForDay, favoriteFoods, listSavedMeals, personalFoods, recipeFoods } from "./diary";
-import { currentFoodTime, mealAtTime, validFoodTime } from "./food-time";
+import { currentFoodTime, mealAtTime, normalizeFoodTime, validFoodTime } from "./food-time";
 import { localDay, validDay } from "./metrics";
 import { scaleNutrients, validateFood, type Food, type Meal, type MealItem } from "./nutrition";
 
@@ -42,7 +42,7 @@ export function loggingChoices(time = currentFoodTime()) {
   const favorites = favoriteFoods();
   const recent = new Map<string, FoodEntry>();
   for (const entry of history) if (!recent.has(entry.food.id)) recent.set(entry.food.id, entry);
-  const hour = Number(time.slice(0, 2));
+  const hour = Number((normalizeFoodTime(time) ?? currentFoodTime()).slice(0, 2));
   const distance = (row: FoodEntry | undefined) => {
     if (!row) return 24;
     const h = row.loggedTime ? Number(row.loggedTime.slice(0, 2)) : hour + 6;

@@ -29,13 +29,45 @@ export const dayStates = ["in-progress", "complete", "partial", "fasting"] as co
 export type DayState = (typeof dayStates)[number];
 export type Targets = Pick<Nutrients, "calories" | "protein" | "carbs" | "fat">;
 
-export function normalizeBarcode(input: string): string | null {
-  const code = input.trim();
-  if (!/^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(code)) return null;
+function checkDigitValid(code: string) {
   const total = [...code.slice(0, -1)]
     .reverse()
     .reduce((sum, digit, i) => sum + Number(digit) * (i % 2 ? 1 : 3), 0);
-  return (10 - (total % 10)) % 10 === Number(code.at(-1)) ? code.padStart(14, "0") : null;
+  return (10 - (total % 10)) % 10 === Number(code.at(-1));
+}
+/** The 12-digit UPC-A form of an 8-digit UPC-E code (number system, 6 digits, check digit). */
+function expandUpcE(code: string) {
+  const [system, a, b, c, d, e, last, check] = code;
+  const body =
+    last <= "2"
+      ? `${a}${b}${last}0000${c}${d}${e}`
+      : last === "3"
+        ? `${a}${b}${c}00000${d}${e}`
+        : last === "4"
+          ? `${a}${b}${c}${d}00000${e}`
+          : `${a}${b}${c}${d}${e}0000${last}`;
+  return `${system}${body}${check}`;
+}
+/**
+ * The 14-digit keys a barcode may be stored under, most likely first. An 8-digit code is EAN-8
+ * or UPC-E (cans, gum), whose check digit is its UPC-A form's. Catalogs keep EAN-8 codes as
+ * printed, so the UPC-A form comes first only when the camera read a UPC-E symbol.
+ */
+export function barcodeCandidates(input: string, symbology?: string): string[] {
+  const code = input.trim();
+  if (!/^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(code)) return [];
+  const keys = checkDigitValid(code) ? [code] : [];
+  if (code.length === 8 && code[0] <= "1" && symbology !== "ean8") {
+    const upcA = expandUpcE(code);
+    if (checkDigitValid(upcA)) {
+      if (symbology === "upc_e") keys.unshift(upcA);
+      else keys.push(upcA);
+    }
+  }
+  return keys.map((key) => key.padStart(14, "0"));
+}
+export function normalizeBarcode(input: string): string | null {
+  return barcodeCandidates(input)[0] ?? null;
 }
 
 export function searchExpression(input: string): string {

@@ -22,7 +22,7 @@ export function MealEditor({
   source,
   saved,
   initialDay = localDay(),
-  initialMeal = "Breakfast",
+  initialMeal,
   initialTime,
   close,
   onLogged,
@@ -50,7 +50,7 @@ export function MealEditor({
   const [name, setName] = useState(source?.meal ?? "");
   const [day, setDay] = useState(initialDay);
   const [loggedTime, setLoggedTime] = useState(initialTime || currentFoodTime());
-  const [meal, setMeal] = useState<Meal>(initialMeal);
+  const [meal, setMeal] = useState<Meal>(() => initialMeal ?? mealAtTime(loggedTime));
   const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");

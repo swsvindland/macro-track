@@ -6,6 +6,17 @@ export function currentFoodTime() {
 export function validFoodTime(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
+/** Reads a typed time such as 930, 9:30, 9.30pm, 9:30 PM or 21:30 as "HH:mm", or null. */
+export function normalizeFoodTime(input: string): string | null {
+  const match = /^(\d{1,2})(?:[:.]?(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/i.exec(input.trim());
+  if (!match) return null;
+  const hour = Number(match[1]),
+    minute = Number(match[2] ?? 0),
+    half = match[3]?.toLowerCase();
+  if (minute > 59 || (half ? hour < 1 || hour > 12 : hour > 23)) return null;
+  const clock = half ? (hour % 12) + (half === "p" ? 12 : 0) : hour;
+  return `${String(clock).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
 export function mealAtTime(time: string): Meal {
   const hour = Number(time.slice(0, 2));
   return hour < 11 ? "Breakfast" : hour < 16 ? "Lunch" : hour < 21 ? "Dinner" : "Snacks";
