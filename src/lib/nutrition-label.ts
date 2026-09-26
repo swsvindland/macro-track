@@ -46,7 +46,7 @@ const fields: Field[] = [
 ];
 // Lines that mention a nutrient without giving its amount for this food.
 const noise =
-  /per\s*gram|calorie\s*diet|calories\s*a\s*day|from\s*fat|fat\s*cal\b|daily\s*value|lowered|less\s*than\s*\d{2,}|%\s*dv/i;
+  /per\s*gram|calorie\s*diet|calories\s*a\s*day|from\s*fat|fat\s*cal\b|daily\s*value|lowered|less\s*than\s*\d[\d,]+|%\s*dv/i;
 const plausible: Record<Nutrient, number> = {
   calories: 2000,
   fat: 200,
@@ -58,10 +58,15 @@ const plausible: Record<Nutrient, number> = {
 
 /** OCR reads a label's 0 as O and 1 as l or I, and a trailing "g" as 9. */
 function digits(text: string) {
-  return text
-    .replace(/(?<=\d|^|\s|<)[Oo](?=\s*(?:m?g|\d|\*|%|$))/g, "0")
-    .replace(/(?<=\s|^|<)[lI|](?=\s*m?g\b)/g, "1")
-    .replace(/(\d),(\d{3})\b/g, "$1$2");
+  return (
+    text
+      .replace(/(?<=\d|^|\s|<)[Oo](?=\s*(?:m?g|\d|\*|%|$))/g, "0")
+      .replace(/(?<=\s|^|<)[lI|](?=\s*m?g\b)/g, "1")
+      // "1,160mg" has a thousands comma even with the unit attached; "0,125 g" is a decimal.
+      .replace(/(\d+),(\d{3})(?!\d)/g, (match, whole: string, part: string) =>
+        whole === "0" ? match : whole + part
+      )
+  );
 }
 
 type Amount = { value: number; unit: string; raw: string };
@@ -124,6 +129,8 @@ function readField(field: Field, boxes: TextBox[]): number | null {
       if (value !== null && value !== undefined && value <= plausible[field.key]) return value;
     }
     const next = rightOf(box, boxes);
+    // A footer split as "Sodium" | "Less than 2,400mg" gives a limit, not this food's amount.
+    if (next && noise.test(next.text)) continue;
     const amount = next && leadingAmount(next.text);
     const value =
       amount && convert(field, amount, implied || field.unit === "kcal" || !!amount.unit);

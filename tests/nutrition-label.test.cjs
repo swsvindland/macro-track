@@ -184,6 +184,54 @@ test("column layouts, implied units, bilingual labels and small amounts", () => 
   assert.equal(agave.servingLabel, "", "a measure without a number is not shown");
 });
 
+test("thousands commas next to a unit, and footer limits that are not amounts", () => {
+  const soup = label.readNutritionLabel(
+    boxes([
+      ["Serving size 1 cup (245g)", 0.03, 0.1],
+      ["Calories 90", 0.03, 0.2],
+      ["Total Fat 2g 3%", 0.03, 0.3],
+      ["Sodium 1,160mg 50%", 0.03, 0.4],
+      ["Total Carbohydrate 14g 5%", 0.03, 0.5],
+      ["Protein 3g", 0.03, 0.6],
+    ])
+  );
+  assert.equal(soup.sodium, 1160);
+  assert.equal(soup.calories, 90);
+
+  const split = label.readNutritionLabel(
+    boxes([
+      ["Sodium", 0.03, 0.4],
+      ["1,160mg", 0.6, 0.401],
+      ["50%", 0.85, 0.4],
+    ])
+  );
+  assert.equal(split.sodium, 1160);
+
+  // A 1990s label whose sodium row was cut off still prints the daily limits underneath.
+  const footer = label.readNutritionLabel(
+    boxes([
+      ["Calories 250", 0.03, 0.1],
+      ["Total Fat 12g", 0.03, 0.2],
+      ["Protein 5g", 0.03, 0.3],
+      ["Calories: 2,000 2,500", 0.03, 0.7],
+      ["Total Fat Less than 65g 80g", 0.03, 0.75],
+      ["Sodium Less than 2,400mg 2,400mg", 0.03, 0.8],
+      ["Sodium", 0.03, 0.85],
+      ["Less than 2,400mg", 0.4, 0.85],
+    ])
+  );
+  assert.deepEqual([footer.calories, footer.fat, footer.sodium], [250, 12, null]);
+
+  const small = label.readNutritionLabel(
+    boxes([
+      ["Sodium less than 5mg", 0.03, 0.1],
+      ["Protein 0,125g", 0.03, 0.2],
+    ])
+  );
+  assert.equal(small.sodium, 2.5, "a real small amount is still read");
+  assert.equal(small.protein, 0.125, "a leading zero means a decimal comma");
+});
+
 test("inconsistent values are flagged and a photo without a label is rejected", () => {
   const reading = label.readNutritionLabel(
     boxes([

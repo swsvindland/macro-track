@@ -391,7 +391,7 @@ test("the diary database writes ahead to a log that copies include and erase emp
     "expo-sharing": {},
     "@/db": { expoDb, migrationSnapshot: null },
     "@/db/snapshot": snapshot,
-    "./data-ownership": { erasePersonalRecords: () => db.delete(schema.weightEntries).run() },
+    "./data-ownership": load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } }),
     "./health": { withHealthPaused: (work) => work() },
     "./health-schedule": { configureHealthSchedule: async () => {} },
   });
