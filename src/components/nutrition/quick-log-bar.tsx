@@ -11,7 +11,7 @@ import { requestAppAction, type AppAction } from "@/lib/app-actions";
 import { modelStatus, type ModelStatus } from "@/lib/local-ai";
 import { photoLoggingOffered } from "./photo-logger";
 
-export type QuickLogAction = Extract<AppAction, "log" | "search" | "scan" | "photo">;
+export type QuickLogAction = Extract<AppAction, "search" | "scan" | "photo">;
 
 // The last status read on Progress or Plan, so the other tab's bar doesn't reflow on first visit.
 let known: ModelStatus | null = null;
@@ -31,9 +31,8 @@ function useKeyboardShown() {
 }
 
 /**
- * Pinned above the tab bar: the pill opens the logger with the keyboard up, the barcode the
- * scanner, the sparkle the photo or description logger where this phone can run it, and + the
- * logger keyboard down, so saved foods and Log again are in full view.
+ * Pinned above the tab bar: the pill opens the logger ready to search, the sparkle the photo or
+ * description logger where this phone can run it, and the barcode button the scanner.
  */
 export function QuickLogBar({
   label = "Search for a food",
@@ -49,10 +48,10 @@ export function QuickLogBar({
   if (keyboard) return null;
   return (
     <View className="flex-row items-center gap-2">
-      <View className="flex-1 flex-row items-center rounded-full border border-border bg-overlay pr-1 shadow-overlay">
+      <View className="flex-1 flex-row items-center rounded-full border border-border bg-overlay shadow-overlay">
         <SystemButton
           variant="ghost"
-          className="min-h-12 flex-1 justify-start gap-3 rounded-full pl-4 pr-2"
+          className="min-h-12 flex-1 justify-start gap-3 rounded-full px-4"
           accessibilityLabel={label}
           onPress={() => onAction("search")}
         >
@@ -61,11 +60,6 @@ export function QuickLogBar({
             {label}
           </Text>
         </SystemButton>
-        <SystemIconButton
-          icon="barcode-outline"
-          accessibilityLabel="Scan barcode"
-          onPress={() => onAction("scan")}
-        />
       </View>
       {photoLoggingOffered(ai) && (
         <View className="rounded-full border border-border bg-overlay shadow-overlay">
@@ -81,12 +75,12 @@ export function QuickLogBar({
       )}
       <View className="rounded-full shadow-overlay">
         <SystemIconButton
-          icon="add"
+          icon="barcode-outline"
           variant="primary"
-          iconSize={26}
+          iconSize={24}
           className="h-12 w-12 min-w-12"
-          accessibilityLabel="Log food"
-          onPress={() => onAction("log")}
+          accessibilityLabel="Scan barcode"
+          onPress={() => onAction("scan")}
         />
       </View>
     </View>

@@ -94,8 +94,11 @@ export function Screen({
         contentContainerStyle={{
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
           paddingTop: header ? 4 : compact ? 12 : 24,
-          // The end of the list scrolls clear of the footer, however many bars it stacks.
-          paddingBottom: floating ? Math.max(160, footerBottom + footerHeight + 16) : 40,
+          // The end of the list scrolls clear of the footer, however many bars it stacks, and
+          // otherwise of the floating tab bar.
+          paddingBottom: floating
+            ? Math.max(160, footerBottom + footerHeight + 16)
+            : footerBottom + 32,
           gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,

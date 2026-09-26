@@ -2167,7 +2167,7 @@ test("compiled Progress starts empty for a new user without inventing numbers", 
 test("compiled Progress shows the week against its budget, the goal's date and the check-in", () => {
   const data = insightsDatabase("2024-02-01");
   seedProgram(data, "2024-02-01");
-  const { harness, Segment } = progressHarness(data);
+  const { harness } = progressHarness(data);
   const main = harness();
   const screen = main.load("src/components/progress/progress-screen.tsx");
   const tree = nodes(main.render(screen.ProgressScreen));
@@ -2231,9 +2231,6 @@ test("compiled Progress shows the week against its budget, the goal's date and t
   bars.find((node) => node.type === "Pressable").props.onPress();
   bars = nodes(grid.render(Grid, props));
   assert.deepEqual(calories(bars), ["2400", "of 2200"]);
-  bars.find((node) => node.type === Segment).props.onValueChange("remaining");
-  bars = nodes(grid.render(Grid, props));
-  assert.deepEqual(calories(bars), ["200", "over"]);
   data.sqlite.close();
 });
 

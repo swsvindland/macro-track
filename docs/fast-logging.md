@@ -6,10 +6,10 @@ September 25, 2026. Product success means less time needed to record a correct m
 
 Home is ordered by the reasons to open the app: see how today is going, clear the one task that is due, then log food. Settings is its own tab, so only the quick-log bar sits between the page and the floating tab bar.
 
-1. **Header.** A compact row replaces the large title: previous/next day chevrons around a date label that opens a calendar, a **Today** pill on past days, and a **···** day menu (Log weight, Copy a day, Mark day as In progress / Complete / Not fully logged / Fasted). Under it, a week strip (starting on the calendar's first weekday) rings each day's calories against its target; tap a day to open it, or swipe it for the same weekday a week earlier or later (never past today). The header stays fixed while the list scrolls.
+1. **Header.** A week strip (starting on the calendar's first weekday) replaces the large title and rings each day's calories against its target; tap a day to open it, or swipe it for the same weekday a week earlier or later (never past today). The header stays fixed while the list scrolls. The **···** day menu sits at the top right of the summary: Go to today (on other days), Log weight, Copy a day, and Mark day as In progress / Complete / Not fully logged / Fasted.
 2. **Summary.** Calories left (or over, or eaten without targets) in one large number, a pace bar and one status line, then protein/carbs/fat against targets. The bar's solid fill is what was eaten; a lighter extension shows what you usually eat for the rest of the day; a tick marks the target; amber means the usual rest of day would take you past it by more than max(100 kcal, 5%); a smaller overshoot reads as "right around your target".
 3. **One task at a time**, only on today and only when due, in this order: morning weigh-in → confirm an unfinished recent day (the last 21 days while coached, else 7) → weekly check-in. Each resolves in the same slot so the next can appear. The order matters: the check-in reviews complete days up to yesterday and weights up to today, so it waits until both are answered. After 04:00, once Home is on screen, yesterday counts as complete without asking when it has 3 or more entries logged in real time (created before 04:00 the next morning) that reach 70% of its target; Home shows "Yesterday counted as complete" with **Undo**, which reopens it and asks instead. Days that look short still get the question; days without a target are neither counted nor asked about, and a day you already answered is never changed. After a restore, Home asks about yesterday instead of counting it. **Count logged days as complete** in Settings turns this off.
-4. **Quick-log bar**, pinned just above the tab bar on Today, Progress and Plan: **Search for a food** opens the logger with the keyboard up, the barcode icon opens the scanner, the sparkle opens photo logging where the phone can run on-device AI (description where only text is supported; see [photo and description logging](ai-logging.md)), and **+** (Log food) opens the logger with the keyboard down, so saved foods and Log again are in full view. On a past day the pill reads "Log to <day>", and both it and **+** log there; from Progress or Plan it switches to Today and logs to today. It hides while the keyboard is up, and the selection bar takes its place while choosing foods. After any diary change, a short message with **Undo** floats just above it.
+4. **Quick-log bar**, pinned just above the tab bar on Today, Progress and Plan: **Search for a food** opens the logger ready to type, with saved foods and Log again above the keyboard; the sparkle opens photo logging where the phone can run on-device AI (description where only text is supported; see [photo and description logging](ai-logging.md)); and the round barcode button opens the scanner. On a past day the pill reads "Log to <day>" and logs there; from Progress or Plan the bar switches to Today and logs to today. It hides while the keyboard is up, and the selection bar takes its place while choosing foods. After any diary change, a short message with **Undo** floats just above it.
 5. **Today's food.** One list grouped by time (or meal in the classic layout). Entries, like logger rows and Library lists, lead with a small emoji picked on the phone from the food's name (the dish before its ingredients, ⚡ for a quick-add estimate, 🍽️ when nothing matches); screen readers skip it. Each group's heading shows its calories and protein/fat/carbs ("12:00 PM · 594 kcal · 45P 24F 50C"), and each entry shows the same under its name, above the portion. **+** on a heading logs into that hour, at the time of its latest food (o'clock for an empty hour; with empty hours shown, every hour has one), or into that meal, now, in the classic layout. A group's **···** offers Save or copy this meal, Move all to… and Select these foods. Tap an entry to edit it; swipe left to delete it or right to log it again now. A long press starts choosing foods, with **Move to…**, **Copy to today**, **Save as meal** and **Delete** in a bar above the tab bar. Deleting asks no question; Undo covers it. Screen readers get the swipe actions from the row's actions. Fiber and sodium sit in one small line at the end.
 
 The Undo message disappears after 8 seconds (not while a screen reader is running) and when the app goes to the background. Returning after two minutes or more lands on today, scrolled to the top. Helper text is kept out of the main flows; details live behind **Why?** or in Settings.
@@ -38,24 +38,24 @@ When due and after the morning tasks, Home shows the check-in: current → propo
 
 Counts start on Home (or Progress or Plan, for the quick-log bar) and exclude typing, biometric phone unlock and opening the app from the operating system. These are supported paths, not measured elapsed times.
 
-| Routine task                               | Actions                                      |
-| ------------------------------------------ | -------------------------------------------- |
-| Repeat a familiar food or saved meal       | Log food + select + Log = 3 taps; Undo       |
-| Repeat a food with a new amount            | Log food + row + Log = 3 taps                |
-| Log a food in its own unit ("2 slices")    | Log food + row + slice + Log = 4 taps        |
-| Log three usual foods                      | Log food + 3 selections + Log = 5 taps       |
-| Log a meal from a photo                    | Sparkle + shutter + Log = 3 taps             |
-| Scan a packaged food with nothing selected | Scan + Log = 2 taps                          |
-| Quick-add an estimate                      | Log food + Quick add + Add to diary = 3 taps |
-| Add a forgotten food to an earlier meal    | Its hour's + + select + Log = 3 taps         |
-| Delete an entry                            | 1 swipe; Undo                                |
-| Log an entry again now                     | 1 swipe                                      |
-| Fix an entry's time                        | Row + time chip + Save changes = 3 taps      |
-| Morning weigh-in                           | Field + Save = 2 taps                        |
-| Confirm yesterday was fully logged         | 0 taps when logged in full; otherwise 1 tap  |
-| Finish a ready weekly review               | Accept or Keep = 1 tap                       |
-| Nudge this week's proposal by 50 kcal      | Adjust + step + Save targets = 3 taps        |
-| Read the reasoning before accepting        | Why? + Accept = 2 taps                       |
+| Routine task                               | Actions                                     |
+| ------------------------------------------ | ------------------------------------------- |
+| Repeat a familiar food or saved meal       | Search + select + Log = 3 taps; Undo        |
+| Repeat a food with a new amount            | Search + row + Log = 3 taps                 |
+| Log a food in its own unit ("2 slices")    | Search + row + slice + Log = 4 taps         |
+| Log three usual foods                      | Search + 3 selections + Log = 5 taps        |
+| Log a meal from a photo                    | Sparkle + shutter + Log = 3 taps            |
+| Scan a packaged food with nothing selected | Scan + Log = 2 taps                         |
+| Quick-add an estimate                      | Search + Quick add + Add to diary = 3 taps  |
+| Add a forgotten food to an earlier meal    | Its hour's + + select + Log = 3 taps        |
+| Delete an entry                            | 1 swipe; Undo                               |
+| Log an entry again now                     | 1 swipe                                     |
+| Fix an entry's time                        | Row + time chip + Save changes = 3 taps     |
+| Morning weigh-in                           | Field + Save = 2 taps                       |
+| Confirm yesterday was fully logged         | 0 taps when logged in full; otherwise 1 tap |
+| Finish a ready weekly review               | Accept or Keep = 1 tap                      |
+| Nudge this week's proposal by 50 kcal      | Adjust + step + Save targets = 3 taps       |
+| Read the reasoning before accepting        | Why? + Accept = 2 taps                      |
 
 Catalogs, and the on-device model where it runs, warm after the initial Home render; the model again on return to the app, at most every 10 minutes. Screens read the diary once per change rather than on every render: opening a sheet, typing or the minute clock reuse those reads, and the pace line moves with the clock from them. Log again reads only food IDs and times through an index on creation time and ID, then full entries for its top 40 foods; search still finds every other food eaten in those 180 days, with its last quantity, reading full entries only for its matches. Weights use an index on time. The personal database uses write-ahead logging. Home's week strip reads its week in one grouped pass per change, so tapping between its days reuses it. Progress, Plan and Library defer their first render until visited, then retain their state; Progress reads its history in one grouped pass once per change, and only while it is on screen. Search waits 120 ms after a query change, reaches the catalogs from the second letter, and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
 

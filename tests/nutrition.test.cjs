@@ -3897,7 +3897,7 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
   assert.ok(tree.some((node) => node.type === "HomeCheckIn"));
   const bar = (tree) => tree.find((node) => node.type === "QuickLogBar").props;
   assert.equal(bar(tree).label, undefined);
-  tree.find((node) => node.props.accessibilityLabel === "Previous day").props.onPress();
+  tree.find((node) => node.type === "WeekStrip").props.onChange(yesterday);
   tree = render();
   assert.ok(!tree.some((node) => node.type === "HomeCheckIn"));
   assert.ok(tree.some((node) => node.props.accessibilityLabel === "Edit Test food"));

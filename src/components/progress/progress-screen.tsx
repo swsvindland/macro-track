@@ -3,7 +3,6 @@ import { Pressable, View } from "react-native";
 import { router, useIsFocused } from "expo-router";
 import { useCalendars } from "expo-localization";
 import { useThemeColor } from "heroui-native";
-import { Segment } from "heroui-native-pro";
 import {
   SystemButton,
   SystemIcon,
@@ -40,22 +39,20 @@ const BAR = 40;
 /** A day before the last seven. */
 const stale = (day: string, today: string) => day < shiftDay(today, -6);
 
-/** Eaten against a day's target: a tick for the target, a fill for what was eaten or is left. */
+/** Eaten against a day's target: a tick for the target, a fill for what was eaten. */
 function DayBar({
   eaten,
   target,
-  remaining,
   fill,
   future,
 }: {
   eaten: number;
   target: number | null;
-  remaining: boolean;
   fill: string;
   future: boolean;
 }) {
-  const scale = Math.max((target ?? 0) * 1.2, remaining ? 0 : eaten, 1);
-  const value = future ? 0 : remaining ? Math.max((target ?? 0) - eaten, 0) : eaten;
+  const scale = Math.max((target ?? 0) * 1.2, eaten, 1);
+  const value = future ? 0 : eaten;
   return (
     <View className="w-2 rounded-full bg-surface-secondary" style={{ height: BAR }}>
       {value > 0 && (
@@ -91,8 +88,7 @@ export function WeeklyNutrition({
   const { number, language } = useStore();
   // Weeks back from this one, so a new week opens on itself.
   const [back, setBack] = useState(0),
-    [picked, setPicked] = useState<string | null>(null),
-    [remaining, setRemaining] = useState(false);
+    [picked, setPicked] = useState<string | null>(null);
   const start = shiftDay(current, -7 * back);
   const days = daysFor(start);
   const end = days[6].day;
@@ -122,14 +118,11 @@ export function WeeklyNutrition({
   const figure = (row: (typeof rows)[number]) => {
     const eaten = selected.eaten[row.key],
       target = selected.target?.[row.key];
-    if (!remaining || target === undefined)
-      return {
-        value: number(eaten, 0),
-        note: target === undefined ? "no target" : `of ${number(target, 0)}`,
-        over: false,
-      };
-    const left = target - (selected.day > today ? 0 : eaten);
-    return { value: number(Math.abs(left), 0), note: left < 0 ? "over" : "left", over: left < 0 };
+    return {
+      value: number(eaten, 0),
+      note: target === undefined ? "no target" : `of ${number(target, 0)}`,
+      over: target !== undefined && eaten > target,
+    };
   };
   return (
     <SystemPanel className="p-4">
@@ -171,7 +164,6 @@ export function WeeklyNutrition({
                       key={row.key}
                       eaten={day.eaten[row.key]}
                       target={day.target?.[row.key] ?? null}
-                      remaining={remaining}
                       fill={row.fill}
                       future={day.day > today}
                     />
@@ -212,21 +204,6 @@ export function WeeklyNutrition({
             })}
           </View>
         </View>
-        <Segment
-          value={remaining ? "remaining" : "consumed"}
-          size="sm"
-          onValueChange={(value) => setRemaining(value === "remaining")}
-        >
-          <Segment.Group className="self-center">
-            <Segment.Indicator />
-            <Segment.Item value="consumed">
-              <Segment.Label>Consumed</Segment.Label>
-            </Segment.Item>
-            <Segment.Item value="remaining">
-              <Segment.Label>Remaining</Segment.Label>
-            </Segment.Item>
-          </Segment.Group>
-        </Segment>
       </SystemPanel.Body>
     </SystemPanel>
   );

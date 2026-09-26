@@ -931,7 +931,7 @@ test("compiled Home rows put calories and macros between the name and the portio
   sqlite.close();
 });
 
-test("compiled Home keeps the week strip under the date and opens the day it picks", (t) => {
+test("compiled Home keeps the week strip at the top and opens the day it picks", (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 13, 5, 0) });
   const { diary, sqlite } = diaryDatabase();
   const today = metrics.localDay(),
@@ -943,11 +943,10 @@ test("compiled Home keeps the week strip under the date and opens the day it pic
   const top = nodes(screen.props.header);
   const strip = top.find((node) => node.type === "WeekStrip");
   assert.ok(strip, "fixed with the header, not scrolled away");
-  assert.ok(top.findIndex((node) => node.type === "DayPicker") < top.indexOf(strip));
+  assert.equal(top.length, 1, "no date row above it");
   assert.deepEqual([strip.props.day, strip.props.today], [today, today]);
   strip.props.onChange(yesterday);
   const tree = home.render(TodayScreen);
-  assert.equal(tree.find((node) => node.type === "DayPicker").props.value, yesterday);
   assert.equal(tree.find((node) => node.type === "WeekStrip").props.day, yesterday);
   assert.ok(find(tree, "Button", `Edit ${food.name}`), "yesterday's food is listed");
   sqlite.close();
@@ -1152,7 +1151,7 @@ function barHarness({ os = "ios", keyboardUp = false, status = null } = {}) {
 }
 const available = { state: "available", engine: "apple", vision: true };
 
-test("compiled quick-log bar searches, scans, logs keyboard down, and offers AI only where the model runs", () => {
+test("compiled quick-log bar searches, scans, and offers AI only where the model runs", () => {
   const { harness, bar, keyboard } = barHarness();
   const pressed = [];
   const render = (props) =>
@@ -1163,24 +1162,24 @@ test("compiled quick-log bar searches, scans, logs keyboard down, and offers AI 
     });
   let tree = render();
   harness.effects.forEach((effect) => effect());
-  // The pill names what it does; the barcode sits inside it, like the search it replaces.
+  // The pill names what it does; the primary button scans.
   const pill = find(tree, "Button", "Search for a food");
   assert.equal(
     nodes(pill.props.children).find((node) => node.type === "Text").props.children,
     "Search for a food"
   );
+  assert.equal(nodes(pill.props.children).filter((node) => node.type === "IconButton").length, 0);
   pill.props.onPress();
-  find(tree, "IconButton", "Scan barcode").props.onPress();
-  // + opens the logger with the keyboard down, so Log again isn't hidden behind it.
-  const add = find(tree, "IconButton", "Log food");
-  assert.equal(add.props.icon, "add");
-  add.props.onPress();
-  assert.deepEqual(pressed.splice(0), ["search", "scan", "log"]);
+  const scan = find(tree, "IconButton", "Scan barcode");
+  assert.deepEqual([scan.props.icon, scan.props.variant], ["barcode-outline", "primary"]);
+  scan.props.onPress();
+  assert.equal(find(tree, "IconButton", "Log food"), undefined, "search already opens the logger");
+  assert.deepEqual(pressed.splice(0), ["search", "scan"]);
   const sparkle = (tree) => tree.find((node) => node.props?.icon === "sparkles");
   assert.equal(sparkle(tree), undefined, "no model, no sparkle");
   tree = render({ ai: { state: "unavailable", engine: "none", vision: false, reason: "device" } });
   assert.equal(sparkle(tree), undefined);
-  assert.ok(find(tree, "IconButton", "Log food"));
+  assert.ok(find(tree, "IconButton", "Scan barcode"));
 
   // A photo where the model sees, a description where it only reads; turned off, it explains.
   tree = render({ ai: available });
@@ -1197,7 +1196,7 @@ test("compiled quick-log bar searches, scans, logs keyboard down, and offers AI 
   // Another day is named on the pill.
   tree = render({ label: "Log to Yesterday" });
   assert.ok(find(tree, "Button", "Log to Yesterday"));
-  assert.ok(find(tree, "IconButton", "Log food"));
+  assert.ok(find(tree, "IconButton", "Scan barcode"));
 
   // The keyboard hides it, so it never sits over the field being typed in.
   keyboard.listeners.keyboardWillShow();
@@ -1279,21 +1278,13 @@ test("compiled Home pins the quick-log bar above the tab bar in place of its Log
     "the keyboard is up in the logger"
   );
   logger(tree).props.close();
-  // A fresh day hides its empty hours, so no hour offers a +; the bar's + opens the logger with
-  // the keyboard down, now.
+  // A fresh day hides its empty hours, so no hour offers a +.
   tree = render();
   assert.ok(tree.some((node) => node.props?.children === "Nothing logged yet."));
   assert.equal(
     tree.find((node) => /^Log food (at|to) /.test(node.props?.accessibilityLabel ?? "")),
     undefined
   );
-  bar(tree).props.onAction("log");
-  tree = render();
-  assert.deepEqual(
-    [logger(tree).props.start, logger(tree).props.initialTime, logger(tree).props.initialDay],
-    [undefined, undefined, today]
-  );
-  logger(tree).props.close();
   bar(render()).props.onAction("scan");
   tree = render();
   assert.equal(logger(tree).props.start, "barcode");
@@ -1304,16 +1295,18 @@ test("compiled Home pins the quick-log bar above the tab bar in place of its Log
   tree.find((node) => node.type === "PhotoLogger").props.close();
 
   // On another day the pill says so, and logs there.
-  find(render(), "IconButton", "Previous day").props.onPress();
+  render()
+    .find((node) => node.type === "WeekStrip")
+    .props.onChange(yesterday);
   tree = render();
   assert.equal(bar(tree).props.label, "Log to Yesterday");
   bar(tree).props.onAction("search");
   assert.equal(logger(render()).props.initialDay, yesterday);
   logger(render()).props.close();
-  bar(render()).props.onAction("log");
+  bar(render()).props.onAction("scan");
   assert.deepEqual(
     [logger(render()).props.start, logger(render()).props.initialDay],
-    [undefined, yesterday]
+    ["barcode", yesterday]
   );
   logger(render()).props.close();
 
@@ -1445,7 +1438,7 @@ test("Screen floats a tab's footer above the tab bar and keeps the page clear of
     return view && { bottom: view.props.style.bottom, content: view.props.children.props.children };
   };
   let tree = render(null);
-  assert.equal(padding(tree), 40);
+  assert.equal(padding(tree), 123, "clear of the floating tab bar");
   assert.equal(floating(tree), undefined);
   tree = render(bar);
   // Above the floating tab bar, which is part of the safe area on iOS, with room to scroll past.

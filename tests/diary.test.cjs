@@ -1075,7 +1075,7 @@ test("compiled Home selection copies, deletes, moves and saves chosen foods with
     tree.find((node) => node.type === "Button" && node.props.accessibilityLabel === label);
   const select = () => {
     render()
-      .find((node) => node.type === "DayPicker")
+      .find((node) => node.type === "WeekStrip")
       .props.onChange(yesterday);
     row(render(), "Oats").props.onLongPress();
     row(render(), "Eggs").props.onPress();
@@ -1703,7 +1703,7 @@ test("compiled Screen scrolls the end of its list clear of however tall its foot
     nodes(harness.render(Screen, { title: "Today", footer, children: null }));
   const padding = (tree) =>
     tree.find((node) => node.type === "ScrollView").props.contentContainerStyle.paddingBottom;
-  assert.equal(padding(render()), 40);
+  assert.equal(padding(render()), 123, "clear of the floating tab bar");
   const tree = render("Undo");
   assert.equal(padding(tree), 160, "an Undo message fits the usual space");
   // The Undo message stacked on the selection bar.
@@ -1768,8 +1768,8 @@ test("compiled Home opens a link's sheet once, on today, from a cold start or wh
   // Already open, on another day with a food open: the sheet closes and the logger
   // opens on today.
   render()
-    .find((node) => node.props?.accessibilityLabel === "Previous day")
-    .props.onPress();
+    .find((node) => node.type === "WeekStrip")
+    .props.onChange(nutrition.shiftDay(today, -1));
   row(render(), "Oats").props.onPress();
   tree = render();
   assert.ok(sheet(tree, "FoodEditor"));

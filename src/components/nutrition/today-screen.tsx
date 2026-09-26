@@ -11,7 +11,7 @@ import {
   SystemPanel,
   SystemText as Text,
 } from "@/components/system";
-import { ActionMenu, DayPicker, Screen, SwipeRow } from "@/components/ui";
+import { ActionMenu, Screen, SwipeRow } from "@/components/ui";
 import {
   HomeSheets,
   pendingAppAction,
@@ -509,68 +509,51 @@ export function TodayScreen() {
             }
         : null;
 
-  const header = (
-    <View className="flex-row items-center">
-      <SystemIconButton
-        icon="chevron-back"
-        accessibilityLabel="Previous day"
-        onPress={() => go(shiftDay(day, -1))}
-      />
-      <DayPicker value={day} max={today} label={label(day)} onChange={go} />
-      <SystemIconButton
-        icon="chevron-forward"
-        accessibilityLabel="Next day"
-        isDisabled={live}
-        color={live ? "muted" : "foreground"}
-        onPress={() => go(shiftDay(day, 1))}
-      />
-      <View className="flex-1" />
-      {!live && (
-        <SystemButton
-          variant="secondary"
-          className="min-h-9 px-3 py-1.5"
-          hitSlop={{ top: 4, bottom: 4 }}
-          onPress={() => go(today)}
-        >
-          Today
-        </SystemButton>
-      )}
-      <ActionMenu
-        accessibilityLabel="Day options"
-        sections={[
-          {
-            actions: [
-              {
-                key: "weight",
-                label: "Log weight",
-                icon: "scale-outline",
-                onPress: () => weightSheet.current?.open(),
-              },
-              {
-                key: "copy",
-                label: live ? "Copy a day into today" : `Copy a day into ${label(day)}`,
-                icon: "copy-outline",
-                onPress: () => setCopying(true),
-              },
-            ],
-          },
-          {
-            title: "Mark day as",
-            actions: (["in-progress", "complete", "partial", "fasting"] as const).map((value) => ({
-              key: value,
-              label: statusLabels[value],
-              selected: status === value,
-              disabled:
-                status === value ||
-                (value === "fasting"
-                  ? !!entries.length
-                  : value !== "in-progress" && !entries.length),
-              onPress: () => mark(day, value),
-            })),
-          },
-        ]}
-      />
-    </View>
+  // The week strip moves between days; the rest of the day's controls live here.
+  const dayMenu = (
+    <ActionMenu
+      accessibilityLabel="Day options"
+      sections={[
+        {
+          actions: [
+            ...(live
+              ? []
+              : [
+                  {
+                    key: "today",
+                    label: "Go to today",
+                    icon: "today-outline" as const,
+                    onPress: () => go(today),
+                  },
+                ]),
+            {
+              key: "weight",
+              label: "Log weight",
+              icon: "scale-outline",
+              onPress: () => weightSheet.current?.open(),
+            },
+            {
+              key: "copy",
+              label: live ? "Copy a day into today" : `Copy a day into ${label(day)}`,
+              icon: "copy-outline",
+              onPress: () => setCopying(true),
+            },
+          ],
+        },
+        {
+          title: "Mark day as",
+          actions: (["in-progress", "complete", "partial", "fasting"] as const).map((value) => ({
+            key: value,
+            label: statusLabels[value],
+            selected: status === value,
+            disabled:
+              status === value ||
+              (value === "fasting" ? !!entries.length : value !== "in-progress" && !entries.length),
+            onPress: () => mark(day, value),
+          })),
+        },
+      ]}
+    />
   );
 
   const chosen = entries.filter((entry) => selected?.includes(entry.id));
@@ -682,7 +665,6 @@ export function TodayScreen() {
           ai={ai}
           onAction={(action) => {
             if (action === "photo") setPhotoLog(true);
-            else if (action === "log") setLogger({});
             else setLogger({ start: action === "scan" ? "barcode" : "typing" });
           }}
         />
@@ -696,24 +678,22 @@ export function TodayScreen() {
         title="Today"
         compact
         scrollRef={scrollRef}
-        header={
-          <>
-            {header}
-            <WeekStrip day={day} today={today} onChange={go} />
-          </>
-        }
+        header={<WeekStrip day={day} today={today} onChange={go} />}
         footer={footer}
       >
         <SystemPanel className="p-4">
           <SystemPanel.Body className="gap-3">
-            <Text
-              className={`text-4xl font-semibold tabular-nums ${hero.className}`}
-              maxFontSizeMultiplier={1.35}
-              numberOfLines={1}
-            >
-              {number(hero.value, 0)}
-              <Text className="text-base font-medium text-muted">{hero.unit}</Text>
-            </Text>
+            <View className="-mr-2 -mt-1 flex-row items-start gap-2">
+              <Text
+                className={`flex-1 text-4xl font-semibold tabular-nums ${hero.className}`}
+                maxFontSizeMultiplier={1.35}
+                numberOfLines={1}
+              >
+                {number(hero.value, 0)}
+                <Text className="text-base font-medium text-muted">{hero.unit}</Text>
+              </Text>
+              {dayMenu}
+            </View>
             {targets ? (
               <>
                 <PaceBar
