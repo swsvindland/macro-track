@@ -2077,14 +2077,13 @@ test("log again ranking survives invalid times without NaN", () => {
   // A time saved by an older version, and an entry without one.
   eat(rare, 3, "7:5");
   eat(rare, 4, null);
+  // An unreadable time ranks like now, the time field's default.
+  const titles = (time) => fastLog.loggingChoices(time).choices.map((choice) => choice.title);
+  assert.deepEqual(titles("13:00"), ["Often", "Rare"]);
   for (const time of ["25:99", "", "8:0", "noon"]) {
-    const { choices, known } = fastLog.loggingChoices(time);
+    const { known } = fastLog.loggingChoices(time);
     assert.ok([...known.values()].every(Number.isFinite), time);
-    assert.deepEqual(
-      choices.map((choice) => choice.title),
-      ["Often", "Rare"],
-      time
-    );
+    assert.deepEqual(titles(time), titles(foodTime.currentFoodTime()), time);
   }
   sqlite.close();
 });

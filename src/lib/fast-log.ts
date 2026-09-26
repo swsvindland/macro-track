@@ -85,8 +85,8 @@ function timeFit(at: number | null, logged: string | null) {
  * and times, so a long diary stays fast; `lastEntry` is each food's most recent entry id.
  */
 export function foodScores(time: string, now = Date.now()) {
-  const typed = normalizeFoodTime(time);
-  const at = typed ? clockMinutes(typed) : null;
+  // A time still being typed ("8:") ranks for now, so the list doesn't reshuffle mid-edit.
+  const at = clockMinutes(normalizeFoodTime(time) ?? currentFoodTime());
   const today = new Date(`${localDay(new Date(now))}T00:00:00`).getTime();
   const rows = db
     .select({
