@@ -156,6 +156,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "@/lib/local-ai": {
       modelStatus: async () => ({ state: "unavailable", engine: "none", vision: false }),
+      prewarmModel: () => {},
       textRecognitionAvailable: () => false,
       recognizeText: async () => [],
     },
@@ -2484,6 +2485,311 @@ test("compiled fast logger offers photo logging only where it runs, then logs or
   );
   assert.equal(draft.state.closed, 1);
   draft.sqlite.close();
+});
+
+// PhotoLogger against the real meal analysis and diary; each model request waits for the test.
+function photoLoggerHarness(status = {}) {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const produce = (id, name, grams) => ({
+    ...food,
+    id,
+    name,
+    barcode: null,
+    source: "usda",
+    portions: [{ label: "1 medium", amount: grams }],
+  });
+  const banana = produce("usda:banana", "Bananas, raw", 118);
+  const apple = produce("usda:apple", "Apples, raw, with skin", 182);
+  const requests = [];
+  const reply = (name) => ({
+    items: [{ brand: "", name, quantity: 1, unit: "piece", grams: 120 }],
+  });
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "react-native": {
+        View: "View",
+        Image: "Image",
+        ActivityIndicator: "ActivityIndicator",
+        Platform: { OS: "ios" },
+      },
+      "@/lib/local-ai": {
+        modelStatus: async () => ({ state: "available", engine: "apple", vision: true, ...status }),
+        prewarmModel: () => {},
+        downloadModel: async () => {},
+        errorCode: () => "",
+        generateJson: (request) =>
+          new Promise((resolve, reject) =>
+            requests.push({
+              request,
+              answer: (name) => resolve(reply(name)),
+              nothing: () => resolve({ items: [] }),
+              fail: reject,
+            })
+          ),
+      },
+      "@/lib/meal-ai": load("src/lib/meal-ai.ts", {
+        "./nutrition": nutrition,
+        "./food-rank": rank,
+      }),
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": { searchCatalogMatch: async () => [banana, apple] },
+    }
+  );
+  const { PhotoLogger } = harness.load("src/components/nutrition/photo-logger.tsx");
+  const state = { closed: 0 };
+  const render = () =>
+    nodes(
+      harness.render(PhotoLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "12:30",
+        close: () => state.closed++,
+      })
+    );
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const drafted = () =>
+    render()
+      .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+      .map((node) => node.props.accessibilityLabel.slice(7));
+  const field = () => render().find((node) => node.type === "Field");
+  const updateButton = () =>
+    render().find((node) => node.props.children === "Update with description");
+  return { diary, sqlite, harness, requests, render, settle, drafted, field, updateButton, state };
+}
+
+test("compiled photo logger analyzes a photo at once and re-runs it for an edited description", async () => {
+  const photo = photoLoggerHarness();
+  const { requests, harness, render, settle, drafted, field, updateButton } = photo;
+  render();
+  harness.effects.forEach((effect) => effect());
+  await settle();
+  assert.equal(field().props.onSubmit, undefined, "return keeps its meaning next to the camera");
+  render()
+    .find((node) => node.type === "PhotoCapture")
+    .props.onPhoto("file:///cache/meal.jpg");
+  assert.equal(requests.length, 1, "the shutter starts the analysis; there is no Find foods tap");
+  assert.equal(requests[0].request.imageUri, "file:///cache/meal.jpg");
+  for (let i = 0; i < 3; i++) {
+    render();
+    harness.effects.forEach((effect) => effect());
+  }
+  await settle();
+  assert.equal(requests.length, 1, "one photo is one analysis");
+  assert.equal(updateButton(), undefined);
+
+  // The description stays editable while the model looks at the photo.
+  field().props.onChange("banana from the market");
+  updateButton().props.onPress();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].request.imageUri, "file:///cache/meal.jpg");
+  assert.match(requests[1].request.prompt, /banana from the market/);
+  assert.equal(updateButton(), undefined, "the running analysis has this description");
+  // The superseded run answers first and is dropped; the screen waits for the newer one.
+  requests[0].answer("Apple");
+  await settle();
+  assert.deepEqual(drafted(), []);
+  assert.ok(render().some((node) => node.props.children === "Cancel"));
+  requests[1].answer("Banana");
+  await settle();
+  assert.deepEqual(drafted(), ["Bananas, raw"]);
+  assert.equal(requests.length, 2, "a clear match needs no second request");
+
+  // After the draft, an edited description re-runs the analysis from the review.
+  field().props.onChange("an apple, not a banana");
+  updateButton().props.onPress();
+  assert.equal(requests.length, 3);
+  requests[2].answer("Apple");
+  await settle();
+  assert.deepEqual(drafted(), ["Apples, raw, with skin"]);
+  assert.equal(updateButton(), undefined);
+  render()
+    .find((node) => node.props.children === "Log 1 food")
+    .props.onPress();
+  assert.deepEqual(
+    photo.diary.entriesForDay(metrics.localDay()).map((entry) => entry.food.name),
+    ["Apples, raw, with skin"]
+  );
+  assert.equal(photo.state.closed, 1);
+  photo.sqlite.close();
+});
+
+test("compiled describe-only logger finds foods on return and re-runs an edited description", async () => {
+  const photo = photoLoggerHarness({ vision: false });
+  const { requests, harness, render, settle, drafted, field, updateButton } = photo;
+  render();
+  harness.effects.forEach((effect) => effect());
+  await settle();
+  assert.equal(field().props.label, "What did you eat?");
+  field().props.onSubmit();
+  assert.equal(requests.length, 0, "return on an empty description does nothing");
+  field().props.onChange("a banana");
+  field().props.onSubmit();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].request.imageUri, undefined);
+  requests[0].answer("Banana");
+  await settle();
+  assert.deepEqual(drafted(), ["Bananas, raw"]);
+  field().props.onSubmit();
+  assert.equal(requests.length, 1, "an unchanged description is not analyzed again");
+  field().props.onChange("an apple");
+  assert.ok(updateButton());
+  field().props.onSubmit();
+  assert.equal(requests.length, 2);
+  assert.match(requests[1].request.prompt, /an apple/);
+  requests[1].answer("Apple");
+  await settle();
+  assert.deepEqual(drafted(), ["Apples, raw, with skin"]);
+  photo.sqlite.close();
+});
+
+test("compiled photo logger keeps the reviewed draft when a re-run finds nothing, fails or is cancelled", async () => {
+  const photo = photoLoggerHarness();
+  const { requests, harness, render, settle, drafted, field, updateButton } = photo;
+  render();
+  harness.effects.forEach((effect) => effect());
+  await settle();
+  render()
+    .find((node) => node.type === "PhotoCapture")
+    .props.onPhoto("file:///cache/meal.jpg");
+  requests[0].answer("Banana");
+  await settle();
+  assert.deepEqual(drafted(), ["Bananas, raw"]);
+  // The person corrects the amount before noticing the description could say more.
+  render()
+    .find((node) => node.props.accessibilityLabel === "Adjust Bananas, raw")
+    .props.onPress();
+  render()
+    .find((node) => node.type === "Field" && node.props.label.startsWith("Quantity"))
+    .props.onChange("200");
+  render()
+    .find((node) => String(node.props.children).startsWith("Use 200 g"))
+    .props.onPress();
+  const portion = () =>
+    render().some(
+      (node) => typeof node.props.children === "string" && /^200 g · /.test(node.props.children)
+    );
+  const kept = (why) => {
+    assert.deepEqual(drafted(), ["Bananas, raw"], why);
+    assert.ok(portion(), `${why}: the adjusted amount stays`);
+    assert.ok(
+      render().some(
+        (node) => node.type === "Image" && node.props.source.uri === "file:///cache/meal.jpg"
+      )
+    );
+    assert.equal(
+      render().find((node) => node.type === "PhotoCapture"),
+      undefined
+    );
+    assert.ok(updateButton(), `${why}: the edited description can still be tried`);
+  };
+  const error = () => render().find((node) => node.type === "Error")?.props.message ?? "";
+
+  field().props.onChange("and some pie");
+  updateButton().props.onPress();
+  assert.deepEqual(drafted(), [], "the re-run is analyzing");
+  requests[1].nothing();
+  await settle();
+  kept("an empty re-run");
+  assert.equal(error(), "No food found with that description.");
+
+  updateButton().props.onPress();
+  assert.equal(error(), "");
+  requests[2].fail(new Error("The on-device model is busy. Try again."));
+  await settle();
+  kept("a failed re-run");
+  assert.equal(error(), "The on-device model is busy. Try again.");
+
+  updateButton().props.onPress();
+  render()
+    .find((node) => node.props.children === "Cancel")
+    .props.onPress();
+  kept("a cancelled re-run");
+  assert.equal(error(), "");
+  requests[3].answer("Apple");
+  await settle();
+  kept("the cancelled run's late answer");
+  assert.equal(requests.length, 4);
+
+  render()
+    .find((node) => node.props.children === "Log 1 food")
+    .props.onPress();
+  assert.deepEqual(
+    photo.diary.entriesForDay(metrics.localDay()).map((entry) => [entry.food.name, entry.amount]),
+    [["Bananas, raw", 200]]
+  );
+  photo.sqlite.close();
+});
+
+test("compiled Home prewarms the on-device model once available, then at most every 10 minutes", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  let status = { state: "unavailable", engine: "none", vision: false, reason: "disabled" };
+  let prewarms = 0,
+    reads = 0;
+  const listeners = [];
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/food-catalog": { openCatalogs: async () => {} },
+      "@/lib/local-ai": {
+        modelStatus: async () => {
+          reads++;
+          return { ...status };
+        },
+        prewarmModel: () => prewarms++,
+      },
+      "react-native": {
+        View: "View",
+        Platform: { OS: "ios" },
+        AccessibilityInfo: { announceForAccessibility: () => {} },
+        AppState: {
+          addEventListener: (_, listener) => {
+            listeners.push(listener);
+            return { remove: () => {} };
+          },
+        },
+      },
+    }
+  );
+  const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  // The mount effect runs once; the others after every render, as often as React may run them.
+  const render = () => {
+    const tree = nodes(harness.render(TodayScreen));
+    harness.effects.slice(1).forEach((effect) => effect());
+    return tree;
+  };
+  const returnToApp = async () => {
+    listeners.forEach((listener) => listener("active"));
+    await settle();
+    render();
+  };
+  render();
+  const stop = harness.effects[0]();
+  t.mock.timers.tick(300);
+  await settle();
+  render();
+  assert.equal(reads, 1);
+  assert.equal(prewarms, 0, "a model that can't run isn't loaded");
+
+  status = { state: "available", engine: "apple", vision: true };
+  await returnToApp();
+  render();
+  assert.equal(prewarms, 1, "prewarmed once when it became available");
+  t.mock.timers.tick(5 * 60000);
+  await returnToApp();
+  assert.equal(prewarms, 1, "returning soon after doesn't load it again");
+  t.mock.timers.tick(6 * 60000);
+  await returnToApp();
+  assert.equal(prewarms, 2);
+  stop();
+  sqlite.close();
 });
 
 test("compiled quick add hands an estimate to a meal draft without writing the diary", () => {

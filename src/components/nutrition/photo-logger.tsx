@@ -114,6 +114,8 @@ export function PhotoLogger({
   const [installing, setInstalling] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  // The description the current or last analysis was given; editing it offers a re-run.
+  const [asked, setAsked] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ step: "capture" });
   const [drafts, setDrafts] = useState<DraftFood[]>([]);
   const [editing, setEditing] = useState<string | null>(null),
@@ -126,6 +128,8 @@ export function PhotoLogger({
   const [when, setWhen] = useState(false);
   // Each analysis gets a number; a cancelled or superseded one can't overwrite the screen.
   const run = useRef(0);
+  // The description the draft on screen was made from.
+  const drafted = useRef<string | null>(null);
   const locked = useRef(false);
 
   function check() {
@@ -150,17 +154,18 @@ export function PhotoLogger({
     }
   }
 
-  async function analyze() {
-    if (!photo && !description.trim()) {
+  async function analyze(image = photo, text = description) {
+    if (!image && !text.trim()) {
       setError("Take a photo or describe what you ate.");
       return;
     }
     const id = ++run.current;
     setError("");
+    setAsked(text.trim());
     setPhase({ step: "analyzing", stage: "reading", seen: [] });
     try {
       const result = await analyzeMeal(
-        { description, imageUri: photo ?? undefined },
+        { description: text, imageUri: image ?? undefined },
         {
           generate: generateJson,
           search: (expression) => searchCatalogMatch(expression, { generic: 100, branded: 30 }),
@@ -172,29 +177,55 @@ export function PhotoLogger({
       );
       if (run.current !== id) return;
       if (!result.length) {
-        setPhase({ step: "capture" });
-        setError(
-          photo
-            ? "No food found in this photo. Try a closer photo, or describe what you ate."
-            : "No food found in that description."
+        back(
+          drafts.length
+            ? "No food found with that description."
+            : image
+              ? "No food found in this photo. Try a closer photo, or describe what you ate."
+              : "No food found in that description."
         );
         return;
       }
+      drafted.current = text.trim();
       setDrafts(result);
       setPhase({ step: "review" });
     } catch (e) {
       if (run.current !== id) return;
-      setPhase({ step: "capture" });
-      setError(describeError(e));
+      back(describeError(e));
     }
   }
+  // A re-run that fails, finds nothing or is cancelled leaves the draft it would have replaced.
+  function back(message = "") {
+    if (drafts.length) {
+      setAsked(drafted.current);
+      setPhase({ step: "review" });
+    } else setPhase({ step: "capture" });
+    setError(message);
+  }
 
+  // A new photo is analyzed straight away, with whatever description is already typed.
+  function took(uri: string) {
+    setPhoto(uri);
+    void analyze(uri);
+  }
   function startOver() {
     run.current++;
     setPhoto(null);
+    setAsked(null);
     setDrafts([]);
     setPhase({ step: "capture" });
     setError("");
+  }
+  function stop() {
+    if (!drafts.length) return startOver();
+    run.current++;
+    back();
+  }
+  const changed =
+    asked !== null && description.trim() !== asked && (!!photo || !!description.trim());
+  // Describe-only: return finds the foods, or finds them again for an edited description.
+  function submit() {
+    if (phase.step === "capture" ? description.trim() : changed) void analyze();
   }
   const items = drafts.flatMap((draft) => (draft.item ? [draft.item] : []));
   const unmatched = drafts.length - items.length;
@@ -414,6 +445,25 @@ export function PhotoLogger({
     );
   }
 
+  const describe = status && (
+    <Field
+      label={status.vision ? "Description (optional)" : "What did you eat?"}
+      multiline
+      value={description}
+      onChange={(next) => {
+        setDescription(next);
+        setError("");
+      }}
+      onSubmit={status.vision ? undefined : submit}
+      placeholder="e.g. large pepperoni from Domino's, ate 3 slices"
+    />
+  );
+  const rerun = changed && (
+    <SystemButton variant="secondary" icon="sparkles-outline" onPress={() => void analyze()}>
+      Update with description
+    </SystemButton>
+  );
+
   if (phase.step === "review") {
     const today = localDay();
     const dayLabel =
@@ -436,6 +486,7 @@ export function PhotoLogger({
         footer={
           <View className="gap-2">
             <ErrorText message={error} />
+            {rerun}
             {!!items.length && (
               <Text className="text-sm font-semibold tabular-nums">
                 {number(sum.calories, 0)} kcal · {number(sum.protein, 0)} g protein ·{" "}
@@ -532,6 +583,7 @@ export function PhotoLogger({
             Start over
           </SystemButton>
         </View>
+        {describe}
         <Text className="px-1 text-xs text-muted">
           Foods and amounts are estimates made on this phone. Nutrition comes from the food catalog;
           check portions before logging.
@@ -549,9 +601,12 @@ export function PhotoLogger({
       close={cancel}
       footer={
         phase.step === "analyzing" ? (
-          <SystemButton variant="secondary" onPress={startOver}>
-            Cancel
-          </SystemButton>
+          <View className="gap-2">
+            {rerun}
+            <SystemButton variant="secondary" onPress={stop}>
+              Cancel
+            </SystemButton>
+          </View>
         ) : ready ? (
           <View className="gap-2">
             <ErrorText message={error} />
@@ -567,32 +622,35 @@ export function PhotoLogger({
       }
     >
       {phase.step === "analyzing" ? (
-        <View className="gap-4 pt-2" accessibilityLiveRegion="polite">
-          {photo && (
-            <Image
-              source={{ uri: photo }}
-              accessibilityIgnoresInvertColors
-              accessibilityLabel="Your meal photo"
-              style={{ width: "100%", height: 200, borderRadius: 16 }}
-              resizeMode="cover"
-            />
-          )}
-          <View className="flex-row items-center gap-3">
-            <ActivityIndicator />
-            <Text className="font-medium">
-              {phase.stage === "reading"
-                ? photo
-                  ? "Looking at your meal…"
-                  : "Reading your description…"
-                : `Matching ${phase.seen.length} ${phase.seen.length === 1 ? "food" : "foods"} to the food list…`}
-            </Text>
+        <>
+          <View className="gap-4 pt-2" accessibilityLiveRegion="polite">
+            {photo && (
+              <Image
+                source={{ uri: photo }}
+                accessibilityIgnoresInvertColors
+                accessibilityLabel="Your meal photo"
+                style={{ width: "100%", height: 200, borderRadius: 16 }}
+                resizeMode="cover"
+              />
+            )}
+            <View className="flex-row items-center gap-3">
+              <ActivityIndicator />
+              <Text className="font-medium">
+                {phase.stage === "reading"
+                  ? photo
+                    ? "Looking at your meal…"
+                    : "Reading your description…"
+                  : `Matching ${phase.seen.length} ${phase.seen.length === 1 ? "food" : "foods"} to the food list…`}
+              </Text>
+            </View>
+            {phase.seen.map((food, i) => (
+              <Text key={i} className="px-1 text-sm text-muted">
+                {`${food.quantity} ${food.unit} · ${food.brand ? `${food.brand} ` : ""}${food.name}`}
+              </Text>
+            ))}
           </View>
-          {phase.seen.map((food, i) => (
-            <Text key={i} className="px-1 text-sm text-muted">
-              {`${food.quantity} ${food.unit} · ${food.brand ? `${food.brand} ` : ""}${food.name}`}
-            </Text>
-          ))}
-        </View>
+          {describe}
+        </>
       ) : !status ? (
         <Text className="text-muted">Checking on-device AI…</Text>
       ) : status.state === "downloadable" ? (
@@ -646,7 +704,7 @@ export function PhotoLogger({
               <PhotoCapture
                 subject="your meal"
                 alternative="describe your meal"
-                onPhoto={setPhoto}
+                onPhoto={took}
                 onError={setError}
               />
             )
@@ -655,16 +713,7 @@ export function PhotoLogger({
               Photos need iOS 27. Describe what you ate and the foods will be found for you.
             </Text>
           )}
-          <Field
-            label={status.vision ? "Description (optional)" : "What did you eat?"}
-            multiline
-            value={description}
-            onChange={(next) => {
-              setDescription(next);
-              setError("");
-            }}
-            placeholder="e.g. large pepperoni from Domino's, ate 3 slices"
-          />
+          {describe}
           <Text className="px-1 text-xs text-muted">
             {`Runs on this phone with ${engineName(status)}. Brands and amounts you mention are used as given.${status.vision ? " Photos are not saved." : ""}`}
           </Text>

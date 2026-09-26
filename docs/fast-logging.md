@@ -39,6 +39,7 @@ Counts start on Home and exclude typing, biometric phone unlock and opening the 
 | Repeat a familiar food or saved meal       | Log food + select + Log = 3 taps; Undo       |
 | Repeat a food with a new amount            | Log food + row + Log = 3 taps                |
 | Log three usual foods                      | Log food + 3 selections + Log = 5 taps       |
+| Log a meal from a photo                    | Photo + shutter + Log = 3 taps               |
 | Scan a packaged food with nothing selected | Scan + Log = 2 taps                          |
 | Quick-add an estimate                      | Log food + Quick add + Add to diary = 3 taps |
 | Morning weigh-in                           | Field + Save = 2 taps                        |
@@ -46,7 +47,7 @@ Counts start on Home and exclude typing, biometric phone unlock and opening the 
 | Finish a ready weekly review               | Accept or Keep = 1 tap                       |
 | Read the reasoning before accepting        | Why? + Accept = 2 taps                       |
 
-Catalogs warm after the initial Home render. Screens read the diary once per change rather than on every render: opening a sheet, typing or the minute clock reuse those reads, and the pace line moves with the clock from them. Log again reads only food IDs and times through an index on creation time and ID, then full entries for its top 40 foods; search still finds every other food eaten in those 180 days, with its last quantity, reading full entries only for its matches. Weights use an index on time. The personal database uses write-ahead logging. Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change, reaches the catalogs from the second letter, and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
+Catalogs, and the on-device model where it runs, warm after the initial Home render; the model again on return to the app, at most every 10 minutes. Screens read the diary once per change rather than on every render: opening a sheet, typing or the minute clock reuse those reads, and the pace line moves with the clock from them. Log again reads only food IDs and times through an index on creation time and ID, then full entries for its top 40 foods; search still finds every other food eaten in those 180 days, with its last quantity, reading full entries only for its matches. Weights use an index on time. The personal database uses write-ahead logging. Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change, reaches the catalogs from the second letter, and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
 
 ## Phone timing protocol
 
