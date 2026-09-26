@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { SymbolView } from "expo-symbols";
-import { useThemeColor } from "heroui-native";
+import { useThemeColor, type ThemeColor } from "heroui-native";
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
 
 /** The Gemini sparkle, in its blue-to-rose gradient. */
@@ -24,12 +24,13 @@ function GeminiMark({ size }: { size: number }) {
 }
 
 /**
- * The mark of the model that runs on this phone: Apple Intelligence on iOS, Gemini on Android.
+ * The mark of the model that runs on this phone: Apple Intelligence on iOS, tinted `color` like
+ * the icons beside it, or Gemini in its own gradient on Android.
  */
-export function AiMark({ size = 22 }: { size?: number }) {
-  const foreground = useThemeColor("foreground");
+export function AiMark({ size = 22, color = "foreground" }: { size?: number; color?: ThemeColor }) {
+  const tint = useThemeColor(color);
   if (Platform.OS === "ios") {
-    return <SymbolView name="apple.intelligence" size={size} tintColor={String(foreground)} />;
+    return <SymbolView name="apple.intelligence" size={size} tintColor={String(tint)} />;
   }
   return <GeminiMark size={size} />;
 }

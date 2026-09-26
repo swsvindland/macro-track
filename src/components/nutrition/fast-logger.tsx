@@ -541,7 +541,7 @@ export function FastLogger({
         offered.map((action) => (
           <SystemIconButton
             key={action.key}
-            icon={action.icon === "ai" ? <AiMark /> : action.icon}
+            icon={action.icon === "ai" ? <AiMark color="accent-soft-foreground" /> : action.icon}
             color="accent-soft-foreground"
             accessibilityLabel={action.spoken}
             onPress={() => setPicker(action.key)}
@@ -614,7 +614,13 @@ export function FastLogger({
             <SystemButton
               key={action.key}
               variant="secondary"
-              icon={action.icon === "ai" ? <AiMark size={18} /> : action.icon}
+              icon={
+                action.icon === "ai" ? (
+                  <AiMark size={18} color="accent-soft-foreground" />
+                ) : (
+                  action.icon
+                )
+              }
               className="px-3"
               accessibilityLabel={action.spoken}
               onPress={() => setPicker(action.key)}

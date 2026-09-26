@@ -431,7 +431,11 @@ export function PhotoLogger({
     />
   );
   const rerun = changed && (
-    <SystemButton variant="secondary" icon={<AiMark size={18} />} onPress={() => void analyze()}>
+    <SystemButton
+      variant="secondary"
+      icon={<AiMark size={18} color="accent-soft-foreground" />}
+      onPress={() => void analyze()}
+    >
       Update with description
     </SystemButton>
   );
@@ -582,7 +586,7 @@ export function PhotoLogger({
           <View className="gap-2">
             <ErrorText message={error} />
             <SystemButton
-              icon={<AiMark size={18} />}
+              icon={<AiMark size={18} color="accent-foreground" />}
               isDisabled={!photo && !description.trim()}
               onPress={() => void analyze()}
             >
