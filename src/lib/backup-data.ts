@@ -110,6 +110,12 @@ const dataSchema = z.strictObject({
               targetWeightKg: z.number().min(35).max(350),
               initialExpenditure: z.number().min(1200).max(5000),
               checkInDay: z.number().int().min(0).max(6),
+              custom: z
+                .strictObject({
+                  proteinG: z.number().min(40).max(500).optional(),
+                  carbPct: z.number().min(0).max(100).optional(),
+                })
+                .optional(),
             })
             .nullable()
             .optional(),
@@ -123,7 +129,7 @@ const dataSchema = z.strictObject({
       z.strictObject({
         day,
         goalId: id,
-        decision: z.enum(["accepted", "kept"]),
+        decision: z.enum(["accepted", "kept", "adjusted"]),
         review: reviewSchema,
         targets: targetSchema,
       })
@@ -227,6 +233,8 @@ const dataSchema = z.strictObject({
           .refine((value) => Number.isFinite(Date.parse(value))),
         createdAt: iso.nullable(),
         updatedAt: iso.nullable(),
+        // Backups made before readings could be ignored count every reading.
+        excluded: z.boolean().default(false),
       })
     )
     .max(100000),

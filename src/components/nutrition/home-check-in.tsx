@@ -1,23 +1,36 @@
 import { useRef, useState } from "react";
 import { View } from "react-native";
-import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
+import {
+  SystemButton,
+  SystemIconButton,
+  SystemLabel,
+  SystemPanel,
+  SystemText as Text,
+} from "@/components/system";
 import { ErrorText } from "@/components/ui";
 import type { WeightEntry } from "@/db";
 import type { Review } from "@/lib/coaching";
-import { coachingSnapshot, coverage, finishCheckIn } from "@/lib/coaching-store";
+import {
+  coachingSnapshot,
+  coverage,
+  finishCheckIn,
+  maintainGoal,
+  reachedGoal,
+} from "@/lib/coaching-store";
 import { dayOf, formatPace, formatWeight, localDay, shortDay } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
-import { deleteWeight, restoreWeight } from "@/lib/weigh-in";
+import { setWeightExcluded } from "@/lib/weigh-in";
+import { CheckInAdjuster } from "./check-in-adjuster";
 
 /**
- * Offers to delete the weigh-in that holds the check-in, then Undo. It stays mounted as the
+ * Offers to ignore the weigh-in that holds the check-in, then Undo. It stays mounted as the
  * review refreshes, so Undo outlives the outlier until another reading is flagged.
  */
 export function OutlierPrompt({ outlier }: { outlier?: Review["outlier"] }) {
   const { refresh } = useNutrition();
   const { number, units, language, refresh: reloadWeights } = useStore();
-  const [removed, setRemoved] = useState<WeightEntry | null>(null),
+  const [ignored, setIgnored] = useState<WeightEntry | null>(null),
     [error, setError] = useState("");
   function run(action: () => void) {
     try {
@@ -33,27 +46,26 @@ export function OutlierPrompt({ outlier }: { outlier?: Review["outlier"] }) {
   const reading =
     id !== undefined
       ? outlier
-      : removed && { kg: removed.weightKg, day: dayOf(removed.measuredAt) };
+      : ignored && { kg: ignored.weightKg, day: dayOf(ignored.measuredAt) };
   if (!reading) return null;
   const label = `${formatWeight(reading.kg, units, number)} on ${shortDay(reading.day, language)}`;
   return (
     <View className="gap-1">
       <View className="flex-row items-center gap-2">
         <Text className="flex-1 text-sm tabular-nums">
-          {id !== undefined ? `Delete ${label}?` : `Deleted ${label}`}
+          {id !== undefined ? `Ignore ${label}?` : `Ignored ${label}`}
         </Text>
         {id !== undefined ? (
           <SystemButton
-            variant="danger-soft"
+            variant="secondary"
             onPress={() =>
               run(() => {
-                // A second tap finds nothing to delete and keeps the first tap's Undo.
-                const row = deleteWeight(id);
-                if (row) setRemoved(row);
+                const row = setWeightExcluded(id, true);
+                if (row) setIgnored(row);
               })
             }
           >
-            Delete
+            Ignore reading
           </SystemButton>
         ) : (
           <SystemButton
@@ -61,8 +73,8 @@ export function OutlierPrompt({ outlier }: { outlier?: Review["outlier"] }) {
             labelClassName="text-accent-soft-foreground"
             onPress={() =>
               run(() => {
-                if (removed) restoreWeight(removed);
-                setRemoved(null);
+                if (ignored) setWeightExcluded(ignored.id, false);
+                setIgnored(null);
               })
             }
           >
@@ -88,25 +100,27 @@ export function HomeCheckIn({
   const { refresh } = useNutrition();
   const { number, date, units } = useStore();
   const [details, setDetails] = useState(false),
+    [adjusting, setAdjusting] = useState(false),
     [error, setError] = useState("");
   const lockedDay = useRef("");
   const data = useNutritionQuery(() => {
-    const { isDue, review, targets } = coachingSnapshot(localDay(), { onlyWhenDue: true });
-    return isDue && review && targets ? { review, targets } : null;
+    const { goal, isDue, review, targets } = coachingSnapshot(localDay(), { onlyWhenDue: true });
+    return isDue && review && targets ? { goal, review, targets } : null;
   });
   if (!data) return null;
-  const { review, targets } = data;
-  function finish(decision: "accepted" | "kept") {
+  const { goal, review, targets } = data;
+  const program = goal?.program;
+  const maintain =
+    reachedGoal(goal, review) && program
+      ? formatWeight(program.targetWeightKg, units, number)
+      : null;
+  function finish(action: () => void, message: string) {
     if (lockedDay.current === localDay()) return;
     lockedDay.current = localDay();
     try {
-      finishCheckIn(decision);
+      action();
       refresh();
-      onDone(
-        decision === "accepted"
-          ? "Check-in done. Your new targets start today."
-          : "Check-in done. Your targets stay the same."
-      );
+      onDone(message);
     } catch (e) {
       lockedDay.current = "";
       setError(e instanceof Error ? e.message : "Could not save your check-in.");
@@ -172,24 +186,92 @@ export function HomeCheckIn({
             </SystemButton>
           </View>
         )}
-        {review.proposed ? (
-          <View className="flex-row gap-2">
-            <SystemButton className="flex-1" onPress={() => finish("accepted")}>
-              Accept plan
-            </SystemButton>
-            <SystemButton variant="secondary" className="flex-1" onPress={() => finish("kept")}>
-              Keep current
-            </SystemButton>
-          </View>
+        {adjusting ? (
+          <CheckInAdjuster
+            start={review.proposed ?? targets}
+            weight={program ? (review.trendWeightKg ?? program.weightKg) : undefined}
+            program={program}
+            onSave={(adjusted) =>
+              finish(
+                () => finishCheckIn("adjusted", adjusted),
+                "Check-in done. Your adjusted targets start today."
+              )
+            }
+            onCancel={() => {
+              setAdjusting(false);
+              setError("");
+            }}
+          />
         ) : (
-          <View className="flex-row flex-wrap gap-2">
-            <SystemButton className="flex-1" onPress={() => finish("kept")}>
-              Keep targets this week
-            </SystemButton>
-            <SystemButton variant="secondary" icon="scale-outline" onPress={onWeighIn}>
-              Log weight
-            </SystemButton>
-          </View>
+          <>
+            {maintain && (
+              <SystemButton
+                onPress={() =>
+                  finish(maintainGoal, `Check-in done. You’re now maintaining ${maintain}.`)
+                }
+              >
+                {`Maintain ${maintain}`}
+              </SystemButton>
+            )}
+            <View className="flex-row flex-wrap gap-2">
+              {review.proposed ? (
+                <>
+                  <SystemButton
+                    variant={maintain ? "secondary" : "primary"}
+                    className="flex-1"
+                    onPress={() =>
+                      finish(
+                        () => finishCheckIn("accepted"),
+                        "Check-in done. Your new targets start today."
+                      )
+                    }
+                  >
+                    Accept plan
+                  </SystemButton>
+                  <SystemButton
+                    variant="secondary"
+                    className="flex-1"
+                    onPress={() =>
+                      finish(
+                        () => finishCheckIn("kept"),
+                        "Check-in done. Your targets stay the same."
+                      )
+                    }
+                  >
+                    Keep current
+                  </SystemButton>
+                </>
+              ) : (
+                <>
+                  <SystemButton
+                    variant={maintain ? "secondary" : "primary"}
+                    className="flex-1"
+                    onPress={() =>
+                      finish(
+                        () => finishCheckIn("kept"),
+                        "Check-in done. Your targets stay the same."
+                      )
+                    }
+                  >
+                    Keep targets this week
+                  </SystemButton>
+                  <SystemButton variant="secondary" icon="scale-outline" onPress={onWeighIn}>
+                    Log weight
+                  </SystemButton>
+                </>
+              )}
+              <SystemIconButton
+                icon="options-outline"
+                variant="secondary"
+                iconSize={20}
+                accessibilityLabel="Adjust targets"
+                onPress={() => {
+                  setAdjusting(true);
+                  setError("");
+                }}
+              />
+            </View>
+          </>
         )}
         <ErrorText message={error} />
       </SystemPanel.Body>

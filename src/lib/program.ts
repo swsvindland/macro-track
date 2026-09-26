@@ -13,9 +13,14 @@ export type Program = {
   targetWeightKg: number;
   initialExpenditure: number;
   checkInDay: number;
+  /** Macros set at a check-in: fixed protein grams, and carbs' percentage of the other calories. */
+  custom?: { proteinG?: number; carbPct?: number };
 };
 export function validateProgram(p: Program) {
+  const { proteinG, carbPct } = p.custom ?? {};
   if (
+    (proteinG !== undefined && !(proteinG >= 40 && proteinG <= 500)) ||
+    (carbPct !== undefined && !(carbPct >= 0 && carbPct <= 100)) ||
     !Number.isInteger(p.age) ||
     p.age < 18 ||
     p.age > 100 ||
@@ -49,20 +54,105 @@ export function initialExpenditure(
   return Math.round(resting * { low: 1.2, light: 1.375, moderate: 1.55, high: 1.725 }[p.activity]);
 }
 export function programMacros(calories: number, weight: number, p: Program): Targets {
-  const protein = Math.round(weight * p.protein);
+  const protein = Math.round(p.custom?.proteinG ?? weight * p.protein);
   const remaining = calories - protein * 4;
-  const fat = Math.round(
-    Math.max(
-      weight * 0.6,
-      (remaining * { balanced: 0.4, "lower-fat": 0.25, "lower-carb": 0.6 }[p.diet]) / 9
-    )
-  );
+  const fatShare =
+    p.custom?.carbPct !== undefined
+      ? 1 - p.custom.carbPct / 100
+      : { balanced: 0.4, "lower-fat": 0.25, "lower-carb": 0.6 }[p.diet];
+  const fat = Math.round(Math.max(weight * 0.6, (remaining * fatShare) / 9));
   const carbs = Math.round((calories - protein * 4 - fat * 9) / 4);
   if (calories < 1500 || calories > 5000 || carbs < 0)
     throw new Error(
       "This combination is outside the supported coached range. Choose a slower pace, a lower protein level, or use manual targets."
     );
   return { calories: Math.round(calories), protein, fat, carbs };
+}
+/** The macros behind targets, as a program keeps them: protein, and carbs' share of the rest. */
+export function customMacros(targets: Targets) {
+  const carbs = targets.carbs * 4,
+    fat = targets.fat * 9;
+  return {
+    proteinG: targets.protein,
+    carbPct: carbs + fat > 0 ? Math.round((carbs / (carbs + fat)) * 1000) / 10 : 50,
+  };
+}
+/** Targets as a program allocates their calories at this weight, or unchanged when it can't. */
+export function programTargets(targets: Targets, weight: number, p: Program): Targets {
+  try {
+    return programMacros(targets.calories, weight, p);
+  } catch {
+    return targets;
+  }
+}
+/** Moves calories by `delta` and splits the rest as before; with a weight, fat keeps its floor. */
+export function stepTargets(targets: Targets, delta: number, weight = 0): Targets {
+  const calories = Math.round(targets.calories + delta),
+    remaining = calories - targets.protein * 4;
+  const fat = Math.round(
+    Math.max(weight * 0.6, (remaining * (100 - customMacros(targets).carbPct)) / 900)
+  );
+  const carbs = Math.max(0, Math.round((remaining - fat * 9) / 4));
+  return { calories, protein: targets.protein, carbs, fat };
+}
+/**
+ * Checks targets set by hand at a check-in. With a weight, protein keeps 1.4 g/kg and fat the
+ * same floor the program uses, so later reviews can keep the split.
+ */
+export function checkAdjustment(targets: Targets, weight?: number): Targets {
+  const { calories, protein, carbs, fat } = targets;
+  if (![calories, protein, carbs, fat].every((value) => Number.isFinite(value) && value >= 0))
+    throw new Error("Enter calories and grams for each macro.");
+  if (calories < 1500 || calories > 5000)
+    throw new Error("Coached targets stay between 1,500 and 5,000 kcal.");
+  if (Math.abs(protein * 4 + carbs * 4 + fat * 9 - calories) > 50)
+    throw new Error("Protein, carbs and fat should add up to the calories.");
+  if (weight !== undefined && protein < Math.floor(weight * 1.4))
+    throw new Error(`Keep protein at ${Math.floor(weight * 1.4)} g or more (1.4 g/kg).`);
+  if (weight !== undefined && protein > 500) throw new Error("Keep protein at 500 g or less.");
+  if (weight !== undefined && fat < Math.floor(weight * 0.6))
+    throw new Error(`Keep fat at ${Math.floor(weight * 0.6)} g or more.`);
+  return {
+    calories: Math.round(calories),
+    protein: Math.round(protein),
+    carbs: Math.round(carbs),
+    fat: Math.round(fat),
+  };
+}
+/**
+ * The program after a check-in's targets. Protein and the carb/fat split that follow the
+ * program's own rule, or the custom one it already has, to within a gram stay as they are; only
+ * macros set by hand become custom.
+ */
+export function adjustedProgram(p: Program, targets: Targets, weight: number): Program {
+  const { custom, ...own } = p;
+  const withCustom = (proteinG?: number, carbPct?: number): Program => {
+    const set = {
+      ...(proteinG === undefined ? {} : { proteinG }),
+      ...(carbPct === undefined ? {} : { carbPct }),
+    };
+    return Object.keys(set).length ? { ...own, custom: set } : own;
+  };
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const proteinG = near(targets.protein, Math.round(custom?.proteinG ?? weight * p.protein))
+    ? custom?.proteinG
+    : near(targets.protein, Math.round(weight * p.protein))
+      ? undefined
+      : targets.protein;
+  const fits = (carbPct?: number) => {
+    try {
+      const usual = programMacros(targets.calories, weight, withCustom(targets.protein, carbPct));
+      return near(usual.carbs, targets.carbs) && near(usual.fat, targets.fat);
+    } catch {
+      return false;
+    }
+  };
+  const carbPct = fits(custom?.carbPct)
+    ? custom?.carbPct
+    : fits()
+      ? undefined
+      : customMacros(targets).carbPct;
+  return withCustom(proteinG, carbPct);
 }
 export function goalRate(goal: Goal, weight: number, target: number) {
   if (goal.mode === "manual") return 0;
@@ -195,7 +285,7 @@ export function reviewProgram(input: ProgramInput): Review {
   const apart = (a: TrendPoint, b: TrendPoint) => Math.abs(a.raw - b.raw) > weight * 0.03;
   const jumped = recent.some((row, i) => i > 0 && apart(recent[i - 1], row));
   if (jumped) {
-    // A day far from the days on both sides of it is likely a misread that can be deleted.
+    // A day far from the days on both sides of it is likely a misread that can be ignored.
     // A lasting step has no such day, so it only holds the review.
     const raws = recent.map((row) => row.raw).sort((a, b) => a - b);
     const median = (raws[(raws.length - 1) >> 1] + raws[raws.length >> 1]) / 2;
@@ -215,7 +305,7 @@ export function reviewProgram(input: ProgramInput): Review {
     if (reading)
       return {
         ...hold(
-          "One weigh-in is far from the ones around it. Delete it if it was a misread; otherwise keep the current plan while the trend settles.",
+          "One weigh-in is far from the ones around it. Ignore it if it was a misread; otherwise keep the current plan while the trend settles.",
           "holding"
         ),
         outlier: { day: reading.day, kg: reading.kg, id: reading.id },
@@ -250,7 +340,7 @@ export function reviewProgram(input: ProgramInput): Review {
     ...result,
     status: "ready",
     reason: reached
-      ? "Your trend has reached the goal. This review moves your target toward maintenance; switch to Maintain to hold this weight."
+      ? "Your trend has reached the goal. This review moves your target toward maintenance; choose Maintain to hold your goal weight."
       : "Your plan is recalculated from logged intake, normalized weight and your goal. Protein follows body weight; carbs and fat follow your preferences. You do not need to hit the old targets perfectly.",
   };
 }

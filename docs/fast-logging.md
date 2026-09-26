@@ -28,7 +28,7 @@ When Health isn't delivering weights, Home shows a weigh-in card until noon on d
 
 ## Weekly flow
 
-When due and after the morning tasks, Home shows the check-in: current → proposed calories, proposed macros and your pace against the goal pace, with **Accept plan** and **Keep current**. Either action finishes the check-in immediately, refreshes targets and removes the card. **Why?** expands the reasoning, dates and estimated expenditure. When data is insufficient, the card shows usable days against the 12 needed and weigh-in days with **Keep targets this week** and **Log weight**. When one weigh-in far from its neighbors holds the review, the card names it with a one-tap **Delete** and **Undo**. Plan shows the same review with a 2×2 evidence grid and blocks Accept/Keep until an unfinished recent day is answered.
+When due and after the morning tasks, Home shows the check-in: current → proposed calories, proposed macros and your pace against the goal pace, with **Accept plan**, **Keep current** and an adjust button (±50 kcal steps and protein/carbs/fat grams, then **Save targets**). Each finishes the check-in immediately, refreshes targets and removes the card. When the trend has reached a cut or bulk goal, **Maintain <goal weight>** leads and answers the check-in in one tap. **Why?** expands the reasoning, dates and estimated expenditure. When data is insufficient, the card shows usable days against the 12 needed and weigh-in days with **Keep targets this week** and **Log weight**. When one weigh-in far from its neighbors holds the review, the card names it with a one-tap **Ignore reading** and **Undo**; the reading stays dimmed in weight history with **Include**. Plan shows the same review with a 2×2 evidence grid and blocks Accept/Keep until an unfinished recent day is answered.
 
 ## Interaction budgets
 
@@ -44,6 +44,7 @@ Counts start on Home and exclude typing, biometric phone unlock and opening the 
 | Morning weigh-in                           | Field + Save = 2 taps                        |
 | Confirm yesterday was fully logged         | 1 tap                                        |
 | Finish a ready weekly review               | Accept or Keep = 1 tap                       |
+| Nudge this week's proposal by 50 kcal      | Adjust + step + Save targets = 3 taps        |
 | Read the reasoning before accepting        | Why? + Accept = 2 taps                       |
 
 Catalogs warm after the initial Home render. Screens read the diary once per change rather than on every render: opening a sheet, typing or the minute clock reuse those reads, and the pace line moves with the clock from them. Recent-food retrieval uses an index on creation time and ID, and weights an index on time. The personal database uses write-ahead logging. Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.

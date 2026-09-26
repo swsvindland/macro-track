@@ -144,6 +144,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
     "./fast-logger": { FastLogger: "FastLogger" },
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
+    "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },

@@ -33,7 +33,7 @@ export function WeighInCard({
   const unit = weightUnit(units);
   const digits = units === "stone" ? 2 : 1;
   const show = (kg: number) => `${number(fromKg(kg, units), digits)} ${unit}`;
-  const last = weights[0];
+  const last = weights.find((row) => !row.excluded);
   function save() {
     if (locked.current || !value.trim()) return;
     try {

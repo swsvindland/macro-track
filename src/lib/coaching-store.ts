@@ -1,4 +1,6 @@
 import {
+  adjustedProgram,
+  checkAdjustment,
   goalRate,
   initialExpenditure,
   reviewProgram,
@@ -6,7 +8,7 @@ import {
   validateProgram,
   type Program,
 } from "./program";
-import { and, asc, desc, gt, gte, isNull, lt, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNull, lt, lte } from "drizzle-orm";
 import {
   db,
   coachingGoals,
@@ -17,7 +19,7 @@ import {
   nutritionTargets,
 } from "@/db";
 import { dayOf, localDay, weightTrend } from "./metrics";
-import { shiftDay } from "./nutrition";
+import { shiftDay, type Targets } from "./nutrition";
 import { targetsForDay } from "./diary";
 import { reviewWeek, type Goal, type Review } from "./coaching";
 
@@ -68,7 +70,8 @@ export function currentReview(day = localDay(), goal = currentGoal(), history?: 
       and(
         gte(weightEntries.measuredAt, shiftDay(start, -90)),
         // Stored times are UTC; the review day ends at local midnight.
-        lt(weightEntries.measuredAt, new Date(`${shiftDay(day, 1)}T00:00:00`).toISOString())
+        lt(weightEntries.measuredAt, new Date(`${shiftDay(day, 1)}T00:00:00`).toISOString()),
+        eq(weightEntries.excluded, false)
       )
     )
     .all();
@@ -164,9 +167,19 @@ export function coachingSnapshot(day = localDay(), { onlyWhenDue = false } = {})
     review: coached && (isDue || !onlyWhenDue) ? currentReview(day, goal, history) : null,
   };
 }
-export function finishCheckIn(decision: "accepted" | "kept") {
+/** Trend weight a check-in's macros are checked against. */
+const reviewWeight = (review: Review, program: Program) => review.trendWeightKg ?? program.weightKg;
+/**
+ * Answers a due check-in. "adjusted" saves the given targets instead of the proposal; a program
+ * keeps any protein or carb/fat split set by hand for later reviews.
+ */
+export function finishCheckIn(decision: "accepted" | "kept" | "adjusted", override?: Targets) {
   const day = localDay();
-  if (!["accepted", "kept"].includes(decision)) throw new Error("Choose a check-in action.");
+  if (
+    !["accepted", "kept", "adjusted"].includes(decision) ||
+    (decision === "adjusted") !== !!override
+  )
+    throw new Error("Choose a check-in action.");
   return db.transaction((tx) => {
     const goal = currentGoal(),
       review = currentReview(day),
@@ -176,7 +189,13 @@ export function finishCheckIn(decision: "accepted" | "kept") {
     if (day < nextCheckInDay()) throw new Error("Your next check-in is not due yet.");
     if (decision === "accepted" && (review.status !== "ready" || !review.proposed))
       throw new Error("Keep your targets while more data is collected.");
-    const targets = decision === "accepted" ? review.proposed! : current;
+    const program = goal.program;
+    const targets =
+      decision === "adjusted"
+        ? checkAdjustment(override!, program ? reviewWeight(review, program) : undefined)
+        : decision === "accepted"
+          ? review.proposed!
+          : current;
     tx.insert(checkIns)
       .values({
         day,
@@ -186,13 +205,74 @@ export function finishCheckIn(decision: "accepted" | "kept") {
         targets,
       })
       .run();
-    if (decision === "accepted")
+    if (decision !== "kept")
       tx.insert(nutritionTargets)
         .values({ effectiveDay: day, targets })
         .onConflictDoUpdate({ target: nutritionTargets.effectiveDay, set: { targets } })
         .run();
+    if (decision === "adjusted" && program) {
+      const next = adjustedProgram(program, targets, reviewWeight(review, program));
+      // A new revision, like a program edit: the check-in above keeps this week's review done.
+      if (
+        next.custom?.proteinG !== program.custom?.proteinG ||
+        next.custom?.carbPct !== program.custom?.carbPct
+      )
+        tx.insert(coachingGoals)
+          .values({ mode: goal.mode, pace: goal.pace, startedDay: day, program: next })
+          .run();
+    }
     return targets;
   });
+}
+/** A cut or bulk whose trend has reached its goal weight, so it can switch to Maintain. */
+export function reachedGoal(goal: ReturnType<typeof currentGoal>, review: Review | null) {
+  return (
+    !!goal?.program &&
+    (goal.mode === "lose" || goal.mode === "gain") &&
+    review?.desiredWeeklyKg === 0 &&
+    review.trendWeightKg !== undefined
+  );
+}
+/**
+ * Switches a finished cut or bulk to Maintain at its goal weight. On a due check-in this also
+ * answers it, and the new program starts from that review's estimate.
+ */
+export function maintainGoal() {
+  const day = localDay();
+  const { goal, isDue, review } = coachingSnapshot(day);
+  if (!goal?.program || !review || !reachedGoal(goal, review))
+    throw new Error("Your trend hasn’t reached your goal weight yet.");
+  const weight = reviewWeight(review, goal.program);
+  const next: Goal = { mode: "maintain", pace: 0, startedDay: day };
+  const program: Program = {
+    ...goal.program,
+    weightKg: Math.round(weight * 10) / 10,
+    initialExpenditure:
+      isDue && review.expenditure !== null
+        ? review.expenditure
+        : priorExpenditure(goal.startedDay, goal.program, checkInHistory()),
+  };
+  const targets = startingTargets(next, program, weight);
+  db.transaction((tx) => {
+    if (isDue)
+      tx.insert(checkIns)
+        .values({
+          day,
+          goalId: goal.id,
+          decision: "adjusted",
+          review: { ...review, outlier: undefined },
+          targets,
+        })
+        .run();
+    tx.insert(coachingGoals)
+      .values({ ...next, program })
+      .run();
+    tx.insert(nutritionTargets)
+      .values({ effectiveDay: day, targets })
+      .onConflictDoUpdate({ target: nutritionTargets.effectiveDay, set: { targets } })
+      .run();
+  });
+  return targets;
 }
 
 export function previewProgram(

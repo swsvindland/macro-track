@@ -3,7 +3,7 @@ import { Alert } from "react-native";
 import { eq } from "drizzle-orm";
 import { db, healthLinks, measurements, weightEntries } from "@/db";
 import { useStore } from "@/lib/store";
-import { deleteWeight } from "@/lib/weigh-in";
+import { deleteWeight, setWeightExcluded } from "@/lib/weigh-in";
 import {
   dayOf,
   formatHeight,
@@ -22,7 +22,13 @@ import {
 } from "@/lib/metrics";
 
 type Kind = "weight" | "height" | "body";
-type RecordRow = { id: number; measuredAt: string; values: Record<string, number> };
+type RecordRow = {
+  id: number;
+  measuredAt: string;
+  values: Record<string, number>;
+  /** A weigh-in left out of the trend and check-ins. */
+  excluded?: boolean;
+};
 export function useMeasurementLog(kind: Kind) {
   const { weights, measurements: records, units, t, number, refresh } = useStore();
   const [open, setOpen] = useState(false);
@@ -34,7 +40,12 @@ export function useMeasurementLog(kind: Kind) {
   const [limit, setLimit] = useState(30);
   const rows: RecordRow[] =
     kind === "weight"
-      ? weights.map((w) => ({ id: w.id, measuredAt: w.measuredAt, values: { weight: w.weightKg } }))
+      ? weights.map((w) => ({
+          id: w.id,
+          measuredAt: w.measuredAt,
+          values: { weight: w.weightKg },
+          excluded: w.excluded,
+        }))
       : records.filter((m) => m.kind === kind);
   const fields = kind === "body" ? [...sites, "bodyFat"] : [kind];
   const unit = kind === "weight" ? weightUnit(units) : lengthUnit(units);
@@ -141,6 +152,17 @@ export function useMeasurementLog(kind: Kind) {
       setBusy(false);
     }
   }
+  /** Ignores a weigh-in or counts it again, from history or its editor. */
+  function exclude(row: RecordRow, excluded: boolean) {
+    try {
+      setWeightExcluded(row.id, excluded);
+      if (editing?.id === row.id) setEditing({ ...editing, excluded });
+      refresh();
+      setError("");
+    } catch {
+      setError(t("error"));
+    }
+  }
   function remove() {
     if (!editing) return;
     Alert.alert(t("delete"), t("deleteConfirm"), [
@@ -183,6 +205,7 @@ export function useMeasurementLog(kind: Kind) {
     launch,
     save,
     remove,
+    exclude: kind === "weight" ? exclude : undefined,
   };
 }
 

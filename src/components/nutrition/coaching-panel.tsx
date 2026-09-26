@@ -1,15 +1,31 @@
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
-import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
+import {
+  SystemButton,
+  SystemIconButton,
+  SystemLabel,
+  SystemPanel,
+  SystemText as Text,
+} from "@/components/system";
 import { ActionMenu, ErrorText } from "@/components/ui";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
-import { coachingSnapshot, coverage, saveGoal, finishCheckIn } from "@/lib/coaching-store";
+import {
+  coachingSnapshot,
+  coverage,
+  finishCheckIn,
+  maintainGoal,
+  reachedGoal,
+  saveGoal,
+} from "@/lib/coaching-store";
+import type { Targets } from "@/lib/nutrition";
 import { dayToConfirm, setDayStatus } from "@/lib/diary";
 import { formatPace, formatWeight, localDay, shortDay } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
+import { CheckInAdjuster } from "./check-in-adjuster";
 import { OutlierPrompt } from "./home-check-in";
 import { ProgramEditor } from "./program-editor";
 
+const decisions = { accepted: "Accepted", kept: "Kept", adjusted: "Adjusted" };
 const weekdayOf = (day: string, language: string) =>
   new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
     weekday: "long",
@@ -37,8 +53,10 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
   const [editing, setEditing] = useState(false),
     [programError, setProgramError] = useState(""),
     [checkInError, setCheckInError] = useState(""),
-    [why, setWhy] = useState(false);
-  const finished = useRef("");
+    [why, setWhy] = useState(false),
+    [adjusting, setAdjusting] = useState(false);
+  const finished = useRef(""),
+    switched = useRef<number | null>(null);
   const program = goal?.program;
   const weight = (kg: number) => formatWeight(kg, units, number);
   const pace = (kg: number | null) => (kg === null ? "—" : formatPace(kg, units, number));
@@ -53,16 +71,31 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
       return false;
     }
   }
-  function finish(decision: "accepted" | "kept") {
+  function finish(decision: "accepted" | "kept" | "adjusted", override?: Targets) {
     const day = localDay();
     if (finished.current === day) return;
     finished.current = day;
     const saved = act(() => {
-      finishCheckIn(decision);
-      if (decision === "accepted") onTargetsChanged();
+      finishCheckIn(decision, override);
+      if (decision !== "kept") onTargetsChanged();
     }, setCheckInError);
     if (!saved) finished.current = "";
+    else setAdjusting(false);
   }
+  function maintain() {
+    // Due, this answers the check-in too, so neither can repeat that day.
+    if (!goal || switched.current === goal.id || (isDue && finished.current === localDay())) return;
+    switched.current = goal.id;
+    const saved = act(() => {
+      maintainGoal();
+      onTargetsChanged();
+    }, setCheckInError);
+    if (!saved) switched.current = null;
+    else if (isDue) finished.current = localDay();
+  }
+  const maintainWeight =
+    program && reachedGoal(goal, review) ? weight(program.targetWeightKg) : null;
+  const adjustFrom = review?.proposed ?? targets;
   function switchToManual() {
     Alert.alert(
       "Switch to manual targets?",
@@ -73,8 +106,9 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
       ]
     );
   }
-  const diet =
-    program?.diet === "balanced"
+  const diet = program?.custom
+    ? "Custom macros"
+    : program?.diet === "balanced"
       ? "Balanced"
       : program?.diet === "lower-fat"
         ? "More carbs"
@@ -227,6 +261,11 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                 </Text>
               </View>
             )}
+            {maintainWeight && !adjusting && (
+              <SystemButton isDisabled={isDue && !!pending} onPress={maintain}>
+                {`Maintain ${maintainWeight}`}
+              </SystemButton>
+            )}
             {isDue && (
               <>
                 {/* A check-in saved before this learns from incomplete data for a week. */}
@@ -257,25 +296,52 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                     </View>
                   </View>
                 )}
-                <View className="flex-row flex-wrap gap-2">
-                  {review.proposed && (
+                {adjusting && adjustFrom && !pending ? (
+                  <CheckInAdjuster
+                    start={adjustFrom}
+                    weight={program ? (review.trendWeightKg ?? program.weightKg) : undefined}
+                    program={program}
+                    onSave={(adjusted) => finish("adjusted", adjusted)}
+                    onCancel={() => {
+                      setAdjusting(false);
+                      setCheckInError("");
+                    }}
+                  />
+                ) : (
+                  <View className="flex-row flex-wrap gap-2">
+                    {review.proposed && (
+                      <SystemButton
+                        variant={maintainWeight ? "secondary" : "primary"}
+                        className="grow"
+                        isDisabled={!!pending}
+                        onPress={() => finish("accepted")}
+                      >
+                        Accept this week’s plan
+                      </SystemButton>
+                    )}
                     <SystemButton
+                      variant="secondary"
                       className="grow"
                       isDisabled={!!pending}
-                      onPress={() => finish("accepted")}
+                      onPress={() => finish("kept")}
                     >
-                      Accept this week’s plan
+                      Keep current plan
                     </SystemButton>
-                  )}
-                  <SystemButton
-                    variant="secondary"
-                    className="grow"
-                    isDisabled={!!pending}
-                    onPress={() => finish("kept")}
-                  >
-                    Keep current plan
-                  </SystemButton>
-                </View>
+                    {adjustFrom && (
+                      <SystemIconButton
+                        icon="options-outline"
+                        variant="secondary"
+                        iconSize={20}
+                        accessibilityLabel="Adjust targets"
+                        isDisabled={!!pending}
+                        onPress={() => {
+                          setAdjusting(true);
+                          setCheckInError("");
+                        }}
+                      />
+                    )}
+                  </View>
+                )}
               </>
             )}
             <ErrorText message={checkInError} />
@@ -284,8 +350,7 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                 <SystemLabel>Recent check-ins</SystemLabel>
                 {history.slice(0, 4).map((item) => (
                   <Text key={item.day} className="text-sm text-muted tabular-nums">
-                    {shortDay(item.day, language)} ·{" "}
-                    {item.decision === "accepted" ? "Accepted" : "Kept"} ·{" "}
+                    {shortDay(item.day, language)} · {decisions[item.decision]} ·{" "}
                     {number(item.targets.calories, 0)} kcal
                   </Text>
                 ))}

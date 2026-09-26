@@ -27,6 +27,19 @@ export function deleteWeight(id: number): WeightEntry | undefined {
   return db.delete(weightEntries).where(eq(weightEntries.id, id)).returning().get();
 }
 
+/**
+ * Leaves a weigh-in out of the trend and check-ins, or counts it again. It stays in history,
+ * and a Health reading keeps its link, so sync neither re-imports nor re-exports it.
+ */
+export function setWeightExcluded(id: number, excluded: boolean): WeightEntry | undefined {
+  return db
+    .update(weightEntries)
+    .set({ excluded, updatedAt: new Date() })
+    .where(eq(weightEntries.id, id))
+    .returning()
+    .get();
+}
+
 /** Puts a deleted weigh-in back under its own id, so its Health link still matches. */
 export function restoreWeight(entry: WeightEntry) {
   db.insert(weightEntries).values(entry).onConflictDoNothing().run();

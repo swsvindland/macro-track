@@ -92,13 +92,13 @@ export function exportDiaryCsv() {
 }
 export function exportWeightCsv() {
   return csv([
-    ["measured_at", "weight_kg"],
+    ["measured_at", "weight_kg", "excluded"],
     ...db
       .select()
       .from(weightEntries)
       .orderBy(weightEntries.measuredAt)
       .all()
-      .map((row) => [row.measuredAt, row.weightKg]),
+      .map((row) => [row.measuredAt, row.weightKg, row.excluded]),
   ]);
 }
 // Call only while health sync is paused and after explicit UI confirmation.

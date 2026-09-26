@@ -85,6 +85,7 @@ export function Dashboard({ weightOnly = false }: { weightOnly?: boolean }) {
   const { weights, measurements, units, formula, t, number, date } = useStore();
   const trend = weightTrend(weights);
   const latest = trend.at(-1);
+  const lastReading = weights.find((row) => !row.excluded);
   const heightEntry = measurements.find((m) => m.kind === "height");
   const bodyEntry = measurements.find((m) => m.kind === "body");
   const ratioEntry = measurements.find(
@@ -130,7 +131,7 @@ export function Dashboard({ weightOnly = false }: { weightOnly?: boolean }) {
           </SystemValue>
           <Text className="text-sm text-muted">
             {latest
-              ? `${t("asOf")} ${date(latest.day)} · ${t("latest")}: ${number(fromKg(weights[0].weightKg, units))} ${weightUnit(units)}`
+              ? `${t("asOf")} ${date(latest.day)} · ${t("latest")}: ${number(fromKg(lastReading?.weightKg ?? latest.raw, units))} ${weightUnit(units)}`
               : t("needWeight")}
           </Text>
           {latest && (

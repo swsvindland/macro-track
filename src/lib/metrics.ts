@@ -96,10 +96,13 @@ export function dayOf(timestamp: string): string {
   return timestamp.length === 10 ? timestamp : localDay(new Date(timestamp));
 }
 export type TrendPoint = { day: string; raw: number; trend: number };
-export function weightTrend(entries: { measuredAt: string; weightKg: number }[]): TrendPoint[] {
+/** Daily averages smoothed with a seven-day half-life. Ignored readings are left out. */
+export function weightTrend(
+  entries: { measuredAt: string; weightKg: number; excluded?: boolean | null }[]
+): TrendPoint[] {
   const days = new Map<string, number[]>();
   for (const entry of entries) {
-    if (!Number.isFinite(entry.weightKg) || entry.weightKg <= 0) continue;
+    if (entry.excluded || !Number.isFinite(entry.weightKg) || entry.weightKg <= 0) continue;
     const day = dayOf(entry.measuredAt);
     days.set(day, [...(days.get(day) ?? []), entry.weightKg]);
   }

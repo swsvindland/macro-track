@@ -326,13 +326,17 @@ function coachingDatabase(today) {
  * A cut running since Jan 1: 2,400 kcal logged on each of the 21 days before `day`, and a
  * weigh-in at local noon on each of those days and the one before them.
  */
-function seedProgram({ db, diary }, day, { weight = () => 80, complete = () => true } = {}) {
+function seedProgram(
+  { db, diary },
+  day,
+  { weight = () => 80, complete = () => true, changes = {} } = {}
+) {
   db.insert(schema.coachingGoals)
     .values({
       mode: "lose",
       pace: 0.25,
       startedDay: "2024-01-01",
-      program: { ...profile, initialExpenditure: 2600 },
+      program: { ...profile, initialExpenditure: 2600, ...changes },
     })
     .run();
   diary.saveTargets("2024-01-01", targets);
@@ -687,10 +691,12 @@ function screenHarness(dependencies, storeOverrides = {}) {
     "react-native": { View: "View", AppState: {} },
     "@/components/system": {
       SystemButton: "Button",
+      SystemIconButton: "IconButton",
       SystemLabel: "Label",
       SystemPanel: { Body: "PanelBody" },
       SystemText: "Text",
     },
+    "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "@/components/ui": { ErrorText: "Error" },
     "@/lib/store": { useStore: () => store },
     "./store": { useStore: () => store },
@@ -715,7 +721,7 @@ function nodes(tree) {
 const shown = (tree, type, label) =>
   tree.find((node) => node.type === type && node.props.children === label);
 
-test("compiled check-in names a misread weigh-in, deletes it in one tap and can undo", () => {
+test("compiled check-in names a misread weigh-in, ignores it in one tap and can undo", () => {
   const data = coachingDatabase("2024-02-01");
   const { store, weighIn, weights, fakeMetrics } = data;
   seedProgram(data, "2024-02-01", { weight: (date) => (date === "2024-01-21" ? 76.9 : 80) });
@@ -739,21 +745,28 @@ test("compiled check-in names a misread weigh-in, deletes it in one tap and can 
   const renderPrompt = () =>
     nodes(prompt.render(OutlierPrompt, { outlier: store.currentReview().outlier }));
   tree = renderPrompt();
-  assert.ok(shown(tree, "Text", "Delete 76.9 kg on Jan 21?"));
-  const remove = shown(tree, "Button", "Delete");
-  remove.props.onPress();
-  remove.props.onPress();
-  assert.equal(weights().length, 21);
+  assert.ok(shown(tree, "Text", "Ignore 76.9 kg on Jan 21?"));
+  const ignore = shown(tree, "Button", "Ignore reading");
+  ignore.props.onPress();
+  ignore.props.onPress();
+  // The reading stays in history, left out of the trend.
+  assert.equal(weights().length, 22);
+  assert.deepEqual(
+    weights()
+      .filter((row) => row.excluded)
+      .map((row) => row.weightKg),
+    [76.9]
+  );
   assert.equal(prompt.context.revision, 2);
   tree = renderPrompt();
-  assert.ok(shown(tree, "Text", "Deleted 76.9 kg on Jan 21"));
+  assert.ok(shown(tree, "Text", "Ignored 76.9 kg on Jan 21"));
 
   home.store.weights = weights();
   assert.ok(shown(renderHome(), "Button", "Accept plan"));
 
   shown(tree, "Button", "Undo").props.onPress();
-  assert.equal(weights().length, 22);
-  assert.ok(shown(renderPrompt(), "Text", "Delete 76.9 kg on Jan 21?"));
+  assert.equal(weights().filter((row) => row.excluded).length, 0);
+  assert.ok(shown(renderPrompt(), "Text", "Ignore 76.9 kg on Jan 21?"));
   data.sqlite.close();
 });
 
@@ -899,4 +912,540 @@ test("light-mode accent text, links and focus rings keep AA contrast on every su
   const dark = theme("dark");
   for (const token of ["link", "accent-soft-foreground", "focus"])
     assert.ok(contrast(dark[token], dark.surface) >= 4.5, `dark ${token}`);
+});
+
+// Check-in parity: adjusted targets, custom macros, one-tap Maintain and ignored weigh-ins.
+const loadBackup = (db) =>
+  load("src/lib/backup-data.ts", { "@/db": { db, ...schema }, "./nutrition": nutrition });
+
+test("programs keep macros set at a check-in, and adjustments stay in the coached range", () => {
+  const own = { ...profile, initialExpenditure: 2600 };
+  assert.deepEqual(program.programMacros(2400, 80, own), {
+    calories: 2400,
+    protein: 128,
+    fat: 84,
+    carbs: 283,
+  });
+  const custom = program.programMacros(2400, 80, {
+    ...own,
+    custom: { proteinG: 180, carbPct: 45 },
+  });
+  assert.equal(custom.protein, 180);
+  assert.ok(Math.abs(program.customMacros(custom).carbPct - 45) < 0.5);
+  assert.deepEqual(program.customMacros({ calories: 2362, protein: 150, carbs: 256, fat: 82 }), {
+    proteinG: 150,
+    carbPct: 58.1,
+  });
+  for (const bad of [{ proteinG: 20 }, { carbPct: 120 }])
+    assert.throws(() => program.validateProgram({ ...own, custom: bad }));
+
+  // A step keeps protein and the split; the fat floor holds with a weight.
+  const proposed = { calories: 2310, protein: 128, fat: 80, carbs: 270 };
+  assert.deepEqual(program.stepTargets(proposed, 50, 80), {
+    calories: 2360,
+    protein: 128,
+    carbs: 278,
+    fat: 82,
+  });
+  assert.equal(program.stepTargets({ ...proposed, fat: 48, carbs: 342 }, -500, 80).fat, 48);
+
+  const check = (targets) => program.checkAdjustment(targets, 80);
+  assert.throws(() => check({ ...proposed, calories: 1400 }), /1,500 and 5,000/);
+  assert.throws(() => check({ ...proposed, fat: 120 }), /add up/);
+  assert.throws(() => check({ calories: 2310, protein: 100, carbs: 298, fat: 80 }), /112 g/);
+  assert.throws(() => check({ calories: 2310, protein: 128, carbs: 360, fat: 40 }), /48 g/);
+  assert.throws(() => check({ calories: 3000, protein: 520, carbs: 90, fat: 60 }), /500 g/);
+  assert.throws(() => check({ ...proposed, carbs: NaN }), /grams/);
+  assert.deepEqual(check({ ...proposed, carbs: 270.4 }), proposed);
+  // Without a program there is no body weight to check protein and fat against.
+  assert.deepEqual(program.checkAdjustment({ calories: 2000, protein: 60, carbs: 300, fat: 60 }), {
+    calories: 2000,
+    protein: 60,
+    carbs: 300,
+    fat: 60,
+  });
+
+  // Only what differs from the program's own macros is kept.
+  assert.equal(
+    program.adjustedProgram(own, program.stepTargets(proposed, 50, 80), 80).custom,
+    undefined
+  );
+  assert.deepEqual(
+    program.adjustedProgram(own, { calories: 2362, protein: 150, carbs: 256, fat: 82 }, 80).custom,
+    { proteinG: 150, carbPct: 58.1 }
+  );
+  assert.deepEqual(
+    program.adjustedProgram(
+      { ...own, custom: { proteinG: 150 } },
+      { calories: 2310, protein: 128, carbs: 250, fat: 89 },
+      80
+    ).custom,
+    { carbPct: 55.5 }
+  );
+});
+
+test("an adjusted check-in saves the typed targets and later reviews keep its macros", () => {
+  const data = coachingDatabase("2024-02-01");
+  const { db, clock, diary, store } = data;
+  seedProgram(data, "2024-02-01");
+  const review = store.currentReview();
+  assert.deepEqual(review.proposed, { calories: 2310, protein: 128, fat: 80, carbs: 270 });
+  const adjusted = { calories: 2362, protein: 150, carbs: 256, fat: 82 };
+  assert.throws(() => store.finishCheckIn("adjusted"), /check-in action/);
+  assert.throws(() => store.finishCheckIn("kept", adjusted), /check-in action/);
+  const low = { calories: 2362, protein: 100, carbs: 306, fat: 82 };
+  assert.throws(() => store.finishCheckIn("adjusted", low), /112 g/);
+  assert.equal(store.checkInHistory().length, 0);
+
+  assert.deepEqual(store.finishCheckIn("adjusted", adjusted), adjusted);
+  assert.deepEqual(diary.targetsForDay("2024-02-01"), adjusted);
+  assert.equal(diary.targetsForDay("2024-01-31").calories, targets.calories);
+  const [saved] = store.checkInHistory();
+  assert.equal(saved.decision, "adjusted");
+  assert.deepEqual(saved.review.proposed, review.proposed);
+  assert.deepEqual(saved.targets, adjusted);
+  const goal = store.currentGoal();
+  assert.deepEqual(goal.program.custom, { proteinG: 150, carbPct: 58.1 });
+  assert.equal(goal.program.initialExpenditure, 2600, "the new revision keeps the program");
+  assert.equal(store.coachingSnapshot().isDue, false);
+  assert.equal(store.nextCheckInDay(), "2024-02-08");
+  assert.equal(store.currentReview().expenditure, review.expenditure);
+  assert.throws(() => store.finishCheckIn("adjusted", adjusted), /not due/);
+
+  // A week on, the proposal moves calories but keeps the adjusted protein and split.
+  for (let i = 0; i < 7; i++) {
+    const date = nutrition.shiftDay("2024-02-01", i);
+    diary.saveEntry({ day: date, meal: "Breakfast", food, amount: 1, portionLabel: "1 serving" });
+    diary.setDayStatus(date, "complete");
+    db.insert(schema.weightEntries)
+      .values({ weightKg: 80, measuredAt: new Date(`${date}T12:00:00`).toISOString() })
+      .run();
+  }
+  clock.today = "2024-02-08";
+  const next = store.currentReview();
+  assert.equal(next.status, "ready");
+  assert.equal(next.proposed.protein, 150);
+  assert.ok(Math.abs(program.customMacros(next.proposed).carbPct - 58.1) < 1);
+  assert.notEqual(next.proposed.calories, adjusted.calories);
+
+  // Backups carry the decision and the custom macros; older ones without them still restore.
+  const backup = loadBackup(db);
+  const copy = backup.createBackup();
+  backup.restoreBackup(copy);
+  assert.equal(store.checkInHistory()[0].decision, "adjusted");
+  assert.deepEqual(store.currentGoal().program.custom, { proteinG: 150, carbPct: 58.1 });
+  const legacy = structuredClone(copy);
+  legacy.data.goals.forEach((row) => delete row.program?.custom);
+  backup.restoreBackup(legacy);
+  assert.equal(store.currentGoal().program.custom, undefined);
+  data.sqlite.close();
+});
+
+test("a check-in adjusted by calories alone leaves the program's macros alone", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  const own = data.store.currentGoal().program;
+  const stepped = program.programTargets(
+    program.stepTargets(data.store.currentReview().proposed, -50, 80),
+    80,
+    own
+  );
+  data.store.finishCheckIn("adjusted", stepped);
+  assert.deepEqual(data.diary.targetsForDay("2024-02-01"), stepped);
+  assert.equal(data.store.currentGoal().program.custom, undefined);
+  assert.equal(data.db.select().from(schema.coachingGoals).all().length, 1);
+  data.sqlite.close();
+
+  // Steps follow the program's own split and fat floor, so they never read as custom macros.
+  const step = (targets, delta, weight, plan) =>
+    program.programTargets(program.stepTargets(targets, delta, weight), weight, plan);
+  const moreCarbs = { ...profile, initialExpenditure: 2600, diet: "lower-fat" };
+  const floor = program.programMacros(2000, 80, moreCarbs);
+  assert.deepEqual(floor, { calories: 2000, protein: 128, fat: 48, carbs: 264 });
+  const up = step(floor, 50, 80, moreCarbs);
+  assert.deepEqual(up, { calories: 2050, protein: 128, fat: 48, carbs: 277 });
+  assert.equal(program.adjustedProgram(moreCarbs, up, 80).custom, undefined);
+  assert.deepEqual(step(step(floor, -50, 80, moreCarbs), 50, 80, moreCarbs), floor);
+  for (const diet of ["balanced", "lower-fat", "lower-carb"])
+    for (const protein of [1.4, 1.6, 2, 2.2])
+      for (let weight = 50; weight <= 120; weight += 5)
+        for (let calories = 1600; calories <= 3400; calories += 150) {
+          const own = { ...moreCarbs, diet, protein };
+          // Only calories the program can allocate; the rest never become a proposal.
+          const allocates = (kcal) =>
+            program.programTargets({ calories: kcal }, weight, own).protein;
+          if (!allocates(calories)) continue;
+          const start = program.programMacros(calories, weight, own);
+          for (const delta of [-50, 50].filter((delta) => allocates(calories + delta)))
+            assert.deepEqual(
+              program.adjustedProgram(own, step(start, delta, weight, own), weight),
+              own,
+              `${diet} ${protein} g/kg at ${weight} kg, ${calories} ${delta} kcal`
+            );
+        }
+  // A custom split already kept stays exactly as it was.
+  const kept = { ...moreCarbs, custom: { carbPct: 45 } };
+  assert.deepEqual(
+    program.adjustedProgram(kept, step(program.programMacros(2400, 80, kept), 50, 80, kept), 80),
+    kept
+  );
+});
+
+test("Maintain at the goal weight answers a due check-in in one tap", () => {
+  const data = coachingDatabase("2024-02-01");
+  const { diary, store } = data;
+  seedProgram(data, "2024-02-01");
+  assert.equal(store.reachedGoal(store.currentGoal(), store.currentReview()), false);
+  assert.throws(() => store.maintainGoal(), /reached your goal/);
+
+  const done = coachingDatabase("2024-02-01");
+  seedProgram(done, "2024-02-01", { changes: { targetWeightKg: 80.5 } });
+  const review = done.store.currentReview();
+  assert.equal(review.desiredWeeklyKg, 0);
+  assert.match(review.reason, /choose Maintain/);
+  assert.equal(done.store.reachedGoal(done.store.currentGoal(), review), true);
+  const result = done.store.maintainGoal();
+  assert.deepEqual(result, { calories: 2530, protein: 128, fat: 90, carbs: 302 });
+  assert.deepEqual(done.diary.targetsForDay("2024-02-01"), result);
+  const goal = done.store.currentGoal();
+  assert.equal(goal.mode, "maintain");
+  assert.equal(goal.pace, 0);
+  assert.equal(goal.startedDay, "2024-02-01");
+  assert.equal(goal.program.targetWeightKg, 80.5);
+  assert.equal(goal.program.weightKg, 80);
+  assert.equal(goal.program.initialExpenditure, review.expenditure);
+  const [checkIn] = done.store.checkInHistory();
+  assert.equal(checkIn.decision, "adjusted");
+  assert.deepEqual(checkIn.targets, result);
+  assert.equal(done.store.coachingSnapshot().isDue, false);
+  assert.equal(done.store.nextCheckInDay(), "2024-02-08");
+  assert.throws(() => done.store.maintainGoal(), /reached your goal/);
+
+  // Between check-ins it only switches the program, from the last reviewed estimate.
+  const later = coachingDatabase("2024-02-01");
+  seedProgram(later, "2024-02-01", { changes: { targetWeightKg: 80.5 } });
+  later.store.finishCheckIn("kept");
+  const maintained = later.store.maintainGoal();
+  assert.equal(later.store.checkInHistory().length, 1);
+  assert.equal(later.store.currentGoal().mode, "maintain");
+  assert.equal(later.store.currentGoal().program.initialExpenditure, review.expenditure);
+  assert.deepEqual(later.diary.targetsForDay("2024-02-01"), maintained);
+  assert.equal(later.store.nextCheckInDay(), "2024-02-08");
+  assert.equal(diary.targetsForDay("2024-02-01").calories, targets.calories);
+  for (const database of [data, done, later]) database.sqlite.close();
+});
+
+test("ignored weigh-ins stay in history but leave the trend, check-ins, CSV and backups flagged", async () => {
+  assert.deepEqual(
+    metrics
+      .weightTrend([
+        { measuredAt: "2024-01-01", weightKg: 80 },
+        { measuredAt: "2024-01-02", weightKg: 60, excluded: true },
+        { measuredAt: "2024-01-03", weightKg: 80, excluded: false },
+      ])
+      .map((row) => row.day),
+    ["2024-01-01", "2024-01-03"]
+  );
+  const data = coachingDatabase("2024-02-01");
+  const { db, store, weighIn, weights } = data;
+  seedProgram(data, "2024-02-01", { weight: (date) => (date === "2024-01-21" ? null : 80) });
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  const sample = {
+    id: "scale-1",
+    kind: "weight",
+    value: 76.9,
+    measuredAt: new Date("2024-01-21T07:00:00").toISOString(),
+  };
+  const adapter = {
+    authorize: async () => ({ read: ["weight"], write: ["weight"] }),
+    read: async () => [sample],
+    write: async () => "exported",
+    remove: async () => {},
+  };
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 1, exported: 21 });
+  const held = store.currentReview();
+  assert.equal(held.outlier.kg, 76.9);
+  const ignored = weighIn.setWeightExcluded(held.outlier.id, true);
+  assert.equal(ignored.excluded, true);
+  assert.equal(store.currentReview().status, "ready");
+  // Sync neither re-imports nor re-exports it, and a corrected Health value stays ignored.
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 0 });
+  sample.value = 77.1;
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 1, exported: 0 });
+  const row = weights().find((w) => w.id === ignored.id);
+  assert.equal(row.weightKg, 77.1);
+  assert.equal(row.excluded, true);
+  assert.equal(weights().length, 22);
+  assert.equal(store.currentReview().status, "ready");
+
+  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  const lines = ownership.exportWeightCsv().replace(/^﻿/, "").trimEnd().split("\r\n");
+  assert.equal(lines[0], '"measured_at","weight_kg","excluded"');
+  assert.ok(lines.includes(`"${sample.measuredAt}","77.1","true"`));
+  assert.equal(lines.filter((line) => line.endsWith('"false"')).length, 21);
+
+  const backup = loadBackup(db);
+  const copy = backup.createBackup();
+  assert.equal(copy.data.weights.filter((w) => w.excluded).length, 1);
+  backup.restoreBackup(copy);
+  assert.deepEqual(backup.createBackup().data, copy.data);
+  const legacy = structuredClone(copy);
+  legacy.data.weights.forEach((w) => delete w.excluded);
+  backup.restoreBackup(legacy);
+  assert.equal(weights().filter((w) => w.excluded).length, 0);
+  assert.equal(store.currentReview().outlier.kg, 77.1);
+
+  weighIn.setWeightExcluded(store.currentReview().outlier.id, true);
+  weighIn.setWeightExcluded(ignored.id, false);
+  assert.equal(store.currentReview().status, "holding", "included again, it holds again");
+  data.sqlite.close();
+});
+
+const checkInDependencies = (data) => ({
+  "@/lib/coaching-store": data.store,
+  "@/lib/metrics": data.fakeMetrics,
+  "./metrics": data.fakeMetrics,
+  "@/lib/weigh-in": data.weighIn,
+  "@/lib/program": program,
+});
+const renderCheckIn = (harness, HomeCheckIn, done = []) =>
+  nodes(
+    harness.render(HomeCheckIn, {
+      onDone: (message) => done.push(message),
+      onWeighIn() {},
+      onReviewLogs() {},
+    })
+  );
+const labelled = (tree, label) => tree.find((node) => node.props.accessibilityLabel === label);
+const adjusterInputs = Object.assign(() => null, { Input: "Input", Suffix: "Suffix" });
+
+test("compiled check-in adjusts the proposal from Home and keeps Accept one tap", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
+  const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
+  const done = [];
+  let tree = renderCheckIn(home, HomeCheckIn, done);
+  assert.equal(shown(tree, "Button", "Accept plan").props.variant, "primary");
+  assert.equal(
+    tree.find((node) => node.type === "CheckInAdjuster"),
+    undefined
+  );
+  labelled(tree, "Adjust targets").props.onPress();
+  tree = renderCheckIn(home, HomeCheckIn, done);
+  assert.equal(shown(tree, "Button", "Accept plan"), undefined);
+  const adjuster = tree.find((node) => node.type === "CheckInAdjuster");
+  assert.deepEqual(adjuster.props.start, data.store.currentReview().proposed);
+  assert.equal(adjuster.props.weight, 80);
+  assert.deepEqual(adjuster.props.program, data.store.currentGoal().program);
+
+  adjuster.props.onSave({ calories: 2362, protein: 100, carbs: 306, fat: 82 });
+  tree = renderCheckIn(home, HomeCheckIn, done);
+  assert.match(tree.find((node) => node.type === "Error").props.message, /112 g/);
+  assert.deepEqual(done, []);
+  adjuster.props.onSave({ calories: 2362, protein: 150, carbs: 256, fat: 82 });
+  adjuster.props.onSave({ calories: 2362, protein: 150, carbs: 256, fat: 82 });
+  assert.deepEqual(done, ["Check-in done. Your adjusted targets start today."]);
+  assert.equal(data.store.checkInHistory().length, 1);
+  assert.equal(data.diary.targetsForDay("2024-02-01").protein, 150);
+  data.sqlite.close();
+});
+
+test("compiled adjuster steps 50 kcal, recounts typed grams and saves them", () => {
+  const data = coachingDatabase("2024-02-01");
+  const InputGroup = adjusterInputs;
+  const screen = screenHarness({
+    ...checkInDependencies(data),
+    "heroui-native": { InputGroup },
+  });
+  const { CheckInAdjuster } = screen.load("src/components/nutrition/check-in-adjuster.tsx");
+  const saved = [];
+  const props = {
+    start: { calories: 2310, protein: 128, fat: 80, carbs: 270 },
+    weight: 80,
+    onSave: (targets) => saved.push(targets),
+    onCancel() {},
+  };
+  const render = () => nodes(screen.render(CheckInAdjuster, props));
+  const calories = (tree) =>
+    [tree.find((node) => node.props.accessibilityLiveRegion === "polite").props.children]
+      .flat()
+      .join("");
+  const input = (tree, label) => labelled(tree, `${label} in grams`);
+  let tree = render();
+  assert.equal(calories(tree), "2310 kcal/day");
+  labelled(tree, "50 kcal more").props.onPress();
+  tree = render();
+  assert.equal(calories(tree), "2360 kcal/day");
+  assert.deepEqual(
+    ["Protein", "Carbs", "Fat"].map((label) => input(tree, label).props.value),
+    ["128", "278", "82"]
+  );
+  input(tree, "Protein").props.onChangeText("150");
+  input(render(), "Carbs").props.onChangeText("256");
+  tree = render();
+  assert.equal(calories(tree), "2362 kcal/day");
+  shown(tree, "Button", "Save targets").props.onPress();
+  assert.deepEqual(saved, [{ calories: 2362, protein: 150, carbs: 256, fat: 82 }]);
+  input(tree, "Fat").props.onChangeText("");
+  tree = render();
+  assert.equal(shown(tree, "Button", "Save targets").props.isDisabled, true);
+  assert.equal(labelled(tree, "50 kcal more").props.isDisabled, true);
+
+  const low = screenHarness({ ...checkInDependencies(data), "heroui-native": { InputGroup } });
+  const lowTree = nodes(
+    low.render(low.load("src/components/nutrition/check-in-adjuster.tsx").CheckInAdjuster, {
+      ...props,
+      start: { calories: 1520, protein: 128, fat: 50, carbs: 140 },
+    })
+  );
+  assert.equal(labelled(lowTree, "50 kcal less").props.isDisabled, true);
+  data.sqlite.close();
+});
+
+test("adjusting a learning week starts from the program at today's trend", () => {
+  // Targets set a week ago at 81 kg; the trend is now 80 kg and the review is still learning.
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", { complete: () => false });
+  const own = data.store.currentGoal().program;
+  data.diary.saveTargets("2024-01-25", program.programMacros(2155, 81, own));
+  const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
+  const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
+  const adjusterScreen = (database) => {
+    const screen = screenHarness({
+      ...checkInDependencies(database),
+      "heroui-native": { InputGroup: adjusterInputs },
+    });
+    const { CheckInAdjuster } = screen.load("src/components/nutrition/check-in-adjuster.tsx");
+    return (props) => nodes(screen.render(CheckInAdjuster, props));
+  };
+  const done = [];
+  let tree = renderCheckIn(home, HomeCheckIn, done);
+  assert.equal(data.store.currentReview().status, "learning");
+  labelled(tree, "Adjust targets").props.onPress();
+  tree = renderCheckIn(home, HomeCheckIn, done);
+  const adjuster = tree.find((node) => node.type === "CheckInAdjuster");
+  assert.equal(adjuster.props.start.protein, 130);
+  assert.deepEqual(adjuster.props.program, own);
+  const adjust = adjusterScreen(data);
+  const render = () => adjust(adjuster.props);
+  assert.equal(labelled(render(), "Protein in grams").props.value, "128");
+  labelled(render(), "50 kcal less").props.onPress();
+  shown(render(), "Button", "Save targets").props.onPress();
+  assert.deepEqual(done, ["Check-in done. Your adjusted targets start today."]);
+  assert.deepEqual(data.diary.targetsForDay("2024-02-01"), program.programMacros(2105, 80, own));
+  assert.equal(data.store.currentGoal().program.custom, undefined);
+  assert.equal(data.db.select().from(schema.coachingGoals).all().length, 1);
+  data.sqlite.close();
+
+  // At 1.4 g/kg, protein set at 78 kg would sit under today's floor; the start meets it.
+  const bulk = coachingDatabase("2024-02-01");
+  seedProgram(bulk, "2024-02-01", { complete: () => false, changes: { protein: 1.4 } });
+  const low = bulk.store.currentGoal().program;
+  bulk.diary.saveTargets("2024-01-25", program.programMacros(2600, 78, low));
+  const saved = [];
+  const props = {
+    start: bulk.diary.targetsForDay("2024-02-01"),
+    weight: 80,
+    program: low,
+    onSave: (targets) => saved.push(bulk.store.finishCheckIn("adjusted", targets)),
+    onCancel() {},
+  };
+  assert.equal(props.start.protein, 109);
+  const bulkAdjust = adjusterScreen(bulk);
+  const draw = () => bulkAdjust(props);
+  labelled(draw(), "50 kcal more").props.onPress();
+  shown(draw(), "Button", "Save targets").props.onPress();
+  assert.equal(saved[0].protein, 112);
+  assert.equal(bulk.store.currentGoal().program.custom, undefined);
+
+  // Typed protein carries through later steps, which still allocate as the program would.
+  const moreCarbs = { ...low, protein: 1.6, diet: "lower-fat" };
+  const typed = [];
+  const typedProps = {
+    ...props,
+    start: program.programMacros(2000, 80, moreCarbs),
+    program: moreCarbs,
+    onSave: (targets) => typed.push(targets),
+  };
+  const typedAdjust = adjusterScreen(bulk);
+  labelled(typedAdjust(typedProps), "Protein in grams").props.onChangeText("150");
+  labelled(typedAdjust(typedProps), "50 kcal more").props.onPress();
+  shown(typedAdjust(typedProps), "Button", "Save targets").props.onPress();
+  const plan = { ...moreCarbs, custom: { proteinG: 150 } };
+  assert.deepEqual(typed, [program.programMacros(2138, 80, plan)]);
+  assert.deepEqual(program.adjustedProgram(moreCarbs, typed[0], 80), plan);
+  bulk.sqlite.close();
+});
+
+test("compiled check-in offers Maintain at the goal weight once the trend reaches it", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", { changes: { targetWeightKg: 80.5 } });
+  const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
+  const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
+  const done = [];
+  const tree = renderCheckIn(home, HomeCheckIn, done);
+  assert.equal(shown(tree, "Button", "Accept plan").props.variant, "secondary");
+  const maintain = shown(tree, "Button", "Maintain 80.5 kg");
+  maintain.props.onPress();
+  maintain.props.onPress();
+  assert.deepEqual(done, ["Check-in done. You’re now maintaining 80.5 kg."]);
+  assert.equal(data.store.currentGoal().mode, "maintain");
+  assert.equal(data.db.select().from(schema.coachingGoals).all().length, 2);
+  data.sqlite.close();
+});
+
+test("compiled weight history dims an ignored weigh-in and includes it again in one tap", () => {
+  const Timeline = Object.assign(() => null, {
+    Item: "Item",
+    Rail: "Rail",
+    Content: "Content",
+    Title: "Title",
+    Description: "Description",
+  });
+  const screen = screenHarness(
+    {
+      "./metrics": metrics,
+      "@expo/vector-icons": { Feather: "Feather" },
+      "heroui-native": { useThemeColor: () => "#000000" },
+      "heroui-native-pro": { Timeline },
+    },
+    { t: (key) => ({ weight: "Weight" })[key] ?? key }
+  );
+  const { MeasurementHistory } = screen.load("src/components/measurements/measurement-history.tsx");
+  const calls = [];
+  const rows = [
+    { id: 2, measuredAt: "2024-01-21", values: { weight: 76.9 }, excluded: true },
+    { id: 1, measuredAt: "2024-01-20", values: { weight: 80 }, excluded: false },
+  ];
+  const tree = nodes(
+    screen.render(MeasurementHistory, {
+      log: {
+        rows,
+        fields: ["weight"],
+        format: (key, value) => `${value} kg`,
+        limit: 30,
+        setLimit() {},
+        launch() {},
+        exclude: (row, excluded) => calls.push([row.id, excluded]),
+      },
+    })
+  );
+  const includes = tree.filter(
+    (node) => node.type === "Button" && node.props.children === "Include"
+  );
+  assert.equal(includes.length, 1);
+  includes[0].props.onPress();
+  assert.deepEqual(calls, [[2, false]]);
+  const labels = tree
+    .filter((node) => node.type === "Description")
+    .map((node) => node.props.children);
+  assert.deepEqual(labels, ["Weight · Ignored", "Weight"]);
+  const dimmed = tree.filter((node) => /opacity-50/.test(node.props.className ?? ""));
+  assert.equal(dimmed.length, 2, "the ignored row's date and value");
 });

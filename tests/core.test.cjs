@@ -262,10 +262,11 @@ test("a pending migration snapshots the database once; current and fresh databas
   assert.equal(snapshot.snapshotBeforeMigrations(expoClient(fresh), journal), null);
   assert.deepEqual(files(), []);
 
-  const { sqlite, db, expoDb, upgrade } = versionedDatabase();
+  const { sqlite, expoDb, upgrade } = versionedDatabase();
   const latest = journal.entries.length - 1;
   await upgrade(latest);
-  db.insert(schema.weightEntries).values({ weightKg: 80.5, measuredAt: "2024-01-01" }).run();
+  // Raw SQL: the app's schema may already have columns this older version lacks.
+  sqlite.exec("INSERT INTO weight_entries (weight_kg, measured_at) VALUES (80.5, '2024-01-01')");
   assert.deepEqual(snapshot.migrationState(expoDb, journal), { applied: latest, pending: 1 });
   const name = `pre-migration-${latest}.db`;
   assert.equal(snapshot.snapshotBeforeMigrations(expoDb, journal).name, name);
@@ -378,7 +379,8 @@ test("the diary database writes ahead to a log that copies include and erase emp
   assert.equal(sqlite.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
   assert.equal(sqlite.prepare("PRAGMA synchronous").get().synchronous, 1, "NORMAL");
   assert.equal(opened.migrationSnapshot.name, `pre-migration-${latest}.db`);
-  db.insert(schema.weightEntries).values({ weightKg: 80.5, measuredAt: "2024-01-01" }).run();
+  // Raw SQL: the app's schema may already have columns this older version lacks.
+  sqlite.exec("INSERT INTO weight_entries (weight_kg, measured_at) VALUES (80.5, '2024-01-01')");
   assert.ok(statSync(`${file}-wal`).size > 0, "the new weight is still in the log");
   const copy = new DatabaseSync(path.join(backups, snapshot.snapshotDatabase(expoDb, 99).name), {
     readOnly: true,
