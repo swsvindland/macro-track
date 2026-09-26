@@ -47,6 +47,9 @@ const SafeAreaView = withUniwind(NativeSafeAreaView);
 
 const EditorPortalContext = createContext<string | undefined>(undefined);
 
+/** The footer for Screens inside that pass none, e.g. a tab's quick-log bar. */
+export const ScreenFooter = createContext<ReactNode>(null);
+
 export function Screen({
   title,
   subtitle,
@@ -72,6 +75,8 @@ export function Screen({
 }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const shared = useContext(ScreenFooter);
+  const floating = footer ?? shared;
   // On iOS the tab bar floats over the screen and is part of its safe area.
   const footerBottom = (Platform.OS === "ios" ? insets.bottom : 0) + 8;
   const [footerHeight, setFooterHeight] = useState(0);
@@ -90,7 +95,7 @@ export function Screen({
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
           paddingTop: header ? 4 : compact ? 12 : 24,
           // The end of the list scrolls clear of the footer, however many bars it stacks.
-          paddingBottom: footer ? Math.max(160, footerBottom + footerHeight + 16) : 40,
+          paddingBottom: floating ? Math.max(160, footerBottom + footerHeight + 16) : 40,
           gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,
@@ -113,7 +118,7 @@ export function Screen({
         )}
         {children}
       </ScrollView>
-      {footer && (
+      {floating && (
         <View
           pointerEvents="box-none"
           className="absolute inset-x-0 items-center px-4"
@@ -123,7 +128,7 @@ export function Screen({
             className="w-full max-w-xl"
             onLayout={(event) => setFooterHeight(event.nativeEvent.layout.height)}
           >
-            {footer}
+            {floating}
           </View>
         </View>
       )}
@@ -399,6 +404,7 @@ export function Editor({
   busy = false,
   footer,
   compact = false,
+  scrollRef,
 }: {
   title: string;
   open: boolean;
@@ -407,6 +413,7 @@ export function Editor({
   busy?: boolean;
   footer?: ReactNode;
   compact?: boolean;
+  scrollRef?: Ref<ScrollView>;
 }) {
   const { t } = useStore();
   const insets = useSafeAreaInsets();
@@ -441,6 +448,7 @@ export function Editor({
                 </View>
               )}
               <ScrollView
+                ref={scrollRef}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 contentContainerStyle={{
@@ -574,12 +582,14 @@ export function SearchInput({
   placeholder,
   accessibilityLabel,
   autoFocus = false,
+  onFocus,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   accessibilityLabel: string;
   autoFocus?: boolean;
+  onFocus?: () => void;
 }) {
   return (
     <SearchField value={value} onChange={onChange}>
@@ -587,6 +597,7 @@ export function SearchInput({
         <SearchField.SearchIcon />
         <SearchField.Input
           autoFocus={autoFocus}
+          onFocus={onFocus}
           placeholder={placeholder}
           accessibilityLabel={accessibilityLabel}
           returnKeyType="search"

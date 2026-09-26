@@ -218,7 +218,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const context = { revision: 0, refresh: () => context.revision++ };
   const react = {
     createContext: () => ({}),
-    useContext: () => context,
+    // A context a test gives a value reads it; every other one is the nutrition context.
+    useContext: (used) => (used && "value" in used ? used.value : context),
     useEffect: (effect, deps) => effects.push({ slot: cursor++, effect, deps }),
     useState(initial) {
       const slot = cursor++;
@@ -308,6 +309,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       searchCatalog: async () => [],
       searchFoods: async () => [],
     },
+    "@/lib/food-icons": load("src/lib/food-icons.ts"),
+    "./food-icon": { FoodIcon: "FoodIcon" },
     "@/lib/local-ai": { textRecognitionAvailable: () => false, recognizeText: async () => [] },
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
@@ -330,6 +333,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./quick-add": { QuickAdd: "QuickAdd" },
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
+    "./week-strip": { WeekStrip: "WeekStrip" },
+    "./quick-log-bar": { QuickLogBar: "QuickLogBar" },
     "./food-editor": { FoodEditor: "FoodEditor" },
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
     "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },
@@ -1691,7 +1696,9 @@ test("compiled Screen scrolls the end of its list clear of however tall its foot
       "./system": {},
     }
   );
-  const { Screen } = harness.load("src/components/ui.tsx");
+  const { Screen, ScreenFooter } = harness.load("src/components/ui.tsx");
+  // No tab shares a footer here.
+  ScreenFooter.value = null;
   const render = (footer) =>
     nodes(harness.render(Screen, { title: "Today", footer, children: null }));
   const padding = (tree) =>
@@ -1774,7 +1781,7 @@ test("compiled Home opens a link's sheet once, on today, from a cold start or wh
   tree = render();
   assert.equal(sheet(tree, "FastLogger").props.start, undefined);
   assert.equal(sheet(tree, "FastLogger").props.initialDay, today);
-  assert.ok(button(tree, "Log food"), "back on today");
+  assert.equal(sheet(tree, "QuickLogBar").props.label, undefined, "back on today");
 
   // A photo link opens the photo logger when the model can run, the logger otherwise.
   actions.requestAppAction("photo");

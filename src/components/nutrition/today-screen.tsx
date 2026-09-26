@@ -35,6 +35,7 @@ import {
   type DiaryReceipt,
 } from "@/lib/diary";
 import { openCatalogs } from "@/lib/food-catalog";
+import { foodIcon } from "@/lib/food-icons";
 import { modelStatus, prewarmModel, type ModelStatus } from "@/lib/local-ai";
 import { localDay } from "@/lib/metrics";
 import {
@@ -45,6 +46,7 @@ import {
   totalNutrients,
   type DayState,
   type Meal,
+  type Nutrients,
 } from "@/lib/nutrition";
 import {
   currentFoodTime,
@@ -60,12 +62,15 @@ import type { FoodEntry } from "@/db";
 import { useMeasurementLog } from "@/components/measurements/use-measurement-log";
 import { WeightForm } from "@/components/measurements/weight-form";
 import { FoodEditor } from "./food-editor";
+import { FoodIcon } from "./food-icon";
 import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
 import { PhotoLogger, photoLoggingOffered } from "./photo-logger";
+import { QuickLogBar } from "./quick-log-bar";
 import { CopyDay, MoveEntries } from "./copy-day";
 import { WeighInCard } from "./weigh-in-card";
+import { WeekStrip } from "./week-strip";
 
 const statusLabels: Record<DayState, string> = {
   "in-progress": "In progress",
@@ -116,7 +121,7 @@ export function TodayScreen() {
   const [logger, setLogger] = useState<{
     time?: string;
     meal?: Meal;
-    start?: "search" | "barcode";
+    start?: "typing" | "barcode";
   } | null>(null);
   const [copying, setCopying] = useState(false);
   const [photoLog, setPhotoLog] = useState(false);
@@ -205,6 +210,7 @@ export function TodayScreen() {
       opening = setTimeout(() => {
         const action = takeAppAction();
         if (action === "log") setLogger({});
+        else if (action === "search") setLogger({ start: "typing" });
         else if (action === "scan") setLogger({ start: "barcode" });
         else if (action === "weigh-in") weightSheet.current?.open();
         else if (action === "photo")
@@ -301,7 +307,25 @@ export function TodayScreen() {
           time: "",
           entries: entries.filter((entry) => entry.meal === meal),
         }))
-  ).filter((group) => group.entries.length || !hideEmptyHours);
+  )
+    .filter((group) => group.entries.length || !hideEmptyHours)
+    .map((group) => ({
+      ...group,
+      sum: totalNutrients(group.entries.map((entry) => entry.nutrients)),
+    }));
+  // "45P 24F 50C", in the order the list shows them, and the same spelled out for screen readers.
+  const macros = (value: Nutrients) =>
+    `${number(value.protein, 0)}P ${number(value.fat, 0)}F ${number(value.carbs, 0)}C`;
+  const spoken = (value: Nutrients) =>
+    `${number(value.calories, 0)} kcal, protein ${number(value.protein, 0)} g, fat ${number(value.fat, 0)} g, carbs ${number(value.carbs, 0)} g`;
+  /** Opens the logger on a group: an hour at its latest food (or o'clock), a meal now. */
+  function addTo(group: (typeof groups)[number]) {
+    const hour = !!group.group && group.group !== "untimed";
+    setLogger({
+      meal: group.meal,
+      time: hour ? (group.entries.at(-1)?.loggedTime ?? group.time) : currentFoodTime(),
+    });
+  }
 
   function label(value: string) {
     if (value === today) return "Today";
@@ -549,45 +573,6 @@ export function TodayScreen() {
     </View>
   );
 
-  const actions = (
-    <View className="gap-2">
-      <View className="flex-row gap-2">
-        <SystemButton
-          className="min-h-12 flex-1"
-          icon="search"
-          labelClassName="text-base font-semibold"
-          onPress={() => setLogger({})}
-        >
-          {live ? "Log food" : `Log to ${label(day)}`}
-        </SystemButton>
-        {photoLoggingOffered(ai) && (
-          <SystemButton
-            variant="secondary"
-            className="min-h-12"
-            icon={ai?.vision ? "camera-outline" : "chatbox-ellipses-outline"}
-            labelClassName="text-base font-semibold"
-            accessibilityLabel={
-              ai?.vision ? "Log a meal from a photo" : "Describe a meal to log it"
-            }
-            onPress={() => setPhotoLog(true)}
-          >
-            {ai?.vision ? "Photo" : "Describe"}
-          </SystemButton>
-        )}
-        <SystemButton
-          variant="secondary"
-          className="min-h-12"
-          icon="barcode-outline"
-          labelClassName="text-base font-semibold"
-          accessibilityLabel="Scan barcode"
-          onPress={() => setLogger({ start: "barcode" })}
-        >
-          Scan
-        </SystemButton>
-      </View>
-    </View>
-  );
-
   const chosen = entries.filter((entry) => selected?.includes(entry.id));
   function selectionAction(key: (typeof selectionActions)[number]["key"]) {
     if (key === "move") return setMoving(chosen);
@@ -608,8 +593,8 @@ export function TodayScreen() {
     if (key === "copy") again(chosen);
     else remove(chosen);
   }
-  // Pinned above the tab bar, so it stays in reach wherever the list is scrolled.
-  const footer = (toast || error || selected) && (
+  // Pinned above the tab bar, so logging and Undo stay in reach wherever the list is scrolled.
+  const footer = (
     <View className="gap-2">
       {!!error && (
         <View className="flex-row items-center gap-2 rounded-2xl border border-border bg-overlay py-1 pl-4 pr-1 shadow-overlay">
@@ -649,7 +634,7 @@ export function TodayScreen() {
           )}
         </View>
       )}
-      {selected && (
+      {selected ? (
         <View className="gap-1 rounded-3xl border border-border bg-overlay p-2 shadow-overlay">
           <View className="flex-row items-center pl-3">
             <Text className="flex-1 font-semibold" accessibilityLiveRegion="polite">
@@ -691,6 +676,16 @@ export function TodayScreen() {
             ))}
           </View>
         </View>
+      ) : (
+        <QuickLogBar
+          label={live ? undefined : `Log to ${label(day)}`}
+          ai={ai}
+          onAction={(action) => {
+            if (action === "photo") setPhotoLog(true);
+            else if (action === "log") setLogger({});
+            else setLogger({ start: action === "scan" ? "barcode" : "typing" });
+          }}
+        />
       )}
     </View>
   );
@@ -701,8 +696,13 @@ export function TodayScreen() {
         title="Today"
         compact
         scrollRef={scrollRef}
-        header={header}
-        footer={footer || undefined}
+        header={
+          <>
+            {header}
+            <WeekStrip day={day} today={today} onChange={go} />
+          </>
+        }
+        footer={footer}
       >
         <SystemPanel className="p-4">
           <SystemPanel.Body className="gap-3">
@@ -858,8 +858,6 @@ export function TodayScreen() {
             />
           ))}
 
-        {actions}
-
         <View className="gap-2">
           <View className="flex-row items-center justify-between gap-2 px-1">
             <SystemLabel accessibilityRole="header">{live ? "Today’s food" : "Food"}</SystemLabel>
@@ -876,59 +874,68 @@ export function TodayScreen() {
                 {groups.map((group, index) => (
                   <View key={group.key} className={index ? "border-t border-separator" : ""}>
                     <View className="flex-row items-center pl-4 pr-1">
-                      <Text className="flex-1 text-sm font-semibold text-muted tabular-nums">
-                        {group.title} ·{" "}
-                        {number(
-                          totalNutrients(group.entries.map((entry) => entry.nutrients)).calories,
-                          0
-                        )}{" "}
-                        kcal
+                      <Text
+                        accessibilityRole="header"
+                        accessibilityLabel={
+                          group.entries.length
+                            ? `${group.title}, ${spoken(group.sum)}`
+                            : group.title
+                        }
+                        className="flex-1 text-sm font-semibold text-muted tabular-nums"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.85}
+                      >
+                        {group.title}
+                        {!!group.entries.length && (
+                          <Text className="text-sm font-normal text-muted tabular-nums">
+                            {` · ${number(group.sum.calories, 0)} kcal · ${macros(group.sum)}`}
+                          </Text>
+                        )}
                       </Text>
-                      <ActionMenu
-                        accessibilityLabel={`Options for ${group.title}`}
-                        sections={[
-                          {
-                            actions: [
-                              {
-                                key: "add",
-                                label: "Add food here",
-                                icon: "add",
-                                onPress: () =>
-                                  setLogger({
-                                    meal: group.meal,
-                                    time: group.time || currentFoodTime(),
-                                  }),
-                              },
-                              ...(group.entries.length
-                                ? [
-                                    {
-                                      key: "save",
-                                      label: "Save or copy this meal",
-                                      icon: "bookmark-outline" as const,
-                                      onPress: () =>
-                                        setMealEditor({
-                                          source: { day, meal: group.meal, group: group.group },
-                                          meal: group.meal,
-                                        }),
-                                    },
-                                    {
-                                      key: "move",
-                                      label: "Move all to…",
-                                      icon: "arrow-redo-outline" as const,
-                                      onPress: () => setMoving(group.entries),
-                                    },
-                                    {
-                                      key: "select",
-                                      label: "Select these foods",
-                                      icon: "checkmark-circle-outline" as const,
-                                      onPress: () =>
-                                        setSelected(group.entries.map((entry) => entry.id)),
-                                    },
-                                  ]
-                                : []),
-                            ],
-                          },
-                        ]}
+                      {!!group.entries.length && (
+                        <ActionMenu
+                          accessibilityLabel={`Options for ${group.title}`}
+                          sections={[
+                            {
+                              actions: [
+                                {
+                                  key: "save",
+                                  label: "Save or copy this meal",
+                                  icon: "bookmark-outline",
+                                  onPress: () =>
+                                    setMealEditor({
+                                      source: { day, meal: group.meal, group: group.group },
+                                      meal: group.meal,
+                                    }),
+                                },
+                                {
+                                  key: "move",
+                                  label: "Move all to…",
+                                  icon: "arrow-redo-outline",
+                                  onPress: () => setMoving(group.entries),
+                                },
+                                {
+                                  key: "select",
+                                  label: "Select these foods",
+                                  icon: "checkmark-circle-outline",
+                                  onPress: () =>
+                                    setSelected(group.entries.map((entry) => entry.id)),
+                                },
+                              ],
+                            },
+                          ]}
+                        />
+                      )}
+                      <SystemIconButton
+                        icon="add"
+                        color="accent-soft-foreground"
+                        accessibilityLabel={
+                          group.group && group.group !== "untimed"
+                            ? `Log food at ${group.title}`
+                            : `Log food to ${group.meal}`
+                        }
+                        onPress={() => addTo(group)}
                       />
                     </View>
                     {group.entries.map((entry) => {
@@ -976,8 +983,15 @@ export function TodayScreen() {
                                 color={picked ? "accent-soft-foreground" : "muted"}
                               />
                             )}
+                            <FoodIcon icon={foodIcon(entry.food)} />
                             <View className="flex-1 gap-0.5">
                               <Text numberOfLines={1}>{entry.food.name}</Text>
+                              <Text numberOfLines={1} className="text-sm text-muted tabular-nums">
+                                <Text className="text-sm font-medium tabular-nums">
+                                  {number(entry.nutrients.calories, 0)} kcal
+                                </Text>
+                                {` · ${macros(entry.nutrients)}`}
+                              </Text>
                               <Text numberOfLines={1} className="text-sm text-muted">
                                 {entry.loggedTime
                                   ? `${formatClock(entry.loggedTime, locale)} · `
@@ -985,9 +999,6 @@ export function TodayScreen() {
                                 {entry.portionLabel}
                               </Text>
                             </View>
-                            <Text className="tabular-nums">
-                              {number(entry.nutrients.calories, 0)}
-                            </Text>
                           </SystemButton>
                         </SwipeRow>
                       );

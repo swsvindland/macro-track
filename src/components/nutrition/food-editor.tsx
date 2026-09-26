@@ -22,6 +22,7 @@ import {
 } from "@/lib/diary";
 import { portionFor } from "@/lib/fast-log";
 import { lookupBarcode, searchFoods } from "@/lib/food-catalog";
+import { foodIcon } from "@/lib/food-icons";
 import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
 import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
@@ -44,6 +45,7 @@ import {
 import { localDay, parseNumber } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
+import { FoodIcon } from "./food-icon";
 import { discardPhoto, PhotoCapture } from "./photo-capture";
 
 /** The amount field for a food, starting at `portion` or the food's usual portion. */
@@ -56,10 +58,11 @@ export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) 
   return (
     <SystemButton
       variant="ghost"
-      className="justify-start rounded-2xl bg-surface px-4 py-4"
+      className="justify-start gap-3 rounded-2xl bg-surface px-4 py-4"
       accessibilityLabel={`Log ${food.name}`}
       onPress={onPress}
     >
+      <FoodIcon icon={foodIcon(food)} />
       <View className="flex-1 gap-1">
         <Text className="font-medium" numberOfLines={2}>
           {food.name}

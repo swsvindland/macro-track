@@ -1,8 +1,11 @@
 import { createContext, useContext, useEffect } from "react";
 
-/** What a link can open on Home: macrotrack://log, scan, photo or weigh-in. */
-export type AppAction = "log" | "scan" | "photo" | "weigh-in";
-const actions: readonly string[] = ["log", "scan", "photo", "weigh-in"];
+/**
+ * What a link can open on Home: macrotrack://log, search (the logger with the keyboard up),
+ * scan, photo or weigh-in. The quick-log bar on other tabs opens Home's sheets the same way.
+ */
+export type AppAction = "log" | "search" | "scan" | "photo" | "weigh-in";
+const actions: readonly string[] = ["log", "search", "scan", "photo", "weigh-in"];
 
 /** The action a link asks for, or null. Accepts trailing slashes, a query and dev-build URLs. */
 export function parseAppAction(url: string | null | undefined): AppAction | null {
