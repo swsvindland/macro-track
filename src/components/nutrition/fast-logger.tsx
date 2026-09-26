@@ -8,7 +8,7 @@ import {
   SystemText as Text,
   type IconName,
 } from "@/components/system";
-import { Choices, DateInput, Editor, ErrorText, SearchInput } from "@/components/ui";
+import { Choices, Editor, ErrorText, SearchInput } from "@/components/ui";
 import { entriesForDay, targetsForDay, toggleFavorite } from "@/lib/diary";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { logBatch, loggingChoices, type LogChoice, type LogReceipt } from "@/lib/fast-log";
@@ -579,8 +579,7 @@ export function FastLogger({
       </View>
       {when && (
         <>
-          <DateInput label="Log date" value={day} onChange={setDay} />
-          <TimeField value={time} onChange={setTime} />
+          <TimeField value={time} onChange={setTime} day={day} onDayChange={setDay} />
           {diaryLayout === "meals" && <Choices values={meals} value={meal} onChange={setMeal} />}
         </>
       )}

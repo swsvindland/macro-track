@@ -6,7 +6,7 @@ import {
   SystemLabel,
   SystemText as Text,
 } from "@/components/system";
-import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
+import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import { favoriteFoods, personalFoods, recentFoods, recipeFoods, targetsForDay } from "@/lib/diary";
 import { logBatch, type LogReceipt } from "@/lib/fast-log";
 import { searchCatalogMatch } from "@/lib/food-catalog";
@@ -486,8 +486,7 @@ export function PhotoLogger({
         )}
         {when && (
           <>
-            <DateInput label="Log date" value={day} onChange={setDay} />
-            <TimeField value={time} onChange={setTime} />
+            <TimeField value={time} onChange={setTime} day={day} onDayChange={setDay} />
             {diaryLayout === "meals" && <Choices values={meals} value={meal} onChange={setMeal} />}
           </>
         )}

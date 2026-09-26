@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Linking, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { SystemButton, SystemIconButton, SystemText as Text } from "@/components/system";
-import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
+import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import type { FoodEntry } from "@/db";
 import {
   favoriteFoods,
@@ -800,11 +800,12 @@ export function FoodEditor({
           {!entry && <PortionPreview nutrients={preview} targets={targets} />}
           {!onPick && (
             <>
-              <DateInput label="Date" value={day} onChange={setDay} />
               <TimeField
                 value={loggedTime}
                 onChange={setLoggedTime}
                 allowEmpty={!!entry && !entry.loggedTime}
+                day={day}
+                onDayChange={setDay}
               />
               {diaryLayout !== "timeline" && (
                 <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
