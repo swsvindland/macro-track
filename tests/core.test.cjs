@@ -8,6 +8,7 @@ const {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } = require("node:fs");
 const { tmpdir } = require("node:os");
@@ -165,6 +166,7 @@ function expoClient(sqlite) {
     },
     getFirstSync: (sql, ...params) => sqlite.prepare(sql).get(...params) ?? null,
     runSync: (sql, ...params) => sqlite.prepare(sql).run(...params),
+    execSync: (sql) => sqlite.exec(sql),
   };
 }
 test("migration preserves old weight data and creates new storage", () => {
@@ -181,8 +183,8 @@ test("migration preserves old weight data and creates new storage", () => {
 });
 const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8"));
 // Drizzle's own migrator on real SQLite, stopping at any journal version.
-function versionedDatabase() {
-  const sqlite = new DatabaseSync(":memory:");
+function versionedDatabase(filename = ":memory:") {
+  const sqlite = new DatabaseSync(filename);
   const expoDb = expoClient(sqlite);
   const db = drizzle(expoDb, { schema });
   const migrations = Object.fromEntries(
@@ -358,6 +360,44 @@ test("the migration error screen shares a database copy and erase removes every 
   assert.deepEqual(files(), [startup.name]);
   await dataFiles(startup).eraseLocalData();
   assert.equal(existsSync(backups), false);
+  sqlite.close();
+});
+test("the diary database writes ahead to a log that copies include and erase empties", async (t) => {
+  const { root, backups, fileSystem, snapshot } = documentsFolder();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "macro_track.db");
+  const { sqlite, db, expoDb, upgrade } = versionedDatabase(file);
+  const latest = journal.entries.length - 1;
+  await upgrade(latest);
+  const opened = load("src/db/index.ts", {
+    "expo-sqlite": { openDatabaseSync: () => expoDb },
+    "drizzle-orm/expo-sqlite": { drizzle },
+    "./schema": schema,
+    "./snapshot": snapshot,
+  });
+  assert.equal(sqlite.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
+  assert.equal(sqlite.prepare("PRAGMA synchronous").get().synchronous, 1, "NORMAL");
+  assert.equal(opened.migrationSnapshot.name, `pre-migration-${latest}.db`);
+  db.insert(schema.weightEntries).values({ weightKg: 80.5, measuredAt: "2024-01-01" }).run();
+  assert.ok(statSync(`${file}-wal`).size > 0, "the new weight is still in the log");
+  const copy = new DatabaseSync(path.join(backups, snapshot.snapshotDatabase(expoDb, 99).name), {
+    readOnly: true,
+  });
+  assert.equal(copy.prepare("SELECT weight_kg FROM weight_entries").get().weight_kg, 80.5);
+  assert.equal(copy.prepare("PRAGMA journal_mode").get().journal_mode, "delete", "self-contained");
+  copy.close();
+  const dataFiles = load("src/lib/data-files.ts", {
+    "expo-file-system": fileSystem,
+    "expo-sharing": {},
+    "@/db": { expoDb, migrationSnapshot: null },
+    "@/db/snapshot": snapshot,
+    "./data-ownership": { erasePersonalRecords: () => db.delete(schema.weightEntries).run() },
+    "./health": { withHealthPaused: (work) => work() },
+    "./health-schedule": { configureHealthSchedule: async () => {} },
+  });
+  await dataFiles.eraseLocalData();
+  assert.equal(statSync(`${file}-wal`).size, 0, "erased rows don't stay behind in the log");
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM weight_entries").get().n, 0);
   sqlite.close();
 });
 test("health sync is repeatable, updates exports and never resurrects deleted imports", async () => {

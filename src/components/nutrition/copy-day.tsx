@@ -11,7 +11,7 @@ export function CopyDay({ destination, close }: { destination: string; close: ()
   const locked = useRef(false);
   const { refresh } = useNutrition();
   const { date } = useStore();
-  const entries = useNutritionQuery(() => entriesForDay(source));
+  const entries = useNutritionQuery(() => entriesForDay(source), [source]);
   return (
     <Editor title="Copy a day" open close={close}>
       <DateInput label="Copy food from" value={source} onChange={setSource} />

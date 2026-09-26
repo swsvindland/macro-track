@@ -42,6 +42,8 @@ export async function eraseLocalData() {
       if (file instanceof File && /^macro-track-.*\.(csv|backup\.json)$/.test(file.name))
         file.delete();
     erasePersonalRecords();
+    // Move the erase into the database file and empty the write-ahead log behind it.
+    expoDb.execSync("PRAGMA wal_checkpoint(TRUNCATE)");
     await configureHealthSchedule().catch(() => {});
   });
 }

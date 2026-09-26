@@ -1,10 +1,18 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Uniwind } from "uniwind";
 import { AppState } from "react-native";
 import { configureHealthSchedule, syncHealthIfDue } from "./health-schedule";
 import { useLocales } from "expo-localization";
 import { and, desc, eq } from "drizzle-orm";
-import { db, healthLinks, measurements, photos, preferences, weightEntries } from "@/db";
+import {
+  db,
+  healthLinks,
+  measurements,
+  photos,
+  preferences,
+  weightEntries,
+  type WeightEntry,
+} from "@/db";
 import { dayOf, localDay, type Units } from "./metrics";
 import { shiftDay } from "./nutrition";
 import { languagePreference, resolveLanguage, type Language, translate } from "./translations";
@@ -59,7 +67,38 @@ function read() {
     lastSync: prefs.lastSync,
   };
 }
-type Store = ReturnType<typeof read> & {
+type Data = ReturnType<typeof read>;
+// Diary and coaching reads are keyed on the weights array, so a re-read that finds the
+// same weights (a preference change, a sync with nothing new) keeps the old one.
+const sameWeights = (a: WeightEntry[], b: WeightEntry[]) =>
+  a.length === b.length &&
+  a.every(
+    (row, i) =>
+      row.id === b[i].id &&
+      row.weightKg === b[i].weightKg &&
+      row.measuredAt === b[i].measuredAt &&
+      row.updatedAt?.getTime() === b[i].updatedAt?.getTime()
+  );
+const reread = (previous: Data) => {
+  const next = read();
+  return sameWeights(previous.weights, next.weights)
+    ? { ...next, weights: previous.weights }
+    : next;
+};
+const formats = new Map<string, Intl.NumberFormat>();
+function numberFormat(locale: string, digits: number) {
+  const key = `${locale}:${digits}`;
+  let format = formats.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    formats.set(key, format);
+  }
+  return format;
+}
+type Store = Data & {
   language: Language;
   refresh: () => void;
   setPreference: (key: string, value: string) => void;
@@ -82,7 +121,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         await syncHealthIfDue();
       } finally {
-        if (active) setData(read());
+        if (active) setData(reread);
       }
     };
     void configureHealthSchedule()
@@ -98,39 +137,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       clearInterval(timer);
     };
   }, [data.healthSyncEnabled]);
-  const refresh = () => setData(read());
-  const setPreference = (key: string, value: string) => {
-    db.insert(preferences)
-      .values({ key, value })
-      .onConflictDoUpdate({ target: preferences.key, set: { value } })
-      .run();
-    refresh();
-  };
-  const locale = language === "zh" ? "zh-CN" : language;
-  return (
-    <Context.Provider
-      value={{
-        ...data,
-        language,
-        refresh,
-        setPreference,
-        t: (key) => translate(language, key),
-        number: (value, digits = 1) =>
-          new Intl.NumberFormat(locale, {
-            minimumFractionDigits: digits,
-            maximumFractionDigits: digits,
-          }).format(value),
-        date: (value) =>
-          new Date(value.length === 10 ? `${value}T12:00:00` : value).toLocaleDateString(locale, {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          }),
-      }}
-    >
-      {children}
-    </Context.Provider>
-  );
+  const value = useMemo<Store>(() => {
+    const locale = language === "zh" ? "zh-CN" : language;
+    const refresh = () => setData(reread);
+    return {
+      ...data,
+      language,
+      refresh,
+      setPreference: (key, value) => {
+        db.insert(preferences)
+          .values({ key, value })
+          .onConflictDoUpdate({ target: preferences.key, set: { value } })
+          .run();
+        refresh();
+      },
+      t: (key) => translate(language, key),
+      number: (value, digits = 1) => numberFormat(locale, digits).format(value),
+      date: (value) =>
+        new Date(value.length === 10 ? `${value}T12:00:00` : value).toLocaleDateString(locale, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        }),
+    };
+  }, [data, language]);
+  return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useStore() {
   const value = useContext(Context);

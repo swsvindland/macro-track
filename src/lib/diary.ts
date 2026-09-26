@@ -358,14 +358,15 @@ export function copyDay(sourceDay: string, destination: string) {
   return entries.length;
 }
 
+type TimedCalories = { loggedTime: string; calories: number }[];
 /**
- * Calories usually logged after `cutoff` ("HH:MM") on recent complete days: the
- * median over up to 14 days in the previous 28. Only days logged in real time
+ * Up to 14 recent complete days from the previous 28, read once so the clock can
+ * move the cutoff without touching the database. Only days logged in real time
  * count. Untimed legacy entries and back-filled days (anything created after 04:00
  * the next morning) carry the logging clock rather than the meal time, which would
- * make the evening look emptier than it is. Returns null until 3 such days exist.
+ * make the evening look emptier than it is.
  */
-export function typicalKcalAfter(day: string, cutoff: string): number | null {
+export function typicalDays(day: string): TimedCalories[] {
   const complete = db
     .select({ day: diaryDays.day })
     .from(diaryDays)
@@ -379,7 +380,7 @@ export function typicalKcalAfter(day: string, cutoff: string): number | null {
     .orderBy(desc(diaryDays.day))
     .all()
     .map((row) => row.day);
-  if (complete.length < 3) return null;
+  if (complete.length < 3) return [];
   const rows = db
     .select({
       day: foodEntries.day,
@@ -390,21 +391,28 @@ export function typicalKcalAfter(day: string, cutoff: string): number | null {
     .from(foodEntries)
     .where(inArray(foodEntries.day, complete))
     .all();
-  const samples: number[] = [];
+  const days: TimedCalories[] = [];
   for (const date of complete) {
     const entries = rows.filter((row) => row.day === date);
     const lateCutoff = new Date(`${shiftDay(date, 1)}T04:00:00`).getTime();
     if (!entries.length || entries.some((row) => !row.loggedTime || row.createdAt > lateCutoff))
       continue;
-    samples.push(
-      entries
-        .filter((row) => row.loggedTime! > cutoff)
-        .reduce((sum, row) => sum + row.nutrients.calories, 0)
+    days.push(
+      entries.map((row) => ({ loggedTime: row.loggedTime!, calories: row.nutrients.calories }))
     );
-    if (samples.length === 14) break;
+    if (days.length === 14) break;
   }
-  if (samples.length < 3) return null;
-  samples.sort((a, b) => a - b);
+  return days;
+}
+
+/** Median calories logged after `cutoff` ("HH:MM") across `days`, or null under 3 days. */
+export function typicalAfter(days: TimedCalories[], cutoff: string): number | null {
+  if (days.length < 3) return null;
+  const samples = days
+    .map((rows) =>
+      rows.filter((row) => row.loggedTime > cutoff).reduce((sum, row) => sum + row.calories, 0)
+    )
+    .sort((a, b) => a - b);
   const middle = Math.floor(samples.length / 2);
   return samples.length % 2 ? samples[middle] : (samples[middle - 1] + samples[middle]) / 2;
 }

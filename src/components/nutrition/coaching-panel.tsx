@@ -3,15 +3,8 @@ import { Alert, View } from "react-native";
 import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
 import { ActionMenu, ErrorText } from "@/components/ui";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
-import {
-  currentGoal,
-  currentReview,
-  saveGoal,
-  finishCheckIn,
-  nextCheckInDay,
-  checkInHistory,
-} from "@/lib/coaching-store";
-import { dayToConfirm, setDayStatus, targetsForDay } from "@/lib/diary";
+import { coachingSnapshot, saveGoal, finishCheckIn } from "@/lib/coaching-store";
+import { dayToConfirm, setDayStatus } from "@/lib/diary";
 import { fromKg, localDay, weightUnit } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import { ProgramEditor } from "./program-editor";
@@ -42,16 +35,12 @@ function Stat({ title, value, note }: { title: string; value: string; note?: str
 export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => void }) {
   const { refresh } = useNutrition();
   const { number, units, language } = useStore();
-  const goal = useNutritionQuery(currentGoal),
-    review = useNutritionQuery(currentReview),
-    history = useNutritionQuery(checkInHistory);
   // Clock reads stay inside the query so they refresh with every revision.
-  const today = useNutritionQuery(() => {
+  const { goal, review, history, due, isDue, targets, pending } = useNutritionQuery(() => {
     const day = localDay(),
-      due = nextCheckInDay();
-    return { due, isDue: due <= day, targets: targetsForDay(day), pending: dayToConfirm(day) };
+      snapshot = coachingSnapshot(day);
+    return { ...snapshot, pending: snapshot.isDue ? dayToConfirm(day) : null };
   });
-  const { due, isDue, targets, pending } = today;
   const [editing, setEditing] = useState(false),
     [programError, setProgramError] = useState(""),
     [checkInError, setCheckInError] = useState(""),

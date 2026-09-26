@@ -54,7 +54,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
     } catch {
       return null;
     }
-  });
+  }, [mode, pace, age, height, weight, target, formula, activity, protein, diet, checkDay, units]);
   return (
     <Editor title={saved ? "Update your program" : "Build your program"} open close={close}>
       <Choices

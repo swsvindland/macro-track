@@ -15,7 +15,7 @@ export function IntakeSummary() {
     const days = Array.from({ length: 7 }, (_, i) => shiftDay(today, -i - 1));
     const complete = days.filter((day) => dayStatus(day) === "complete");
     const goal = currentGoal(),
-      due = nextCheckInDay();
+      due = nextCheckInDay(goal);
     return {
       complete: complete.length,
       totals: totalNutrients(

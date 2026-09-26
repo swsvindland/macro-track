@@ -57,12 +57,14 @@ const food = {
 // rendering is substituted; database reads/writes and compiler caching are real.
 function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const slots = [];
+  // The latest render's effects, which a test may run itself; none run otherwise.
+  const effects = [];
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
   const react = {
     createContext: () => ({}),
     useContext: () => context,
-    useEffect: () => {},
+    useEffect: (effect) => effects.push(effect),
     useState(initial) {
       const slot = cursor++;
       if (!(slot in slots)) slots[slot] = typeof initial === "function" ? initial() : initial;
@@ -174,13 +176,16 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     date: (day) => day,
     ...storeOverrides,
   };
-  dependencies["@/lib/store"] = { useStore: () => store };
+  dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,
+    store,
+    effects,
     load: (file) => load(file, dependencies, true),
     render(Component, props) {
       cursor = 0;
+      effects.length = 0;
       return Component(props);
     },
   };
@@ -1485,6 +1490,108 @@ test("compiled Home opens the logger in place, refreshes totals and offers safe 
   sqlite.close();
 });
 
+// Counts SQLite statements, so tests can tell a cached render from a fresh read.
+function countReads(sqlite) {
+  const counter = { reads: 0 };
+  const prepare = sqlite.prepare;
+  sqlite.prepare = function (sql) {
+    counter.reads++;
+    return prepare.call(this, sql);
+  };
+  return counter;
+}
+
+test("compiled Home reads the diary once per write; re-renders and the clock reuse it", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite, db, fastLog } = diaryDatabase();
+  const today = metrics.localDay();
+  assert.equal(today, "2024-01-10");
+  diary.saveTargets("2024-01-01", { calories: 2000, protein: 100, carbs: 250, fat: 60 });
+  // Three usual days: 600 kcal just after noon and 700 in the evening, logged in real time.
+  for (const day of ["2024-01-07", "2024-01-08", "2024-01-09"]) {
+    for (const [loggedTime, calories] of [
+      ["08:00", 500],
+      ["12:01", 600],
+      ["19:00", 700],
+    ])
+      db.insert(schema.foodEntries)
+        .values({
+          day,
+          meal: "Lunch",
+          loggedTime,
+          food,
+          amount: 1,
+          portionLabel: "1",
+          nutrients: { ...food.nutrients, calories },
+          createdAt: new Date(`${day}T${loggedTime}:00`).getTime(),
+        })
+        .run();
+    db.insert(schema.diaryDays).values({ day, status: "complete" }).run();
+  }
+  diary.saveEntry({
+    day: today,
+    meal: "Breakfast",
+    food: { ...food, basis: "serving", nutrients: { ...food.nutrients, calories: 500 } },
+    amount: 1,
+    portionLabel: "1 serving",
+    loggedTime: "08:00",
+  });
+  const listeners = [];
+  const harness = screenHarness(
+    diary,
+    { diaryLayout: "timeline" },
+    {
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": { openCatalogs: async () => {} },
+      "react-native": {
+        View: "View",
+        Platform: { OS: "ios" },
+        AccessibilityInfo: { announceForAccessibility: () => {} },
+        AppState: {
+          addEventListener: (_, listener) => {
+            listeners.push(listener);
+            return { remove: () => {} };
+          },
+        },
+      },
+    }
+  );
+  const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
+  const render = () => nodes(harness.render(TodayScreen));
+  const text = (tree, value) => tree.some((node) => node.props?.children === value);
+  const counter = countReads(sqlite);
+  let tree = render();
+  const stop = harness.effects[0]();
+  const settled = counter.reads;
+  assert.ok(settled > 0);
+  assert.ok(text(tree, "On pace for ~1800"), "the usual 1300 kcal after 12:00");
+
+  render()
+    .find((node) => node.type === "Button" && node.props.children === "Log food")
+    .props.onPress();
+  render()
+    .find((node) => node.type === "FastLogger")
+    .props.close();
+  // Back in the app within the same minute.
+  listeners.forEach((listener) => listener("active"));
+  render();
+  assert.equal(counter.reads, settled, "opening a sheet or returning doesn't re-read the diary");
+
+  t.mock.timers.tick(50_000);
+  tree = render();
+  assert.equal(counter.reads, settled, "the minute tick only moves the pace cutoff");
+  assert.ok(text(tree, "On pace for ~1200"), "the 12:01 food no longer counts as still to come");
+
+  fastLog.logBatch([fastLog.portionFor(food)], { time: "12:01" });
+  harness.context.refresh();
+  tree = render();
+  assert.ok(counter.reads > settled);
+  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "1446"));
+  assert.ok(text(tree, "On pace for ~1250"));
+  stop();
+  sqlite.close();
+});
+
 for (const enoughData of [true, false])
   test(`compiled Home check-in ${enoughData ? "accepts new" : "keeps current"} targets in one action and clears when finished`, () => {
     const { diary, sqlite, db } = diaryDatabase();
@@ -1543,6 +1650,93 @@ for (const enoughData of [true, false])
     assert.equal(render().length, 0, "finished check-in disappears without navigation or reload");
     sqlite.close();
   });
+
+test("compiled Home check-in reads once per change and refreshes after a weight write", () => {
+  const { diary, sqlite, db } = diaryDatabase();
+  const fakeMetrics = { ...metrics, localDay: () => "2024-02-01" };
+  const store = load("src/lib/coaching-store.ts", {
+    "@/db": { db, ...schema },
+    "./metrics": fakeMetrics,
+    "./nutrition": nutrition,
+    "./food-time": foodTime,
+    "./diary": diary,
+    "./coaching": coaching,
+    "./program": program,
+  });
+  const input = coachingInput();
+  db.insert(schema.coachingGoals).values(input.goal).run();
+  diary.saveTargets("2024-01-01", input.targets);
+  for (const row of input.days) {
+    diary.saveEntry({
+      day: row.day,
+      meal: "Breakfast",
+      food: { ...food, basis: "serving", nutrients: { ...food.nutrients, calories: 2400 } },
+      amount: 1,
+      portionLabel: "1 serving",
+    });
+    diary.setDayStatus(row.day, "complete");
+  }
+  const harness = screenHarness(
+    diary,
+    { weights: [] },
+    { "@/lib/coaching-store": store, "@/lib/metrics": fakeMetrics }
+  );
+  const { HomeCheckIn } = harness.load("src/components/nutrition/home-check-in.tsx");
+  const counter = countReads(sqlite);
+  const render = () =>
+    nodes(
+      harness.render(HomeCheckIn, { onDone: () => {}, onWeighIn: () => {}, onReviewLogs: () => {} })
+    );
+  const button = (tree, label) => tree.find((node) => node.props.children === label);
+  let tree = render();
+  assert.ok(button(tree, "Keep targets this week"), "no weigh-ins yet");
+  const settled = counter.reads;
+  render();
+  assert.equal(counter.reads, settled);
+  // Log weight and Health save through the store alone; its new weights array is the signal.
+  for (const row of input.days)
+    db.insert(schema.weightEntries)
+      .values({ weightKg: 80, measuredAt: `${row.day}T12:00:00Z` })
+      .run();
+  harness.store.weights = db.select().from(schema.weightEntries).all();
+  tree = render();
+  assert.ok(button(tree, "Accept plan"));
+  sqlite.close();
+});
+
+test("the store keeps its value and weights until they change, so cached reads stay valid", () => {
+  const { diary, sqlite, db } = diaryDatabase();
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/db": { db, ...schema },
+      "./nutrition": nutrition,
+      "./translations": load("src/lib/translations.ts"),
+      "./health-schedule": {},
+      uniwind: { Uniwind: { setTheme: () => {} } },
+      "expo-localization": { useLocales: () => [{ languageCode: "en" }] },
+    }
+  );
+  const { StoreProvider } = harness.load("src/lib/store.tsx");
+  const value = () => harness.render(StoreProvider, { children: null }).props.value;
+  const first = value();
+  assert.equal(value(), first, "a re-render keeps the context value");
+  first.setPreference("units", "imperial");
+  const second = value();
+  assert.equal(second.units, "imperial");
+  assert.equal(second.weights, first.weights, "a preference change keeps diary reads cached");
+  db.insert(schema.weightEntries)
+    .values({ weightKg: 80, measuredAt: new Date().toISOString() })
+    .run();
+  second.refresh();
+  const third = value();
+  assert.notEqual(third.weights, second.weights, "a weight write invalidates coaching reads");
+  assert.equal(third.weights.length, 1);
+  assert.equal(third.number(1234.56), "1,234.6");
+  assert.equal(third.number(1234.56, 0), "1,235");
+  sqlite.close();
+});
 
 test("compiled Plan check-in waits for the last open day, then accepts once in the user's units", () => {
   const { diary, sqlite, db } = diaryDatabase();
@@ -1621,6 +1815,25 @@ test("recent-food lookup uses the history index instead of sorting the full diar
     .all();
   assert.ok(plan.some((row) => row.detail.includes("USING INDEX food_entries_recent_idx")));
   assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
+  sqlite.close();
+});
+
+test("weight history and check-in ranges use the weight time index", () => {
+  const { sqlite } = diaryDatabase();
+  for (const query of [
+    "SELECT * FROM weight_entries ORDER BY measured_at DESC, id DESC",
+    "SELECT * FROM weight_entries WHERE measured_at >= '2024-01-01' AND measured_at <= '2024-02-01'",
+  ]) {
+    const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${query}`).all();
+    assert.ok(
+      plan.some((row) => row.detail.includes("weight_entries_measured_idx")),
+      query
+    );
+    assert.ok(
+      plan.every((row) => !row.detail.includes("TEMP B-TREE")),
+      query
+    );
+  }
   sqlite.close();
 });
 
@@ -2024,8 +2237,11 @@ test("typical rest-of-day uses the median of complete, real-time days only", () 
     add(day, "18:30", after);
     status(day, "complete");
   }
-  assert.equal(diary.typicalKcalAfter(today, "13:00"), 800);
-  assert.equal(diary.typicalKcalAfter(today, "19:00"), 0);
+  // One read serves every cutoff, as Home's minute clock moves it.
+  const days = diary.typicalDays(today);
+  assert.equal(days.length, 3);
+  assert.equal(diary.typicalAfter(days, "13:00"), 800);
+  assert.equal(diary.typicalAfter(days, "19:00"), 0);
   // Back-filled the next day, untimed, partial and today's own entries are ignored.
   add("2024-03-16", "19:00", 5000, new Date("2024-03-17T09:00:00").getTime());
   status("2024-03-16", "complete");
@@ -2035,9 +2251,11 @@ test("typical rest-of-day uses the median of complete, real-time days only", () 
   status("2024-03-14", "partial");
   add(today, "20:00", 5000);
   status(today, "complete");
-  assert.equal(diary.typicalKcalAfter(today, "13:00"), 800);
+  assert.equal(diary.typicalDays(today).length, 3);
+  assert.equal(diary.typicalAfter(diary.typicalDays(today), "13:00"), 800);
   // Fewer than three usable days means no estimate.
-  assert.equal(diary.typicalKcalAfter("2024-03-19", "13:00"), null);
+  assert.equal(diary.typicalDays("2024-03-19").length, 2);
+  assert.equal(diary.typicalAfter(diary.typicalDays("2024-03-19"), "13:00"), null);
   sqlite.close();
 });
 

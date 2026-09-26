@@ -18,13 +18,17 @@ export const counterLogs = sqliteTable("counter_logs", {
 
 export type CounterLog = typeof counterLogs.$inferSelect;
 
-export const weightEntries = sqliteTable("weight_entries", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  weightKg: real("weight_kg").notNull(),
-  measuredAt: text("measured_at").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+export const weightEntries = sqliteTable(
+  "weight_entries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    weightKg: real("weight_kg").notNull(),
+    measuredAt: text("measured_at").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [index("weight_entries_measured_idx").on(table.measuredAt)]
+);
 
 export type WeightEntry = typeof weightEntries.$inferSelect;
 

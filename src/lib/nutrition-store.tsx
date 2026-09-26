@@ -1,6 +1,15 @@
 import { AppState } from "react-native";
 import { localDay } from "./metrics";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useStore } from "./store";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type DependencyList,
+  type ReactNode,
+} from "react";
 
 const Context = createContext<{ revision: number; refresh: () => void } | null>(null);
 export function NutritionProvider({ children }: { children: ReactNode }) {
@@ -35,12 +44,14 @@ export function useNutrition() {
   return context;
 }
 
-// Database reads must depend on the revision, not just their query arguments:
-// React Compiler otherwise caches a day's results across successful writes.
-export function useNutritionQuery<T>(query: () => T): T {
+// Reads run once per data revision, not on every render. `deps` must list every value
+// the query reads besides the database. Weight writes refresh only the store, so its
+// weights array is a key too. "use no memo" keeps React Compiler from caching the call
+// on the query arguments alone, across successful writes.
+export function useNutritionQuery<T>(query: () => T, deps: DependencyList = []): T {
   "use no memo";
-  // Read on every subscribed render: weight-store updates also affect coaching.
   const { revision } = useNutrition();
-  void revision;
-  return query();
+  const { weights } = useStore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/use-memo
+  return useMemo(query, [revision, weights, ...deps]);
 }

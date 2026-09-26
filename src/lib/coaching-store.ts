@@ -44,8 +44,8 @@ export function saveGoal(mode: Goal["mode"], pace: number) {
     .returning()
     .get();
 }
-export function currentReview(day = localDay()) {
-  const goal = currentGoal();
+type History = ReturnType<typeof checkInHistory>;
+export function currentReview(day = localDay(), goal = currentGoal(), history?: History) {
   if (!goal) return null;
   const start = shiftDay(day, -21),
     end = shiftDay(day, -1);
@@ -76,7 +76,8 @@ export function currentReview(day = localDay()) {
     weights: rows.map((row) => ({ day: dayOf(row.measuredAt), kg: row.weightKg })),
   };
   if (goal.program && input.targets) {
-    const completed = checkInHistory().find(
+    history ??= checkInHistory();
+    const completed = history.find(
       (row) => row.day === day && row.goalId === goal.id && row.review.method === 2
     );
     if (completed)
@@ -87,9 +88,7 @@ export function currentReview(day = localDay()) {
         reason:
           "This week’s review is saved. Your next check-in will use fresh logs and your latest normalized weight.",
       };
-    const last = checkInHistory().find(
-      (row) => row.review.method === 2 && row.review.expenditure !== null
-    );
+    const last = history.find((row) => row.review.method === 2 && row.review.expenditure !== null);
     return reviewProgram({
       ...input,
       targets: input.targets,
@@ -99,15 +98,33 @@ export function currentReview(day = localDay()) {
   }
   return reviewWeek(input);
 }
-export function nextCheckInDay() {
-  const latest = checkInHistory()[0];
-  const goal = currentGoal();
+export function nextCheckInDay(goal = currentGoal(), history = checkInHistory()) {
+  const latest = history[0];
   if (!goal) return localDay();
   if (!goal.program)
     return [shiftDay(goal.startedDay, 21), latest ? shiftDay(latest.day, 7) : ""].sort().at(-1)!;
   let due = latest ? shiftDay(latest.day, 7) : shiftDay(goal.startedDay, 7);
   while (new Date(due + "T12:00:00").getDay() !== goal.program.checkInDay) due = shiftDay(due, 1);
   return due;
+}
+/**
+ * The goal and check-in history read once for Plan and Home. With `onlyWhenDue`, the
+ * 21-day review is skipped on the days between check-ins.
+ */
+export function coachingSnapshot(day = localDay(), { onlyWhenDue = false } = {}) {
+  const goal = currentGoal(),
+    history = checkInHistory(),
+    due = nextCheckInDay(goal, history),
+    isDue = due <= day,
+    coached = !!goal && goal.mode !== "manual";
+  return {
+    goal,
+    history,
+    due,
+    isDue,
+    targets: targetsForDay(day),
+    review: coached && (isDue || !onlyWhenDue) ? currentReview(day, goal, history) : null,
+  };
 }
 export function finishCheckIn(decision: "accepted" | "kept") {
   const day = localDay();

@@ -12,6 +12,7 @@ import m0007 from "./0007_reflective_golden_guardian.sql";
 import m0008 from "./0008_late_marauders.sql";
 import m0009 from "./0009_organic_terrax.sql";
 import m0010 from "./0010_fast_recent_foods.sql";
+import m0011 from "./0011_weight_time_index.sql";
 
 export default {
   journal,
@@ -27,5 +28,6 @@ export default {
     m0008,
     m0009,
     m0010,
+    m0011,
   },
 };

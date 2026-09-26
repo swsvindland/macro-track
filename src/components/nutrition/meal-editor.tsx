@@ -38,10 +38,12 @@ export function MealEditor({
   const { refresh } = useNutrition();
   const { number, date, diaryLayout } = useStore();
   const available = useNutritionQuery(listSavedMeals);
-  const sourceItems = useNutritionQuery(() =>
-    source
-      ? entriesForDay(source.day).filter((entry) => inFoodGroup(entry, source.meal, source.group))
-      : []
+  const sourceItems = useNutritionQuery(
+    () =>
+      source
+        ? entriesForDay(source.day).filter((entry) => inFoodGroup(entry, source.meal, source.group))
+        : [],
+    [source?.day, source?.meal, source?.group]
   );
   const [selected, setSelected] = useState(saved);
   const [mode, setMode] = useState<"Save meal" | "Copy meal">("Save meal");

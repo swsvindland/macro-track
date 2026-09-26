@@ -2,8 +2,7 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
 import { ErrorText } from "@/components/ui";
-import { currentGoal, currentReview, finishCheckIn, nextCheckInDay } from "@/lib/coaching-store";
-import { targetsForDay } from "@/lib/diary";
+import { coachingSnapshot, finishCheckIn } from "@/lib/coaching-store";
 import { fromKg, localDay, weightUnit } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
@@ -24,12 +23,8 @@ export function HomeCheckIn({
     [error, setError] = useState("");
   const lockedDay = useRef("");
   const data = useNutritionQuery(() => {
-    const day = localDay(),
-      goal = currentGoal();
-    if (!goal || goal.mode === "manual" || nextCheckInDay() > day) return null;
-    const review = currentReview(day),
-      targets = targetsForDay(day);
-    return review && targets ? { review, targets } : null;
+    const { isDue, review, targets } = coachingSnapshot(localDay(), { onlyWhenDue: true });
+    return isDue && review && targets ? { review, targets } : null;
   });
   if (!data) return null;
   const { review, targets } = data;

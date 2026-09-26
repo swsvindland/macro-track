@@ -1,0 +1,1 @@
+CREATE INDEX `weight_entries_measured_idx` ON `weight_entries` (`measured_at`);

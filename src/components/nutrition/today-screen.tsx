@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { AccessibilityInfo, AppState, Platform, View, type ScrollView } from "react-native";
 import { router } from "expo-router";
 import {
@@ -19,7 +19,8 @@ import {
   isCoached,
   setDayStatus,
   targetsForDay,
-  typicalKcalAfter,
+  typicalAfter,
+  typicalDays,
 } from "@/lib/diary";
 import { undoLog, type LogReceipt } from "@/lib/fast-log";
 import { openCatalogs } from "@/lib/food-catalog";
@@ -62,6 +63,14 @@ const statusLabels: Record<DayState, string> = {
   fasting: "Fasted (counts as 0 kcal)",
 };
 type Toast = { message: string; undo?: () => string };
+type WeightSheet = { open: () => void };
+
+/** The Log weight sheet keeps its own state, so typing a weight doesn't re-render Home. */
+function HomeWeightSheet({ ref }: { ref: Ref<WeightSheet> }) {
+  const weight = useMeasurementLog("weight");
+  useImperativeHandle(ref, () => ({ open: () => weight.launch(null) }));
+  return <WeightForm log={weight} />;
+}
 
 /** Home: how today is going, one-tap repeats and the day's food, in that order. */
 export function TodayScreen() {
@@ -69,7 +78,7 @@ export function TodayScreen() {
   const { number, diaryLayout, hideEmptyHours, language } = store;
   const locale = language === "zh" ? "zh-CN" : language;
   const { refresh } = useNutrition();
-  const weight = useMeasurementLog("weight");
+  const weightSheet = useRef<WeightSheet>(null);
   const [today, setToday] = useState(localDay()),
     [day, setDay] = useState(localDay()),
     [clock, setClock] = useState(currentFoodTime());
@@ -110,7 +119,18 @@ export function TodayScreen() {
       setDay((selected) => (selected === previous ? current : selected));
       setToast(null);
     }
-    const timer = setInterval(tick, 60000);
+    // On the minute, so the pace line uses the same clock as food logged "now".
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(
+        () => {
+          tick();
+          schedule();
+        },
+        60000 - (Date.now() % 60000)
+      );
+    };
+    schedule();
     // Coming back after a while should land on today, at the top, with no stale Undo.
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") {
@@ -129,7 +149,7 @@ export function TodayScreen() {
     });
     return () => {
       clearTimeout(warm);
-      clearInterval(timer);
+      clearTimeout(timer);
       sub.remove();
     };
   }, []);
@@ -148,40 +168,33 @@ export function TodayScreen() {
     };
   }, [toast]);
   const live = day === today;
-  const { entries, targets, status, projection, confirm, askConfirm, coached } = useNutritionQuery(
-    () => {
-      // The clock is read here, not in render, so compiled memoization can't freeze it.
-      const now = currentFoodTime();
-      const isToday = day === localDay();
-      const entries = entriesForDay(day),
-        targets = targetsForDay(day),
-        coached = isCoached();
-      const typical =
-        isToday && targets && entries.length
-          ? typicalKcalAfter(day, paceCutoff(entries, now))
-          : null;
-      return {
-        entries,
-        targets,
-        status: dayStatus(day),
-        projection: projectDay({
-          entries: entries.map((entry) => ({
-            loggedTime: entry.loggedTime,
-            calories: entry.nutrients.calories,
-          })),
-          target: targets?.calories ?? null,
-          typical,
-          now,
-        }),
-        // Check-ins and the pace estimate learn only from answered days. An unanswered
-        // day holds the check-in all night; the question itself waits until 04:00 so a
-        // late snack still counts toward the day it belongs to.
-        confirm: isToday ? dayToConfirm(day) : null,
-        askConfirm: new Date().getHours() >= 4,
-        coached,
-      };
-    }
-  );
+  // Read once per write or day change. The minute clock only moves the pace line, which
+  // is worked out below from these rows, so a tick doesn't touch the database.
+  const { entries, targets, status, usualDays, confirm, coached } = useNutritionQuery(() => {
+    const entries = entriesForDay(day),
+      targets = targetsForDay(day);
+    return {
+      entries,
+      targets,
+      status: dayStatus(day),
+      usualDays: live && targets && entries.length ? typicalDays(day) : null,
+      // Check-ins and the pace estimate learn only from answered days. An unanswered
+      // day holds the check-in all night; the question itself waits until 04:00 so a
+      // late snack still counts toward the day it belongs to.
+      confirm: live ? dayToConfirm(day) : null,
+      coached: isCoached(),
+    };
+  }, [day, live]);
+  const projection = projectDay({
+    entries: entries.map((entry) => ({
+      loggedTime: entry.loggedTime,
+      calories: entry.nutrients.calories,
+    })),
+    target: targets?.calories ?? null,
+    typical: usualDays && typicalAfter(usualDays, paceCutoff(entries, clock)),
+    now: clock,
+  });
+  const askConfirm = Number(clock.slice(0, 2)) >= 4;
   const weighIn = live && weighInDue(store, today, Number(clock.slice(0, 2)), coached);
   const totals = totalNutrients(entries.map((entry) => entry.nutrients));
   const groups = (
@@ -337,7 +350,7 @@ export function TodayScreen() {
                 key: "weight",
                 label: "Log weight",
                 icon: "scale-outline",
-                onPress: () => weight.launch(null),
+                onPress: () => weightSheet.current?.open(),
               },
               {
                 key: "copy",
@@ -581,7 +594,7 @@ export function TodayScreen() {
           ) : (
             <HomeCheckIn
               onDone={(message) => show(message)}
-              onWeighIn={() => weight.launch(null)}
+              onWeighIn={() => weightSheet.current?.open()}
               onReviewLogs={go}
             />
           ))}
@@ -711,7 +724,7 @@ export function TodayScreen() {
           onLogged={setDay}
         />
       )}
-      <WeightForm log={weight} />
+      <HomeWeightSheet ref={weightSheet} />
     </>
   );
 }

@@ -486,10 +486,14 @@ export function FoodEditor({
       saveLock.current = false;
     }
   }
-  const { recent, personal } = useNutritionQuery(() => ({
-    recent: recentFoods(),
-    personal: [...personalFoods(), ...recipeFoods()],
-  }));
+  // Only the search list shows history, so typing an amount or a label doesn't read it.
+  const { recent, personal } = useNutritionQuery(
+    () =>
+      mode === "search"
+        ? { recent: recentFoods(), personal: [...personalFoods(), ...recipeFoods()] }
+        : { recent: [], personal: [] },
+    [mode]
+  );
   const history = [
     ...new Map([...favorites, ...recent, ...personal].map((item) => [item.id, item])).values(),
   ].slice(0, 25);
