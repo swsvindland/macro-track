@@ -202,7 +202,26 @@ export function startingTargets(
   const rate = goalRate(goal, weight, p.targetWeightKg);
   return programMacros(Math.round(expenditure + (rate * 7700) / 7), weight, p);
 }
+/**
+ * How far the trend has come from a cut or bulk's starting weight toward its goal, from 0 to 1.
+ * Maintenance has no distance to cover, so it has none.
+ */
+export function goalProgress(goal: Goal, startKg: number, trendKg: number, targetKg: number) {
+  if (goal.mode !== "lose" && goal.mode !== "gain") return null;
+  if (goalRate(goal, trendKg, targetKg) === 0) return 1;
+  const total = targetKg - startKg;
+  return total ? Math.min(1, Math.max(0, (trendKg - startKg) / total)) : 0;
+}
 const DAY_MS = 86400000;
+/**
+ * Whole days until a check-in, 0 on the day and negative once it's overdue, and the share of
+ * its cycle since `from`, the last check-in or the program's start, that has passed.
+ */
+export function checkInCycle(day: string, due: string, from: string) {
+  const days = Math.round((Date.parse(due) - Date.parse(day)) / DAY_MS),
+    span = Math.round((Date.parse(due) - Date.parse(from)) / DAY_MS);
+  return { days, progress: days <= 0 ? 1 : span > days ? 1 - days / span : 0 };
+}
 /**
  * The trend on each of `length` days from `from`: a weigh-in day's own value, or a straight line
  * between trend points at most seven days apart. Other days are null.

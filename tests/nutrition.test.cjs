@@ -2686,6 +2686,7 @@ test("compiled Plan check-in waits for the last open day, then accepts once in t
       "@/lib/metrics": fakeMetrics,
       "./program-editor": { ProgramEditor: "ProgramEditor" },
       "@/components/plan/calorie-shift": { ShiftWeek: "ShiftWeek" },
+      "@/components/plan/strategy": { CheckInRing: "CheckInRing", ProgramCard: "ProgramCard" },
     }
   );
   const { CoachingPanel } = harness.load("src/components/nutrition/coaching-panel.tsx");

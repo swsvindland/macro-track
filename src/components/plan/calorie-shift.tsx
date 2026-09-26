@@ -9,12 +9,13 @@ import { coachedWeek, type CalorieShift, type Targets } from "@/lib/nutrition";
 import { validateShift } from "@/lib/program";
 import { useStore } from "@/lib/store";
 
-const short = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/** Weekday names, Sunday first. */
+export const short = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const sizes = ["5", "10", "15", "20"];
 
 /** Weekdays (0 = Sunday) from the locale's first day of the week. */
-function useWeekOrder() {
+export function useWeekOrder() {
   // expo-localization counts weekdays from 1 for Sunday.
   const first = (useCalendars()[0]?.firstWeekday ?? 2) - 1;
   return Array.from({ length: 7 }, (_, i) => (first + i) % 7);

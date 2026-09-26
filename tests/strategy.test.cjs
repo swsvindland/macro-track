@@ -418,13 +418,12 @@ test("every shifted day stays in the coached range, and a shift a new budget can
     assert.deepEqual(targetOn(day), lower, day);
   }
   assert.deepEqual(diary.targetsForDay("2024-01-27"), before, "earlier days keep theirs");
-  const card = planCard(data);
-  assert.equal(
-    card.find((node) => node.type === "ShiftWeek"),
-    undefined
-  );
-  assert.ok(card.some((node) => node.type === "Text" && text(node) === " kcal/day"));
-  assert.ok(card.some((node) => node.type === "Text" && /shifting is paused/.test(text(node))));
+  const card = programCard(planCard(data)).props;
+  assert.deepEqual(card.week, Array(7).fill(lower), "each day gets the budget itself");
+  assert.deepEqual(card.notes, [
+    "Calorie shifting is paused: it doesn’t fit this budget.",
+    "Trend 80.0 kg · Goal 75.0 kg · Custom macros",
+  ]);
   data.sqlite.close();
 });
 
@@ -795,8 +794,8 @@ test("compiled program editor previews the budget and saves the shift with the p
   sqlite.close();
 });
 
-/** The Plan card's compiled tree for a database, with the real check for whether a shift fits. */
-function planCard(data) {
+/** Plan's compiled coaching panel on one set of hook slots, with the real check for a shift. */
+function planHarness(data) {
   const { weekOf } = screenHarness().load("src/components/plan/calorie-shift.tsx");
   const harness = screenHarness({
     "react-native": { View: "View", AppState: {}, Alert: { alert() {} } },
@@ -813,24 +812,28 @@ function planCard(data) {
     },
     "@/components/ui": { ActionMenu: "ActionMenu", ErrorText: "Error" },
     "@/components/plan/calorie-shift": { ShiftWeek: "ShiftWeek", weekOf },
+    "@/components/plan/strategy": { CheckInRing: "CheckInRing", ProgramCard: "ProgramCard" },
     "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "./home-check-in": { OutlierPrompt: "OutlierPrompt" },
     "./program-editor": { ProgramEditor: "ProgramEditor" },
   });
   const { CoachingPanel } = harness.load("src/components/nutrition/coaching-panel.tsx");
-  return nodes(harness.render(CoachingPanel, { onTargetsChanged() {} }));
+  return { harness, render: () => nodes(harness.render(CoachingPanel, { onTargetsChanged() {} })) };
 }
+const planCard = (data) => planHarness(data).render();
+const programCard = (tree) => tree.find((node) => node.type === "ProgramCard");
 
 test("compiled Plan card shows the budget as a weekly average with the shifted week", () => {
   const data = coachingDatabase("2024-02-01");
   seedProgram(data, "2024-02-01", { shift: weekends });
   const tree = planCard(data);
   const budget = { calories: 2200, protein: 150, carbs: 250, fat: 66 };
-  assert.deepEqual(tree.find((node) => node.type === "ShiftWeek").props, {
-    targets: budget,
-    shift: weekends,
-  });
-  assert.ok(tree.some((node) => node.type === "Text" && text(node) === " kcal/day on average"));
+  const card = programCard(tree).props;
+  assert.deepEqual(card.week, nutrition.shiftWeek(budget, weekends));
+  assert.deepEqual(card.notes, [
+    "2200 kcal/day on average",
+    "Trend 80.0 kg · Goal 75.0 kg · Balanced",
+  ]);
   // The due check-in proposes a new budget from the old one, not from Thursday's target.
   const proposal = tree.find((node) => node.type === "Text" && text(node).includes("→"));
   const proposed = data.store.currentReview().proposed.calories;
@@ -897,4 +900,476 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
   assert.ok(button(tree, "Start this program"));
   assert.notDeepEqual(tree.find((node) => node.type === "CalorieShiftPicker").props.budget, kept);
   sqlite.close();
+});
+
+test("the check-in countdown covers each cycle, and goal progress runs from the starting weight", () => {
+  assert.deepEqual(program.checkInCycle("2024-01-10", "2024-01-22", "2024-01-10"), {
+    days: 12,
+    progress: 0,
+  });
+  assert.deepEqual(program.checkInCycle("2024-01-16", "2024-01-22", "2024-01-10"), {
+    days: 6,
+    progress: 0.5,
+  });
+  assert.deepEqual(program.checkInCycle("2024-01-22", "2024-01-22", "2024-01-15"), {
+    days: 0,
+    progress: 1,
+  });
+  assert.deepEqual(program.checkInCycle("2024-01-24", "2024-01-22", "2024-01-15"), {
+    days: -2,
+    progress: 1,
+  });
+  // Whole days across a daylight-saving change.
+  assert.deepEqual(program.checkInCycle("2024-03-07", "2024-03-14", "2024-03-07"), {
+    days: 7,
+    progress: 0,
+  });
+  const cut = { mode: "lose", pace: 0.5, startedDay: "2024-01-01" },
+    bulk = { mode: "gain", pace: 0.25, startedDay: "2024-01-01" };
+  assert.equal(program.goalProgress(cut, 80, 78, 75), 0.4);
+  assert.equal(program.goalProgress(cut, 80, 81, 75), 0, "moving away isn't progress");
+  assert.equal(program.goalProgress(cut, 80, 74.8, 75), 1);
+  assert.equal(program.goalProgress(bulk, 70, 72.5, 75), 0.5);
+  assert.equal(program.goalProgress(bulk, 70, 75.2, 75), 1);
+  assert.equal(program.goalProgress({ ...cut, mode: "maintain" }, 80, 80, 80), null);
+  assert.equal(program.goalProgress({ ...cut, mode: "manual" }, 80, 78, 75), null);
+});
+
+test("Plan counts down from the last check-in or the program's start, dated from its first revision", () => {
+  const data = coachingDatabase("2024-01-10");
+  const { db, clock, store, sqlite } = data;
+  assert.equal(store.planSnapshot().since, null, "nothing to date yet");
+  // Wednesday Jan 10, checking in on Mondays: the first is due after a full week, Jan 22.
+  store.createProgram("lose", 0.25, { ...profile, checkInDay: 1 });
+  let plan = store.planSnapshot();
+  assert.deepEqual(plan.since, { day: "2024-01-10", weightKg: 80 });
+  assert.equal(plan.due, "2024-01-22");
+  assert.deepEqual(plan.countdown, { days: 12, progress: 0 });
+  assert.equal(plan.goalProgress, 0);
+
+  clock.today = "2024-01-16";
+  for (const day of days("2024-01-10", 7))
+    db.insert(schema.weightEntries)
+      .values({ weightKg: 78, measuredAt: new Date(`${day}T12:00:00`).toISOString() })
+      .run();
+  plan = store.planSnapshot();
+  assert.deepEqual(plan.countdown, { days: 6, progress: 0.5 });
+  assert.equal(plan.goalProgress, (80 - plan.review.trendWeightKg) / 5);
+  assert.ok(plan.goalProgress > 0.3 && plan.goalProgress < 0.5);
+
+  clock.today = "2024-01-22";
+  plan = store.planSnapshot();
+  assert.equal(plan.isDue, true);
+  assert.deepEqual(plan.countdown, { days: 0, progress: 1 });
+  store.finishCheckIn("kept");
+  assert.deepEqual(store.planSnapshot().countdown, { days: 7, progress: 0 });
+
+  // Edits are revisions of the same program.
+  clock.today = "2024-01-25";
+  store.saveShift(weekends);
+  plan = store.planSnapshot();
+  assert.deepEqual(plan.since, { day: "2024-01-10", weightKg: 80 });
+  assert.deepEqual(plan.countdown, { days: 4, progress: 1 - 4 / 7 });
+  clock.today = "2024-01-30";
+  assert.deepEqual(store.planSnapshot().countdown, { days: -1, progress: 1 }, "overdue");
+
+  // Another goal is another program, on the same check-in schedule.
+  clock.today = "2024-01-31";
+  store.createProgram("maintain", 0.25, { ...profile, checkInDay: 1, targetWeightKg: 78 });
+  plan = store.planSnapshot();
+  assert.equal(plan.since.day, "2024-01-31");
+  assert.equal(plan.goalProgress, null, "maintenance has no distance to cover");
+  assert.deepEqual(plan.countdown, { days: -2, progress: 1 });
+
+  clock.today = "2024-02-02";
+  store.saveGoal("manual", 0);
+  plan = store.planSnapshot();
+  assert.deepEqual(plan.since, { day: "2024-02-02", weightKg: null });
+  assert.equal(plan.countdown, null);
+  assert.equal(plan.goalProgress, null);
+
+  clock.today = "2024-02-05";
+  store.createProgram("lose", 0.25, { ...profile, checkInDay: 1 });
+  plan = store.planSnapshot();
+  assert.equal(plan.since.day, "2024-02-05", "rebuilt after manual targets");
+  assert.equal(plan.due, "2024-02-12");
+  assert.deepEqual(plan.countdown, { days: 7, progress: 0 });
+  sqlite.close();
+
+  // Targets set without a goal date from the first ones saved.
+  const manual = coachingDatabase("2024-03-01");
+  manual.diary.saveTargets("2024-02-20", { calories: 2100, protein: 150, carbs: 220, fat: 70 });
+  manual.diary.saveTargets("2024-02-25", { calories: 2000, protein: 150, carbs: 200, fat: 70 });
+  plan = manual.store.planSnapshot();
+  assert.deepEqual(plan.since, { day: "2024-02-20", weightKg: null });
+  assert.equal(plan.countdown, null);
+  manual.sqlite.close();
+});
+
+test("compiled Plan leads with the countdown, puts a due check-in right under it and opens the program from its card", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", { shift: weekends });
+  const plan = planHarness(data);
+  let tree = plan.render();
+  const at = (find) => tree.findIndex(find);
+  const button = (label) =>
+    tree.find((node) => node.type === "Button" && node.props.children === label);
+  // First due a week after Monday Jan 1, on its Thursday check-in day.
+  assert.deepEqual(tree.find((node) => node.type === "CheckInRing").props, {
+    days: -21,
+    progress: 1,
+    goal: 0,
+    due: "2024-01-11",
+  });
+  const ring = at((node) => node.type === "CheckInRing"),
+    accept = at((node) => node === button("Accept this week’s plan")),
+    card = at((node) => node.type === "ProgramCard");
+  assert.equal(tree[0].props.children[0].type, "CheckInRing", "first on the screen");
+  assert.ok(ring < accept && accept < card, `${ring} ${accept} ${card}`);
+
+  const budget = { calories: 2200, protein: 150, carbs: 250, fat: 66 };
+  const props = programCard(tree).props;
+  assert.equal(props.name, "Coached program");
+  assert.equal(props.since, "2024-01-01");
+  assert.equal(props.detail, "Cut 0.25%/wk");
+  assert.equal(props.today, 4, "Thursday");
+  assert.deepEqual(props.week, nutrition.shiftWeek(budget, weekends));
+  assert.equal(props.action.type, "ActionMenu");
+  assert.equal(
+    tree.find((node) => node.type === "ProgramEditor"),
+    undefined
+  );
+  props.onPress();
+  tree = plan.render();
+  assert.ok(tree.find((node) => node.type === "ProgramEditor"));
+
+  // Answered, the countdown restarts and the review follows the program as its evidence.
+  button("Keep current plan").props.onPress();
+  tree = plan.render();
+  assert.deepEqual(tree.find((node) => node.type === "CheckInRing").props, {
+    days: 7,
+    progress: 0,
+    goal: 0,
+    due: "2024-02-08",
+  });
+  const next = at((node) => node.type === "Label" && text(node) === "Next check-in · Thu, Feb 8");
+  assert.ok(at((node) => node.type === "ProgramCard") < next);
+  assert.ok(tree.some((node) => node.props?.title === "Goal pace"));
+  assert.ok(tree.some((node) => node.type === "Label" && text(node) === "Recent check-ins"));
+  assert.equal(button("Keep current plan"), undefined);
+  data.sqlite.close();
+});
+
+test("compiled Plan shows manual targets as the running program and offers to build one", () => {
+  const data = coachingDatabase("2024-02-01");
+  let tree = planCard(data);
+  assert.equal(programCard(tree), undefined);
+  assert.equal(
+    tree.find((node) => node.type === "CheckInRing"),
+    undefined
+  );
+  assert.ok(
+    tree.some((node) => node.type === "Text" && text(node) === "Let your plan do the math")
+  );
+
+  const targets = { calories: 2100, protein: 150, carbs: 220, fat: 70 };
+  data.diary.saveTargets("2024-01-20", targets);
+  const plan = planHarness(data);
+  tree = plan.render();
+  const { props } = programCard(tree);
+  assert.equal(props.name, "Manual");
+  assert.equal(props.since, "2024-01-20");
+  assert.equal(props.detail, undefined);
+  assert.equal(props.onPress, undefined, "manual targets are edited below");
+  assert.ok(!props.action);
+  assert.deepEqual(props.notes, []);
+  assert.deepEqual(props.week, Array(7).fill(targets));
+  assert.equal(
+    tree.find((node) => node.type === "CheckInRing"),
+    undefined
+  );
+  const build = nodes(props.children).find((node) => node.type === "Button");
+  assert.equal(build.props.children, "Build my program");
+  build.props.onPress();
+  assert.ok(plan.render().find((node) => node.type === "ProgramEditor"));
+  data.sqlite.close();
+
+  // Switching a program to manual targets stops the countdown and keeps the week.
+  const switched = coachingDatabase("2024-02-01");
+  seedProgram(switched, "2024-02-01");
+  switched.store.saveGoal("manual", 0);
+  tree = planCard(switched);
+  assert.equal(programCard(tree).props.name, "Manual");
+  assert.equal(programCard(tree).props.since, "2024-02-01");
+  assert.equal(
+    tree.find((node) => node.type === "CheckInRing"),
+    undefined
+  );
+  assert.equal(
+    tree.find((node) => node.props?.title === "Goal pace"),
+    undefined
+  );
+  switched.sqlite.close();
+});
+
+/** The Plan components compiled on their own hook slots, with the real weekday helpers. */
+function strategyHarness() {
+  const weekdays = screenHarness().load("src/components/plan/calorie-shift.tsx");
+  const harness = screenHarness({
+    "react-native": { View: "View", AppState: {}, Pressable: "Pressable" },
+    "react-native-svg": { default: "Svg", Circle: "Circle" },
+    "heroui-native": { useThemeColor: (names) => names.map((name) => `var(--${name})`) },
+    "@/components/system": {
+      SystemIcon: "Icon",
+      SystemLabel: "Label",
+      SystemPanel: { Body: "PanelBody" },
+      SystemText: "Text",
+    },
+    "@/components/plan/calorie-shift": weekdays,
+  });
+  return {
+    strategy: harness.load("src/components/plan/strategy.tsx"),
+    render: (Component, props) => nodes(harness.render(Component, props)),
+  };
+}
+
+test("compiled program week stacks each day's macros under its calories, higher days taller", () => {
+  const { strategy, render } = strategyHarness();
+  const owner = { calories: 1738, protein: 184, carbs: 119, fat: 57 };
+  const week = nutrition.shiftWeek(owner, { days: [1, 3, 4], size: 49, unit: "kcal" });
+  const tree = render(strategy.ProgramWeek, { week, today: 3 });
+  const columns = tree.filter((node) => typeof node.key === "number");
+  assert.deepEqual(
+    columns.map((column) => column.key),
+    [1, 2, 3, 4, 5, 6, 0],
+    "the locale's week, Monday first here"
+  );
+  const tallest = Math.max(...week.map((day) => day.calories));
+  for (const column of columns) {
+    const targets = week[column.key];
+    const inside = nodes(column.props.children);
+    assert.deepEqual(inside.filter((node) => node.type === "Text").map(text), [
+      String(targets.calories),
+      `${targets.protein} P`,
+      `${targets.fat} F`,
+      `${targets.carbs} C`,
+      ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][column.key],
+    ]);
+    const stack = inside.find((node) => node.props.style?.gap === 2);
+    assert.ok(Math.abs(stack.props.style.height - (150 * targets.calories) / tallest) < 1e-9);
+    const segments = inside.filter((node) => ["protein", "fat", "carbs"].includes(node.key));
+    const heights = segments.map((node) => node.props.style.height);
+    assert.ok(Math.abs(heights.reduce((a, b) => a + b) + 4 - stack.props.style.height) < 1e-9);
+    // Each macro takes its share of the day's energy.
+    const energy = targets.protein * 4 + targets.fat * 9 + targets.carbs * 4;
+    assert.ok(Math.abs(heights[1] / heights[0] - (targets.fat * 9) / (targets.protein * 4)) < 1e-9);
+    assert.ok(
+      Math.abs(heights[2] / (heights[0] + heights[1] + heights[2]) - (targets.carbs * 4) / energy) <
+        1e-9
+    );
+    const day = inside.at(-1);
+    assert.match(day.props.className, column.key === 3 ? /font-semibold/ : /text-muted/);
+  }
+  const high = columns.find((column) => column.key === 1),
+    low = columns.find((column) => column.key === 2);
+  const height = (column) =>
+    nodes(column.props.children).find((node) => node.props.style?.gap === 2).props.style.height;
+  assert.ok(height(high) > height(low));
+
+  // Too thin to label, and nothing drawn for a macro without grams.
+  const lean = render(strategy.ProgramWeek, {
+    week: Array(7).fill({ calories: 1600, protein: 250, carbs: 150, fat: 1 }),
+    today: 0,
+  });
+  const fat = lean.filter((node) => node.key === "fat");
+  assert.equal(fat.length, 7);
+  assert.ok(fat.every((node) => node.props.style.height < 16 && !node.props.children));
+  const noFat = render(strategy.ProgramWeek, {
+    week: Array(7).fill({ calories: 1600, protein: 250, carbs: 150, fat: 0 }),
+    today: 0,
+  });
+  assert.equal(noFat.filter((node) => node.key === "fat").length, 0);
+
+  // Screen readers hear the week once, days with the same targets together.
+  const weekday = { calories: 2100, protein: 160, carbs: 210, fat: 70 },
+    weekend = { calories: 2600, protein: 160, carbs: 290, fat: 90 };
+  const split = [weekend, weekday, weekday, weekday, weekday, weekday, weekend];
+  assert.equal(
+    render(strategy.ProgramWeek, { week: split, today: 0 })[0].props.accessibilityLabel,
+    "Monday, Tuesday, Wednesday, Thursday, Friday: 2100 kcal, 160 g protein, 70 g fat, 210 g carbs. Saturday, Sunday: 2600 kcal, 160 g protein, 90 g fat, 290 g carbs"
+  );
+  assert.equal(
+    render(strategy.ProgramWeek, { week: Array(7).fill(weekday), today: 0 })[0].props
+      .accessibilityLabel,
+    "Every day 2100 kcal, 160 g protein, 70 g fat, 210 g carbs"
+  );
+});
+
+test("compiled program card opens the program as one button, with its menu outside it", () => {
+  const { strategy, render } = strategyHarness();
+  const week = Array(7).fill({ calories: 2200, protein: 150, carbs: 250, fat: 66 });
+  let pressed = 0;
+  const menu = { type: "ActionMenu", props: {} };
+  const tree = render(strategy.ProgramCard, {
+    name: "Coached program",
+    since: "2024-01-01",
+    detail: "Cut 0.25%/wk",
+    week,
+    today: 1,
+    notes: ["Goal 75.0 kg · Balanced"],
+    onPress: () => pressed++,
+    action: menu,
+  });
+  const button = tree.find((node) => node.type === "Pressable");
+  assert.equal(button.props.accessibilityRole, "button");
+  assert.equal(
+    button.props.accessibilityLabel,
+    "Coached program. Jan 1 – now · Cut 0.25%/wk. Every day 2200 kcal, 150 g protein, 66 g fat, 250 g carbs. Goal 75.0 kg · Balanced"
+  );
+  button.props.onPress();
+  assert.equal(pressed, 1);
+  const card = nodes(button.props.children({ pressed: true }));
+  assert.match(card[0].props.className, /opacity-70/);
+  assert.ok(
+    card.some((node) => node.type === "Text" && text(node) === "Jan 1 – now · Cut 0.25%/wk")
+  );
+  assert.ok(card.some((node) => node.type === "Icon" && node.props.name === "chevron-forward"));
+  assert.deepEqual(card.find((node) => node.type === strategy.ProgramWeek).props, {
+    week,
+    today: 1,
+  });
+  assert.ok(!card.includes(menu));
+  assert.ok(tree.includes(menu), "the menu is its own control");
+
+  // Without an action it's a plain card that shows what it's given.
+  const plain = render(strategy.ProgramCard, {
+    name: "Manual",
+    since: "2024-01-20",
+    week,
+    today: 1,
+    children: { type: "Button", props: { children: "Build my program" } },
+  });
+  assert.equal(
+    plain.find((node) => node.type === "Pressable"),
+    undefined
+  );
+  assert.equal(
+    plain.find((node) => node.type === "Icon"),
+    undefined
+  );
+  assert.ok(plain.some((node) => node.type === "Text" && text(node) === "Jan 20 – now"));
+  assert.ok(plain.some((node) => node.type === "Button"));
+});
+
+test("compiled check-in ring counts the days down and fills its arcs", () => {
+  const ring = (props) => {
+    const { strategy, render } = strategyHarness();
+    return render(strategy.CheckInRing, { due: "2024-02-08", goal: null, ...props });
+  };
+  const texts = (tree) => tree.filter((node) => node.type === "Text").map(text);
+  const arcs = (tree) => tree.filter((node) => node.type?.name === "Arc");
+  const legend = (tree) =>
+    tree
+      .filter((node) => node.type?.name === "Legend")
+      .map((node) => [node.props.label, node.props.value]);
+
+  let tree = ring({ days: 2, progress: 5 / 7, goal: 0.25 });
+  assert.equal(
+    tree[0].props.accessibilityLabel,
+    "2 days until check-in on Thursday. 25% of the way to your goal weight"
+  );
+  assert.deepEqual(texts(tree), ["2 days", "until check-in"]);
+  assert.deepEqual(
+    arcs(tree).map((arc) => [arc.props.value, arc.props.color]),
+    [
+      [0.25, "var(--success)"],
+      [5 / 7, "var(--foreground)"],
+    ]
+  );
+  assert.ok(arcs(tree)[0].props.radius > arcs(tree)[1].props.radius, "the goal rings the week");
+  assert.deepEqual(legend(tree), [
+    ["Goal", "25%"],
+    ["Check-in", "Thu"],
+  ]);
+  const week = arcs(tree)[1];
+  const circles = nodes(week.type(week.props)).filter((node) => node.type === "Circle");
+  const length = 2 * Math.PI * week.props.radius;
+  assert.equal(circles.length, 2, "the track and the arc");
+  assert.equal(circles[1].props.strokeDasharray, `${(length * 5) / 7} ${length}`);
+  const empty = { ...week.props, value: 0 };
+  assert.equal(nodes(week.type(empty)).filter((node) => node.type === "Circle").length, 1);
+
+  tree = ring({ days: 1, progress: 6 / 7 });
+  assert.deepEqual(texts(tree), ["1 day", "until check-in"]);
+  assert.equal(tree[0].props.accessibilityLabel, "1 day until check-in on Thursday");
+  assert.equal(arcs(tree).length, 1, "no goal arc without a distance to cover");
+  assert.deepEqual(legend(tree), [["Check-in", "Thu"]]);
+
+  tree = ring({ days: 0, progress: 1, goal: 1 });
+  assert.deepEqual(texts(tree), ["Check-in", "Today"]);
+  assert.equal(
+    tree[0].props.accessibilityLabel,
+    "Check-in today. 100% of the way to your goal weight"
+  );
+  tree = ring({ days: -2, progress: 1 });
+  assert.deepEqual(texts(tree), ["Check-in", "Due"]);
+  assert.equal(tree[0].props.accessibilityLabel, "Check-in due since Thursday");
+});
+
+test("the program chart's labels keep AA contrast on their fills in both themes", () => {
+  const css = readFileSync("src/global.css", "utf8");
+  const theme = (variant) => {
+    const block = css.slice(css.indexOf(`@variant ${variant}`)).split("}")[0];
+    return Object.fromEntries(
+      [...block.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)].map(([, name, value]) => [name, value])
+    );
+  };
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  for (const variant of ["light", "dark"]) {
+    const colors = theme(variant);
+    for (const fill of ["chart-calories", "chart-protein", "chart-fat", "chart-carbs"])
+      assert.ok(
+        contrast(colors.background, colors[fill]) >= 4.5,
+        `${variant} ${fill}: ${contrast(colors.background, colors[fill]).toFixed(2)}`
+      );
+  }
+});
+
+test("compiled Plan screen leaves room for a bar floating over its bottom", () => {
+  const data = coachingDatabase("2024-02-01");
+  const harness = screenHarness({
+    "react-native": {
+      View: "View",
+      AppState: {},
+      Platform: { OS: "ios" },
+      AccessibilityInfo: { announceForAccessibility() {} },
+    },
+    "@/lib/coaching-store": data.store,
+    "@/lib/diary": data.diary,
+    "@/lib/metrics": data.fakeMetrics,
+    "./metrics": data.fakeMetrics,
+    "@/components/system": {
+      SystemButton: "Button",
+      SystemPanel: { Body: "PanelBody" },
+      SystemText: "Text",
+    },
+    "@/components/ui": { ErrorText: "Error", Field: "Field", Screen: "Screen" },
+    "./coaching-panel": { CoachingPanel: "CoachingPanel" },
+    "expo-router": { router: {} },
+  });
+  const { PlanScreen } = harness.load("src/components/nutrition/plan-screen.tsx");
+  const bar = { type: "QuickLogBar", props: {} };
+  assert.equal(harness.render(PlanScreen, { footer: bar }).props.footer, bar);
+  assert.equal(harness.render(PlanScreen, {}).props.footer, undefined);
+  data.sqlite.close();
 });
