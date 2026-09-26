@@ -58,7 +58,7 @@ Use a `.csv.gz` filename for CSV input; `.jsonl.gz` sample input is also support
 
 USDA data are CC0. The OFF-derived catalog is ODbL 1.0. See [attribution and distribution notes](assets/food/ATTRIBUTION.md). Make the distributed OFF database and license notices publicly accessible before public release.
 
-Catalog filenames include the source and build-recipe version, so an app update installs a new reference catalog without replacing personal records. The old catalog is currently retained; automatic cleanup and signed downloadable updates belong to the next catalog-management milestone. The importer is a development/release tool, not an in-app download feature.
+Catalog filenames include the source and build-recipe version, so an app update installs a new reference catalog without replacing personal records. Each catalog is copied under a pending name, checked, then renamed into place, so a copy cut short by a full disk or a closed app is redone, not opened. Installed catalogs live in the cache folder, which iCloud and Android backups skip; the app copies them again if the system clears it. At launch, older versions and copies cut short are deleted, and current catalogs earlier builds left in `Documents/SQLite` are moved in rather than copied again. If one catalog can't install, the other still searches, and it is retried a minute later without holding search up. Signed downloadable updates belong to the next catalog-management milestone. The importer is a development/release tool, not an in-app download feature.
 
 ## Verification
 

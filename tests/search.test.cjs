@@ -1,6 +1,19 @@
-const { test } = require("node:test");
+const { test, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
+const {
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} = require("node:fs");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
@@ -21,35 +34,104 @@ function load(file, dependencies = {}) {
 const nutrition = load("src/lib/nutrition.ts");
 const rank = load("src/lib/food-rank.ts");
 
-// The production catalog module over the bundled catalogs; only expo-sqlite is substituted.
 const manifest = JSON.parse(readFileSync("assets/food/manifest.json", "utf8"));
-const files = {
-  [`${manifest.usda.version}.db`]: "assets/food/usda.db",
-  [`${manifest.off.version}.db`]: "assets/food/off.db",
-};
+const assets = { 1: "assets/food/usda.db", 2: "assets/food/off.db" };
+const clone = (from, to) => copyFileSync(from, to, constants.COPYFILE_FICLONE);
 let reads = 0;
-const catalog = load("src/lib/food-catalog.ts", {
-  "expo-sqlite": {
-    importDatabaseFromAssetAsync: async () => {},
-    openDatabaseAsync: async (name) => {
-      const database = new DatabaseSync(files[name], { readOnly: true });
-      return {
-        getAllAsync: async (sql, ...params) => {
-          reads++;
-          return database.prepare(sql).all(...params);
+/**
+ * A phone in a temporary folder: its Documents and cache folders for expo-file-system, and real
+ * SQLite for expo-sqlite, which takes plain paths. Each launch loads the production catalog
+ * module afresh; `copy` stands in for the native asset copy, and `free` for the free space.
+ */
+function phone() {
+  const root = mkdtempSync(path.join(tmpdir(), "macro-track-catalog-"));
+  const local = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
+  class Directory {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    get exists() {
+      return existsSync(local(this.uri));
+    }
+    create({ intermediates = false, idempotent = false } = {}) {
+      if (!(idempotent && this.exists)) mkdirSync(local(this.uri), { recursive: intermediates });
+    }
+    list() {
+      return readdirSync(local(this.uri), { withFileTypes: true }).map((entry) =>
+        entry.isDirectory() ? new Directory(this, entry.name) : new File(this, entry.name)
+      );
+    }
+  }
+  class File {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    get name() {
+      return path.basename(this.uri);
+    }
+    get exists() {
+      return existsSync(local(this.uri));
+    }
+    get size() {
+      return this.exists ? statSync(local(this.uri)).size : 0;
+    }
+    delete() {
+      rmSync(local(this.uri));
+    }
+    moveSync(destination, { overwrite = false } = {}) {
+      if (!overwrite && destination.exists) throw new Error("Destination already exists");
+      renameSync(local(this.uri), local(destination.uri));
+      this.uri = destination.uri;
+    }
+  }
+  const home = { uri: `file://${root}` };
+  const document = new Directory(home, "Documents");
+  const cache = new Directory(home, "Caches");
+  const folders = {
+    catalogs: path.join(root, "Caches", "catalogs"),
+    legacy: path.join(root, "Documents", "SQLite"),
+  };
+  Object.values(folders).forEach((folder) => mkdirSync(folder, { recursive: true }));
+  const files = (folder) => readdirSync(folder).sort();
+  const imports = [];
+  const launch = ({ copy = clone, android = false, free = Infinity } = {}) =>
+    load("src/lib/food-catalog.ts", {
+      "expo-file-system": { Directory, File, Paths: { document, cache, availableDiskSpace: free } },
+      "react-native": { Platform: { OS: android ? "android" : "ios" } },
+      "expo-sqlite": {
+        importDatabaseFromAssetAsync: async (name, { assetId, forceOverwrite }, directory) => {
+          const target = path.join(directory, name);
+          if (existsSync(target) && !forceOverwrite) return;
+          imports.push(name);
+          mkdirSync(directory, { recursive: true });
+          await copy(assets[assetId], target);
         },
-        getFirstAsync: async (sql, ...params) => database.prepare(sql).get(...params),
-        execAsync: async () => {},
-        closeAsync: async () => database.close(),
-      };
-    },
-  },
-  "../../assets/food/manifest.json": manifest,
-  "../../assets/food/usda.db": 1,
-  "../../assets/food/off.db": 2,
-  "./nutrition": nutrition,
-  "./food-rank": rank,
-});
+        // Like the native module, opening a missing file creates an empty database.
+        openDatabaseAsync: async (name, options, directory) => {
+          const database = new DatabaseSync(path.join(directory, name));
+          return {
+            getAllAsync: async (sql, ...params) => {
+              reads++;
+              return database.prepare(sql).all(...params);
+            },
+            getFirstAsync: async (sql, ...params) => database.prepare(sql).get(...params),
+            execAsync: async (sql) => database.exec(sql),
+            closeAsync: async () => database.close(),
+          };
+        },
+      },
+      "../../assets/food/manifest.json": manifest,
+      "../../assets/food/usda.db": 1,
+      "../../assets/food/off.db": 2,
+      "./nutrition": nutrition,
+      "./food-rank": rank,
+    });
+  return { root, folders, files, imports, launch };
+}
+const device = phone();
+after(() => rmSync(device.root, { recursive: true, force: true }));
+const catalog = device.launch();
+const installed = [`${manifest.off.version}.db`, `${manifest.usda.version}.db`];
 const top = async (query, known) =>
   (await catalog.searchFoods(query, known)).slice(0, 3).map((food) => food.name);
 
@@ -269,4 +351,216 @@ test("a keystroke search with reranking stays within its budget", async () => {
     }
     assert.ok(best < 60, `${query} took ${best.toFixed(1)} ms`);
   }
+});
+
+// The first megabyte of a catalog: what a copy leaves when the disk fills or the app is closed.
+const cut = (from, to) => writeFileSync(to, readFileSync(from).subarray(0, 1 << 20));
+const pending = (source) => `${source.version}.pending.db`;
+function warnings(t) {
+  const warn = console.warn;
+  const seen = [];
+  console.warn = (...args) => seen.push(args);
+  t.after(() => (console.warn = warn));
+  return seen;
+}
+
+test("catalogs install into the cache folder once, and later launches copy nothing", async () => {
+  await catalog.openCatalogs();
+  assert.deepEqual(device.files(device.folders.catalogs), installed);
+  assert.deepEqual(device.imports.sort(), [pending(manifest.off), pending(manifest.usda)]);
+  const relaunched = device.launch();
+  assert.deepEqual(
+    (await relaunched.openCatalogs()).map((opened) => opened.kind),
+    ["generic", "branded"]
+  );
+  assert.equal(device.imports.length, 2);
+});
+
+test("a copy cut short is never opened: it is copied again, once", async (t) => {
+  const { root, folders, files, imports, launch } = phone();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // The app was closed partway through the first launch's copy of OFF.
+  cut(assets[2], path.join(folders.catalogs, pending(manifest.off)));
+  // This launch's first copy of USDA fills the disk.
+  let full = true;
+  const copy = (from, to) => {
+    if (from !== assets[1] || !full) return clone(from, to);
+    full = false;
+    cut(from, to);
+    throw new Error("No space left on device");
+  };
+  const first = launch({ copy });
+  assert.equal((await first.openCatalogs()).length, 2);
+  assert.deepEqual(files(folders.catalogs), installed);
+  assert.deepEqual(imports.sort(), [
+    pending(manifest.off),
+    pending(manifest.usda),
+    pending(manifest.usda),
+  ]);
+  assert.match((await first.searchFoods("apples"))[0].name, /^Apples, raw/);
+
+  // An installed copy that is no longer a database, at the right size, is replaced too.
+  writeFileSync(path.join(folders.catalogs, installed[1]), new Uint8Array(manifest.usda.bytes));
+  const second = launch();
+  assert.equal((await second.openCatalogs()).length, 2);
+  assert.equal(imports.filter((name) => name === pending(manifest.usda)).length, 3);
+  assert.deepEqual(files(folders.catalogs), installed);
+  assert.match((await second.searchFoods("apples"))[0].name, /^Apples, raw/);
+});
+
+/** Rejects if `promise` takes longer than `ms`, such as a search held up by a copy. */
+async function within(ms, promise) {
+  let timer;
+  const late = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`Still waiting after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test("a catalog that can't install leaves the other searching and is retried behind it", async (t) => {
+  const { root, folders, files, imports, launch } = phone();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const warned = warnings(t);
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  // OFF's copy fills the disk until there is room, and waits for `copying` to finish.
+  let room = false;
+  let copying = Promise.resolve();
+  const copy = async (from, to) => {
+    if (from !== assets[2]) return clone(from, to);
+    await copying;
+    if (room) return clone(from, to);
+    cut(from, to);
+    throw new Error("No space left on device");
+  };
+  const copies = () => imports.filter((name) => name === pending(manifest.off)).length;
+  const catalog = launch({ copy });
+  assert.deepEqual(
+    (await catalog.openCatalogs()).map((opened) => opened.kind),
+    ["generic"]
+  );
+  assert.equal(copies(), 2, "the launch copies it again, once");
+  assert.deepEqual(files(folders.catalogs), installed.slice(1), "the cut copy doesn't keep space");
+  const off = new DatabaseSync(assets[2], { readOnly: true });
+  const { barcode } = off.prepare("SELECT barcode FROM foods WHERE barcode <> '' LIMIT 1").get();
+  off.close();
+  // Keystrokes, a fallback search and a barcode scan within the minute copy nothing more.
+  for (const query of ["ap", "app", "appl", "apple", "apples", "zzqx pizza"])
+    await catalog.searchFoods(query);
+  assert.match((await catalog.searchFoods("apples"))[0].name, /^Apples, raw/);
+  // A barcode missing from the catalogs that opened isn't reported as unknown.
+  await assert.rejects(catalog.lookupBarcode(barcode), /couldn't open/);
+  assert.equal(copies(), 2);
+  assert.ok(warned.length && warned.every(([message]) => message.includes(manifest.off.version)));
+
+  // A minute on, a search starts the retry and returns without waiting for it.
+  now += 60_000;
+  let finish;
+  copying = new Promise((resolve) => (finish = resolve));
+  assert.match((await within(1000, catalog.searchFoods("apples")))[0].name, /^Apples, raw/);
+  await within(1000, catalog.searchFoods("banana"));
+  assert.equal(copies(), 3);
+  finish();
+  // A barcode scan does wait for it, since "not found" needs every catalog.
+  await assert.rejects(catalog.lookupBarcode(barcode), /couldn't open/);
+  assert.equal(copies(), 4);
+  await catalog.searchFoods("apples");
+  assert.equal(copies(), 4);
+
+  now += 60_000;
+  room = true;
+  assert.equal((await catalog.lookupBarcode(barcode)).source, "off");
+  assert.equal(copies(), 5);
+  assert.deepEqual(files(folders.catalogs), installed);
+  assert.match((await catalog.searchFoods("oreo"))[0].brand, /oreo/i);
+});
+
+test("on Android, a catalog that won't fit with room to spare isn't copied", async (t) => {
+  const { root, folders, files, imports, launch } = phone();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  warnings(t);
+  // Enough for USDA and the space kept free, not for OFF.
+  const catalog = launch({ android: true, free: 100 * 1024 * 1024 });
+  assert.deepEqual(
+    (await catalog.openCatalogs()).map((opened) => opened.kind),
+    ["generic"]
+  );
+  assert.deepEqual(imports, [pending(manifest.usda)]);
+  assert.deepEqual(files(folders.catalogs), installed.slice(1));
+});
+
+test("with no catalog open, search fails and leaves nothing behind", async (t) => {
+  const { root, folders, files, launch } = phone();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  warnings(t);
+  const diary = ["macro_track.db", "macro_track.db-shm", "macro_track.db-wal"];
+  for (const name of ["usda-v0-aaaaaaaaaaaa-bbbbbbbb.db", ...diary])
+    writeFileSync(path.join(folders.legacy, name), "");
+  const catalog = launch({
+    copy: (from, to) => {
+      cut(from, to);
+      throw new Error("No space left on device");
+    },
+  });
+  await assert.rejects(catalog.openCatalogs(), /couldn't open/);
+  await assert.rejects(catalog.searchFoods("apples"), /couldn't open/);
+  assert.deepEqual(files(folders.catalogs), []);
+  assert.deepEqual(files(folders.legacy), diary, "old copies go even so");
+});
+
+test("an update moves in the catalogs earlier builds installed, needing no room", async (t) => {
+  const { root, folders, files, imports, launch } = phone();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // Earlier builds kept catalogs beside the diary, and had no cache folder for them.
+  rmSync(folders.catalogs, { recursive: true });
+  const diary = ["macro_track.db", "macro_track.db-shm", "macro_track.db-wal"];
+  clone(assets[1], path.join(folders.legacy, installed[1]));
+  clone(assets[2], path.join(folders.legacy, installed[0]));
+  for (const name of [`${installed[0]}-journal`, "usda-v0-aaaaaaaaaaaa-bbbbbbbb.db", ...diary])
+    writeFileSync(path.join(folders.legacy, name), "");
+
+  const catalog = launch({
+    android: true,
+    free: 0,
+    copy: () => {
+      throw new Error("No space left on device");
+    },
+  });
+  assert.equal((await catalog.openCatalogs()).length, 2);
+  assert.deepEqual(imports, []);
+  assert.deepEqual(files(folders.catalogs), installed);
+  assert.deepEqual(files(folders.legacy), diary);
+  assert.match((await catalog.searchFoods("oreo"))[0].brand, /oreo/i);
+});
+
+test("old versions and copies cut short are deleted before anything installs", async (t) => {
+  const { root, folders, files, imports, launch } = phone();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const [oldUsda, oldOff] = ["usda-v0-aaaaaaaaaaaa-bbbbbbbb", "off-v0-cccccccccccc-bbbbbbbb"];
+  const old = [`${oldUsda}.db`, `${oldOff}.db`, `${oldOff}.db-journal`, `${oldOff}.pending.db`];
+  for (const name of [...old, "notes.txt"]) writeFileSync(path.join(folders.catalogs, name), "");
+  // The current USDA catalog is already installed, so it stays and isn't copied again.
+  clone(assets[1], path.join(folders.catalogs, installed[1]));
+  // An earlier build's OFF, moved in, turns out to be cut short, so it is copied afresh.
+  const diary = ["macro_track.db", "macro_track.db-shm", "macro_track.db-wal"];
+  for (const name of [installed[0], installed[1], `${oldUsda}.db`, ...diary])
+    writeFileSync(path.join(folders.legacy, name), "");
+
+  let seen;
+  const catalog = launch({
+    copy: (from, to) => {
+      seen ??= files(folders.catalogs);
+      return clone(from, to);
+    },
+  });
+  assert.equal((await catalog.openCatalogs()).length, 2);
+  assert.deepEqual(seen, ["notes.txt", installed[1]]);
+  assert.deepEqual(imports, [pending(manifest.off)]);
+  assert.deepEqual(files(folders.catalogs), [...installed, "notes.txt"].sort());
+  assert.deepEqual(files(folders.legacy), diary);
+  assert.match((await catalog.searchFoods("oreo"))[0].brand, /oreo/i);
 });

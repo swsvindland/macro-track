@@ -12,7 +12,7 @@ The supplied Open Food Facts CSV gzip was downloaded and processed locally. It i
 | Open Food Facts, US |         82,937 |            46,596,096 |
 | Total               |         90,730 | 50,888,704 (48.5 MiB) |
 
-These are catalog sizes, not total installed app size. Expo keeps bundled assets and installs searchable database copies; older catalog versions are currently retained. Cleanup and backup exclusions need attention in the catalog-management milestone.
+These are catalog sizes, not total installed app size. Expo keeps bundled assets and installs searchable database copies in the cache folder, which device backups skip; older catalog versions are deleted at launch.
 
 OFF filtering excluded 3,622,635 records outside the US market, 76,540 with unusable names/barcodes, 737,365 with missing or implausible nutrition, 13,288 with ambiguous mass/volume basis, and two malformed rows. These counts reflect sequential filters, not independent quality categories. Coverage is deliberately conservative and has not been measured against a representative grocery basket.
 
