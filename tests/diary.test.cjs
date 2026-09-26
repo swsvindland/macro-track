@@ -313,7 +313,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
     "./time-field": { TimeField: "TimeField" },
     // Home's sheets and cards render as plain elements.
-    "expo-router": { router: {} },
+    "expo-router": { router: {}, useIsFocused: () => true },
     "@/lib/app-actions": load("src/lib/app-actions.ts"),
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "@/components/measurements/use-measurement-log": { useMeasurementLog: () => ({}) },
@@ -1416,11 +1416,12 @@ test("an answered day is never changed, and the setting turns counting off", (t)
   sqlite.close();
 });
 
-function countingHome(diary, store = {}) {
+function countingHome(diary, store = {}, focus = { current: true }) {
   return homeScreen(
     diary,
     { countLoggedDays: true, ...store },
     {
+      "expo-router": { router: {}, useIsFocused: () => focus.current },
       "react-native": {
         View: "View",
         Platform: { OS: "ios" },
@@ -1482,6 +1483,27 @@ test("compiled Home counts a full yesterday with Undo and asks about a short one
     sqlite.close();
     t.mock.timers.reset();
   }
+});
+
+test("compiled Home counts yesterday only once it's on screen, where its Undo is seen", (t) => {
+  const { diary, sqlite } = loggedYesterday(t, fullDay);
+  const focus = { current: false };
+  const { harness, render, says } = countingHome(diary, {}, focus);
+  render();
+  harness.runEffects();
+  t.mock.timers.tick(1);
+  assert.equal(diary.dayStatus(yesterday), "in-progress", "not behind another tab");
+
+  focus.current = true;
+  render();
+  harness.runEffects();
+  t.mock.timers.tick(1);
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  const tree = render();
+  assert.ok(says(tree, /^Yesterday counted as complete\.$/));
+  assert.ok(button(tree, "Undo"));
+  sqlite.close();
+  t.mock.timers.reset();
 });
 
 test("links name a Home action with trailing slashes, queries and dev-build forms", () => {

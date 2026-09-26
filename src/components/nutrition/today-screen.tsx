@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { AccessibilityInfo, AppState, Platform, View, type ScrollView } from "react-native";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import {
   MiniBar,
   PaceBar,
@@ -276,11 +276,14 @@ export function TodayScreen() {
   });
   const askConfirm = Number(clock.slice(0, 2)) >= 4;
   // A yesterday logged in full counts as complete without asking (below); the card
-  // only asks about days that look short.
+  // only asks about days that look short. Only on screen, so its Undo is seen.
+  const focused = useIsFocused();
   const countable = useNutritionQuery(
     () =>
-      askConfirm && countLoggedDays && confirm?.day === shiftDay(day, -1) ? countableDay() : null,
-    [confirm, day, askConfirm, countLoggedDays]
+      focused && askConfirm && countLoggedDays && confirm?.day === shiftDay(day, -1)
+        ? countableDay()
+        : null,
+    [focused, confirm, day, askConfirm, countLoggedDays]
   );
   const weighIn = live && weighInDue(store, today, Number(clock.slice(0, 2)), coached);
   const totals = totalNutrients(entries.map((entry) => entry.nutrients));

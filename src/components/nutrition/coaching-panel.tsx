@@ -54,7 +54,7 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
     [programError, setProgramError] = useState(""),
     [checkInError, setCheckInError] = useState(""),
     [why, setWhy] = useState(false),
-    [adjusting, setAdjusting] = useState(false);
+    [adjustingFor, setAdjustingFor] = useState<string | null>(null);
   const finished = useRef(""),
     switched = useRef<number | null>(null);
   const program = goal?.program;
@@ -80,7 +80,7 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
       if (decision !== "kept") onTargetsChanged();
     }, setCheckInError);
     if (!saved) finished.current = "";
-    else setAdjusting(false);
+    else setAdjustingFor(null);
   }
   function maintain() {
     // Due, this answers the check-in too, so neither can repeat that day.
@@ -95,7 +95,10 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
   }
   const maintainWeight =
     program && reachedGoal(goal, review) ? weight(program.targetWeightKg) : null;
-  const adjustFrom = review?.proposed ?? targets;
+  const adjustFrom = review?.proposed ?? targets,
+    trendWeight = program && review ? (review.trendWeightKg ?? program.weightKg) : undefined;
+  // Open only for the check-in it was opened on, even if another screen answered that one.
+  const adjusting = isDue && adjustingFor === due;
   function switchToManual() {
     Alert.alert(
       "Switch to manual targets?",
@@ -298,12 +301,15 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                 )}
                 {adjusting && adjustFrom && !pending ? (
                   <CheckInAdjuster
+                    // Starts over when an ignored reading, a weigh-in or a program edit moves
+                    // its start.
+                    key={JSON.stringify([adjustFrom, trendWeight, goal.id])}
                     start={adjustFrom}
-                    weight={program ? (review.trendWeightKg ?? program.weightKg) : undefined}
+                    weight={trendWeight}
                     program={program}
                     onSave={(adjusted) => finish("adjusted", adjusted)}
                     onCancel={() => {
-                      setAdjusting(false);
+                      setAdjustingFor(null);
                       setCheckInError("");
                     }}
                   />
@@ -335,7 +341,7 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                         accessibilityLabel="Adjust targets"
                         isDisabled={!!pending}
                         onPress={() => {
-                          setAdjusting(true);
+                          setAdjustingFor(due);
                           setCheckInError("");
                         }}
                       />

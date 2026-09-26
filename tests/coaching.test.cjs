@@ -1400,6 +1400,87 @@ test("compiled check-in offers Maintain at the goal weight once the trend reache
   data.sqlite.close();
 });
 
+const planScreen = (data) => {
+  const plan = screenHarness({
+    ...checkInDependencies(data),
+    "@/lib/diary": data.diary,
+    "./home-check-in": { OutlierPrompt: "OutlierPrompt" },
+    "./program-editor": { ProgramEditor: "ProgramEditor" },
+    "react-native": { View: "View", Alert: {} },
+    "@/components/ui": { ActionMenu: "ActionMenu", ErrorText: "Error" },
+  });
+  const { CoachingPanel } = plan.load("src/components/nutrition/coaching-panel.tsx");
+  return { plan, render: () => nodes(plan.render(CoachingPanel, { onTargetsChanged() {} })) };
+};
+const adjusterIn = (tree) => tree.find((node) => node.type === "CheckInAdjuster");
+
+test("an open adjuster starts over when ignoring a misread changes the check-in", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", { weight: (date) => (date === "2024-01-21" ? 76.9 : 80) });
+  const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
+  const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
+  const { plan, render } = planScreen(data);
+  const screens = [
+    [home, () => renderCheckIn(home, HomeCheckIn)],
+    [plan, render],
+  ];
+  const held = data.store.currentReview();
+  assert.equal(held.status, "holding");
+  const opened = screens.map(([, draw]) => {
+    labelled(draw(), "Adjust targets").props.onPress();
+    const adjuster = adjusterIn(draw());
+    assert.deepEqual(adjuster.props.start, data.diary.targetsForDay("2024-02-01"));
+    assert.equal(adjuster.props.weight, held.trendWeightKg);
+    assert.equal(adjusterIn(draw()).key, adjuster.key, "nothing new keeps what's typed");
+    return adjuster;
+  });
+
+  data.weighIn.setWeightExcluded(held.outlier.id, true);
+  home.store.weights = data.weights();
+  for (const [harness] of screens) harness.context.refresh();
+  const ready = data.store.currentReview();
+  assert.equal(ready.status, "ready");
+  screens.forEach(([, draw], i) => {
+    const adjuster = adjusterIn(draw());
+    assert.deepEqual(adjuster.props.start, ready.proposed);
+    assert.equal(adjuster.props.weight, ready.trendWeightKg);
+    assert.notEqual(adjuster.key, opened[i].key, "it reseeds from the new proposal");
+  });
+  data.sqlite.close();
+});
+
+test("an adjuster closes once the other screen answers the check-in, and Maintain comes back", () => {
+  const data = coachingDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", { changes: { targetWeightKg: 80.5 } });
+  const { plan, render } = planScreen(data);
+  const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
+  const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
+  const renderHome = () => renderCheckIn(home, HomeCheckIn);
+  for (const draw of [render, renderHome]) labelled(draw(), "Adjust targets").props.onPress();
+  let tree = render();
+  assert.ok(adjusterIn(tree));
+  assert.ok(adjusterIn(renderHome()));
+  assert.equal(shown(tree, "Button", "Maintain 80.5 kg"), undefined);
+
+  data.store.finishCheckIn("kept");
+  for (const harness of [plan, home]) harness.context.refresh();
+  tree = render();
+  assert.equal(adjusterIn(tree), undefined);
+  assert.ok(shown(tree, "Button", "Maintain 80.5 kg"));
+  assert.deepEqual(renderHome(), []);
+
+  // The next check-in opens on its choices, not on last week's adjuster.
+  data.clock.today = "2024-02-08";
+  for (const harness of [plan, home]) harness.context.refresh();
+  tree = render();
+  assert.equal(adjusterIn(tree), undefined);
+  assert.ok(shown(tree, "Button", "Keep current plan"));
+  tree = renderHome();
+  assert.equal(adjusterIn(tree), undefined);
+  assert.ok(shown(tree, "Button", "Keep targets this week"));
+  data.sqlite.close();
+});
+
 test("compiled weight history dims an ignored weigh-in and includes it again in one tap", () => {
   const Timeline = Object.assign(() => null, {
     Item: "Item",

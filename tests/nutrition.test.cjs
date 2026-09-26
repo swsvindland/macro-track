@@ -111,7 +111,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
         isScreenReaderEnabled: async () => false,
       },
     },
-    "expo-router": { router: {} },
+    "expo-router": { router: {}, useIsFocused: () => true },
     "@/lib/app-actions": load("src/lib/app-actions.ts"),
     "@/components/system": {
       SystemButton: "Button",

@@ -100,20 +100,26 @@ export function HomeCheckIn({
   const { refresh } = useNutrition();
   const { number, date, units } = useStore();
   const [details, setDetails] = useState(false),
-    [adjusting, setAdjusting] = useState(false),
+    [adjustingFor, setAdjustingFor] = useState<string | null>(null),
     [error, setError] = useState("");
   const lockedDay = useRef("");
   const data = useNutritionQuery(() => {
-    const { goal, isDue, review, targets } = coachingSnapshot(localDay(), { onlyWhenDue: true });
-    return isDue && review && targets ? { goal, review, targets } : null;
+    const { goal, isDue, review, targets, due } = coachingSnapshot(localDay(), {
+      onlyWhenDue: true,
+    });
+    return isDue && review && targets ? { goal, review, targets, due } : null;
   });
   if (!data) return null;
-  const { goal, review, targets } = data;
+  const { goal, review, targets, due } = data;
+  // Open only for the check-in it was opened on, even if another screen answered that one.
+  const adjusting = adjustingFor === due;
   const program = goal?.program;
   const maintain =
     reachedGoal(goal, review) && program
       ? formatWeight(program.targetWeightKg, units, number)
       : null;
+  const start = review.proposed ?? targets,
+    weight = program ? (review.trendWeightKg ?? program.weightKg) : undefined;
   function finish(action: () => void, message: string) {
     if (lockedDay.current === localDay()) return;
     lockedDay.current = localDay();
@@ -188,8 +194,10 @@ export function HomeCheckIn({
         )}
         {adjusting ? (
           <CheckInAdjuster
-            start={review.proposed ?? targets}
-            weight={program ? (review.trendWeightKg ?? program.weightKg) : undefined}
+            // Starts over when an ignored reading, a weigh-in or a program edit moves its start.
+            key={JSON.stringify([start, weight, goal?.id])}
+            start={start}
+            weight={weight}
             program={program}
             onSave={(adjusted) =>
               finish(
@@ -198,7 +206,7 @@ export function HomeCheckIn({
               )
             }
             onCancel={() => {
-              setAdjusting(false);
+              setAdjustingFor(null);
               setError("");
             }}
           />
@@ -266,7 +274,7 @@ export function HomeCheckIn({
                 iconSize={20}
                 accessibilityLabel="Adjust targets"
                 onPress={() => {
-                  setAdjusting(true);
+                  setAdjustingFor(due);
                   setError("");
                 }}
               />
