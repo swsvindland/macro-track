@@ -74,6 +74,7 @@
   "photoPermission": "Allow photo access in your device settings.",
   "healthUnavailable": "Health sync requires a native development build and a supported health provider.",
   "syncFailed": "Sync did not finish. Check health permissions and try again.",
+  "healthWeightDenied": "Allow Macro Track to read Weight in your health permissions, then try again.",
   "syncDone": "Sync complete",
   "healthPrivacy": "Weight and height sync both ways. Recorded body fat is exported on both platforms; waist circumference is also exported to Apple Health. Other tape measurements and calculated estimates stay in the app.",
   "trendHelp": "A daily average smoothed with a 7-day half-life. Early trends are provisional.",

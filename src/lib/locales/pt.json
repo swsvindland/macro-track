@@ -74,6 +74,7 @@
   "photoPermission": "Permita o acesso às fotos nas definições do dispositivo.",
   "healthUnavailable": "A sincronização requer uma compilação nativa e um serviço de saúde compatível.",
   "syncFailed": "Falha na sincronização. Verifique as permissões e tente novamente.",
+  "healthWeightDenied": "Permita que o Macro Track leia o peso nas permissões de saúde e tente novamente.",
   "syncDone": "Sincronização concluída",
   "healthPrivacy": "Peso e altura sincronizam nos dois sentidos. A gordura corporal registada é exportada nas duas plataformas e a cintura também para o Apple Health. As outras medidas e estimativas ficam na app.",
   "trendHelp": "Média diária suavizada com semivida de 7 dias. As primeiras tendências são provisórias.",

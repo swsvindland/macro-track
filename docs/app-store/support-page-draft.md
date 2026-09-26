@@ -18,7 +18,7 @@ Find the entry in its History list and tap its edit icon. For photos, tap the im
 
 ## How does Apple Health sync work?
 
-Enable Sync health data in Settings and grant the permissions you want to allow. Weight and height sync in both directions. Recorded body-fat percentages and waist circumference are exported. Progress photos, other tape measurements and calculated estimates stay in the app. iOS controls background timing, and read permissions can limit the records available to import.
+Enable Sync health data in Settings and allow Weight. Every other permission is optional; turning one off skips only that part of sync. Weight and height sync in both directions. Recorded body-fat percentages and waist circumference are exported. Progress photos, other tape measurements and calculated estimates stay in the app. iOS controls background timing, and read permissions can limit the records available to import.
 
 ## Why is trend weight different from my latest weight?
 

@@ -74,6 +74,7 @@
   "photoPermission": "Sta fototoegang toe in de apparaatinstellingen.",
   "healthUnavailable": "Synchronisatie vereist een native build en een ondersteunde gezondheidsdienst.",
   "syncFailed": "Synchronisatie mislukt. Controleer machtigingen en probeer opnieuw.",
+  "healthWeightDenied": "Geef Macro Track in de gezondheidsmachtigingen toegang om gewicht te lezen en probeer opnieuw.",
   "syncDone": "Synchronisatie voltooid",
   "healthPrivacy": "Gewicht en lengte synchroniseren in beide richtingen. Ingevoerd lichaamsvet wordt op beide platforms geëxporteerd, tailleomtrek ook naar Apple Health. Andere maten en schattingen blijven in de app.",
   "trendHelp": "Afgevlakt daggemiddelde met een halveringstijd van 7 dagen. Vroege trends zijn voorlopig.",

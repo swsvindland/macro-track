@@ -12,38 +12,47 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
   const identifier = (kind: HealthKind) => identifiers[kind];
   const readTypes = [identifier("weight"), identifier("height")];
   const types = Object.values(identifiers);
+  const kinds = Object.keys(identifiers) as HealthKind[];
   if (!hk.isHealthDataAvailable()) throw new Error("healthUnavailable");
+  let anyWrite = true;
   return {
-    bodyWriteKinds: ["waist", "bodyFat"],
     async authorize(interactive = true) {
       if (interactive) await hk.requestAuthorization({ toRead: readTypes, toShare: types });
-      if (
-        types.some(
-          (type) => hk.authorizationStatusFor(type) !== hk.AuthorizationStatus.sharingAuthorized
-        )
-      )
-        throw new Error("syncFailed");
+      const write = kinds.filter(
+        (kind) =>
+          hk.authorizationStatusFor(identifier(kind)) === hk.AuthorizationStatus.sharingAuthorized
+      );
+      anyWrite = write.length > 0;
+      // HealthKit never reveals read access; read() checks it when no write is granted.
+      return { read: ["weight", "height"] as const, write };
     },
-    async read() {
+    async read(readKinds) {
       const records = [];
-      for (const kind of ["weight", "height"] as const) {
+      for (const kind of readKinds) {
         const samples = await hk.queryQuantitySamples(identifier(kind), {
           unit: kind === "weight" ? "kg" : "cm",
           limit: 0,
           ascending: true,
         });
-        records.push(
-          ...samples.map((sample) => ({
-            id: sample.uuid,
-            kind,
-            value: sample.quantity,
-            measuredAt: sample.startDate.toISOString(),
-            clientId:
-              typeof sample.metadata.HKSyncIdentifier === "string"
-                ? sample.metadata.HKSyncIdentifier
-                : undefined,
-          }))
-        );
+        const found = samples.map((sample) => ({
+          id: sample.uuid,
+          kind,
+          value: sample.quantity,
+          measuredAt: sample.startDate.toISOString(),
+          clientId:
+            typeof sample.metadata.HKSyncIdentifier === "string"
+              ? sample.metadata.HKSyncIdentifier
+              : undefined,
+        }));
+        // A denied read returns only this app's samples. With every write off too, that means
+        // "Don't Allow"; an outside weight proves an import-only grant.
+        if (
+          kind === "weight" &&
+          !anyWrite &&
+          found.every((record) => record.clientId?.startsWith("macro-track:"))
+        )
+          throw new Error("healthWeightDenied");
+        records.push(...found);
       }
       return records;
     },

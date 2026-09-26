@@ -400,6 +400,7 @@ test("the diary database writes ahead to a log that copies include and erase emp
   assert.equal(sqlite.prepare("SELECT count(*) AS n FROM weight_entries").get().n, 0);
   sqlite.close();
 });
+const fullAccess = { read: ["weight", "height"], write: ["weight", "height", "waist", "bodyFat"] };
 test("health sync is repeatable, updates exports and never resurrects deleted imports", async () => {
   const { db, sqlite } = database();
   const health = load("src/lib/health.ts", {
@@ -421,7 +422,7 @@ test("health sync is repeatable, updates exports and never resurrects deleted im
   ]);
   let writes = 0;
   const adapter = {
-    authorize: async () => {},
+    authorize: async () => fullAccess,
     read: async () => [...records.values()],
     write: async (record) => {
       writes++;
@@ -466,7 +467,7 @@ test("failed sync retries safely and doesn't claim success", async () => {
     .run();
   let writes = 0;
   const adapter = {
-    authorize: async () => {},
+    authorize: async () => fullAccess,
     write: async () => {
       writes++;
       return "saved";
@@ -492,7 +493,7 @@ test("daily health schedule respects opt-in, due time, failures and opt-out", as
   let task;
   let registered = false;
   let calls = 0;
-  let fail = false;
+  let fail = "";
   let failRegistration = false;
   const get = (key) =>
     db.select().from(schema.preferences).where(eq(schema.preferences.key, key)).get()?.value;
@@ -529,7 +530,7 @@ test("daily health schedule respects opt-in, due time, failures and opt-out", as
       syncHealth: async (_adapter, interactive) => {
         calls++;
         if (get("healthSyncEnabled") === "true") assert.equal(interactive, false);
-        if (fail) throw new Error("offline");
+        if (fail) throw new Error(fail);
         set("lastSync", new Date().toISOString());
       },
     },
@@ -542,10 +543,10 @@ test("daily health schedule respects opt-in, due time, failures and opt-out", as
   assert.equal(schedule.healthSyncDue(new Date(now + 1).toISOString(), now), true);
   await task();
   assert.equal(calls, 0);
-  fail = true;
+  fail = "offline";
   await assert.rejects(schedule.enableHealthSync(), /offline/);
   assert.notEqual(get("healthSyncEnabled"), "true");
-  fail = false;
+  fail = "";
   await schedule.enableHealthSync();
   assert.equal(registered, true);
   assert.equal(get("healthSyncEnabled"), "true");
@@ -554,11 +555,14 @@ test("daily health schedule respects opt-in, due time, failures and opt-out", as
   assert.equal(calls, afterEnable);
   const overdue = new Date(now - 86400001).toISOString();
   set("lastSync", overdue);
-  fail = true;
+  fail = "offline";
   assert.equal(await task(), 2);
   assert.equal(get("lastSync"), overdue);
   assert.equal(get("healthSyncError"), "syncFailed");
-  fail = false;
+  fail = "healthWeightDenied";
+  assert.equal(await task(), 2);
+  assert.equal(get("healthSyncError"), "healthWeightDenied");
+  fail = "";
   assert.equal(await task(), 1);
   assert.equal(get("healthSyncError"), "");
   await schedule.disableHealthSync();
@@ -598,7 +602,7 @@ test("dashboard ratio uses shoulder / waist and the 1.62 goal", () => {
   assert.equal(metricContext("ffmi", null, "male").label, "metricMissing");
 });
 
-test("body exports follow platform support and handle edits, removed fields and retries", async () => {
+test("body exports follow granted kinds and handle edits, removed fields and retries", async () => {
   for (const bodyWriteKinds of [["bodyFat"], ["waist", "bodyFat"]]) {
     const { db, sqlite } = database();
     const health = load("src/lib/health.ts", {
@@ -628,8 +632,10 @@ test("body exports follow platform support and handle edits, removed fields and 
       .run();
     const remote = new Map();
     const adapter = {
-      bodyWriteKinds,
-      authorize: async () => {},
+      authorize: async () => ({
+        read: ["weight", "height"],
+        write: ["weight", "height", ...bodyWriteKinds],
+      }),
       read: async () => [...remote.values()],
       write: async (record) => {
         remote.set(record.clientId, { ...record, id: record.clientId });
@@ -675,7 +681,7 @@ test("HealthKit exports waist in centimeters and body fat as a fraction", async 
     "@kingstinct/react-native-healthkit": hk,
   });
   const adapter = await getHealthAdapter();
-  await adapter.authorize();
+  assert.deepEqual(await adapter.authorize(), fullAccess);
   assert.ok(permission.toShare.includes("HKQuantityTypeIdentifierWaistCircumference"));
   assert.equal(permission.toRead.length, 2);
   for (const [kind, value] of [
@@ -719,7 +725,10 @@ test("Health Connect requests body-fat write permission and uses percentage poin
     "react-native-health-connect": hc,
   });
   const adapter = await getHealthAdapter();
-  await adapter.authorize();
+  assert.deepEqual(await adapter.authorize(), {
+    read: ["weight", "height"],
+    write: ["weight", "height", "bodyFat"],
+  });
   assert.ok(permissions.some((p) => p.recordType === "BodyFat" && p.accessType === "write"));
   assert.ok(!permissions.some((p) => p.recordType === "BodyFat" && p.accessType === "read"));
   await adapter.write({
@@ -734,6 +743,241 @@ test("Health Connect requests body-fat write permission and uses percentage poin
   await assert.rejects(adapter.write({ kind: "waist", value: 80 }), /healthUnavailable/);
 });
 
+test("health sync imports weights and skips exports and deletions for denied kinds", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  db.insert(schema.weightEntries)
+    .values({ weightKg: 80, measuredAt: "2024-01-01T12:00:00Z" })
+    .run();
+  db.insert(schema.measurements)
+    .values({ kind: "height", measuredAt: "2024-01-01", values: { height: 180 }, updatedAt: 1 })
+    .run();
+  const body = db
+    .insert(schema.measurements)
+    .values({
+      kind: "body",
+      values: { waist: 80, bodyFat: 20 },
+      measuredAt: "2024-01-01T12:00:00Z",
+      updatedAt: 1,
+    })
+    .returning()
+    .get();
+  const remote = new Map([
+    ["scale", { id: "scale", kind: "weight", value: 79.5, measuredAt: "2024-01-02T07:00:00Z" }],
+  ]);
+  let access = { read: ["weight", "height"], write: ["weight", "height"] };
+  let readKinds;
+  const removed = [];
+  const adapter = {
+    authorize: async () => access,
+    read: async (kinds) => {
+      readKinds = kinds;
+      return [...remote.values()].filter((record) => kinds.includes(record.kind));
+    },
+    write: async (record) => {
+      if (!access.write.includes(record.kind)) throw new Error("denied");
+      remote.set(record.clientId, { ...record, id: record.clientId });
+      return record.clientId;
+    },
+    remove: async (kind, id) => {
+      if (!access.write.includes(kind)) throw new Error("denied");
+      removed.push(kind);
+      remote.delete(id);
+    },
+  };
+  // Waist and body fat denied: weights still import; only granted kinds export.
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 1, exported: 2 });
+  assert.deepEqual(readKinds, ["weight", "height"]);
+  assert.deepEqual([...remote.values()].map((r) => r.kind).sort(), ["height", "weight", "weight"]);
+  assert.equal(db.select().from(schema.weightEntries).all().length, 2);
+  // Granting body fat later exports it; revoking it again leaves Health untouched on delete.
+  access = { read: ["weight", "height"], write: ["weight", "height", "bodyFat"] };
+  assert.equal((await health.syncHealth(adapter)).exported, 1);
+  access = { read: ["weight"], write: ["weight"] };
+  db.delete(schema.measurements).where(eq(schema.measurements.id, body.id)).run();
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 0 });
+  assert.deepEqual(readKinds, ["weight"]);
+  assert.deepEqual(removed, []);
+  assert.ok([...remote.values()].some((r) => r.kind === "bodyFat"));
+  access = { read: ["weight", "height"], write: ["weight", "height", "bodyFat"] };
+  await health.syncHealth(adapter);
+  assert.deepEqual(removed, ["bodyFat"]);
+  sqlite.close();
+});
+
+test("health sync names denied weight access and changes nothing", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  db.insert(schema.weightEntries)
+    .values({ weightKg: 80, measuredAt: "2024-01-01T12:00:00Z" })
+    .run();
+  let calls = 0;
+  const adapter = {
+    authorize: async () => ({ read: ["height"], write: ["weight", "height"] }),
+    read: async () => {
+      calls++;
+      return [];
+    },
+    write: async () => {
+      calls++;
+      return "remote";
+    },
+    remove: async () => {},
+  };
+  await assert.rejects(health.syncHealth(adapter), /^Error: healthWeightDenied$/);
+  assert.equal(calls, 0);
+  assert.equal(db.select().from(schema.healthLinks).all().length, 0);
+  assert.equal(
+    db.select().from(schema.preferences).where(eq(schema.preferences.key, "lastSync")).get(),
+    undefined
+  );
+  sqlite.close();
+});
+
+function healthKit(samples = {}) {
+  const hk = {
+    denied: [],
+    queried: [],
+    saved: 0,
+    isHealthDataAvailable: () => true,
+    requestAuthorization: async () => true,
+    authorizationStatusFor: (type) => (hk.denied.includes(type) ? 1 : 2),
+    AuthorizationStatus: { sharingAuthorized: 2 },
+    queryQuantitySamples: async (type) => {
+      hk.queried.push(type);
+      return (samples[type] ?? []).map(([uuid, quantity, date, sync]) => ({
+        uuid,
+        quantity,
+        startDate: new Date(date),
+        metadata: sync ? { HKSyncIdentifier: sync } : {},
+      }));
+    },
+    saveQuantitySample: async () => {
+      hk.saved++;
+      return { uuid: "saved" };
+    },
+  };
+  return hk;
+}
+const mass = "HKQuantityTypeIdentifierBodyMass";
+const heightType = "HKQuantityTypeIdentifierHeight";
+const waistType = "HKQuantityTypeIdentifierWaistCircumference";
+const fatType = "HKQuantityTypeIdentifierBodyFatPercentage";
+
+test("HealthKit reports granted writes and reads only requested kinds", async () => {
+  const samples = { [mass]: [] };
+  const hk = healthKit(samples);
+  const { getHealthAdapter } = load("src/lib/health-native.ios.ts", {
+    "@kingstinct/react-native-healthkit": hk,
+  });
+  const adapter = await getHealthAdapter();
+  hk.denied = [waistType, fatType];
+  assert.deepEqual(await adapter.authorize(false), {
+    read: ["weight", "height"],
+    write: ["weight", "height"],
+  });
+  // Weight write off alone still imports, even with nothing in Health yet.
+  hk.denied = [mass];
+  assert.deepEqual((await adapter.authorize(false)).read, ["weight", "height"]);
+  assert.deepEqual(await adapter.read(["weight"]), []);
+  assert.deepEqual(hk.queried, [mass]);
+  // Every write off: only an outside weight tells an import-only grant from "Don't Allow".
+  hk.denied = [mass, heightType, waistType, fatType];
+  assert.deepEqual(await adapter.authorize(false), { read: ["weight", "height"], write: [] });
+  await assert.rejects(adapter.read(["weight", "height"]), /^Error: healthWeightDenied$/);
+  samples[mass] = [["own", 80, "2024-01-01T12:00:00Z", "macro-track:1:weight:1"]];
+  await assert.rejects(adapter.read(["weight", "height"]), /^Error: healthWeightDenied$/);
+  samples[mass].push(["scale", 79.5, "2024-01-02T07:00:00Z"]);
+  assert.deepEqual(
+    (await adapter.read(["weight"])).map((record) => record.id),
+    ["own", "scale"]
+  );
+});
+
+test("HealthKit import-only grant imports weights; Don't Allow changes nothing", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  db.insert(schema.weightEntries)
+    .values({ weightKg: 80, measuredAt: "2024-01-01T12:00:00Z" })
+    .run();
+  const samples = {};
+  const hk = healthKit(samples);
+  hk.denied = [mass, heightType, waistType, fatType];
+  const { getHealthAdapter } = load("src/lib/health-native.ios.ts", {
+    "@kingstinct/react-native-healthkit": hk,
+  });
+  await assert.rejects(
+    health.syncHealth(await getHealthAdapter(), false),
+    /^Error: healthWeightDenied$/
+  );
+  assert.equal(db.select().from(schema.weightEntries).all().length, 1);
+  assert.equal(
+    db.select().from(schema.preferences).where(eq(schema.preferences.key, "lastSync")).get(),
+    undefined
+  );
+  samples[mass] = [["scale", 79.5, "2024-01-02T07:00:00Z"]];
+  samples[heightType] = [["tape", 180, "2024-01-02T07:00:00Z"]];
+  assert.deepEqual(await health.syncHealth(await getHealthAdapter(), false), {
+    imported: 2,
+    exported: 0,
+  });
+  assert.equal(hk.saved, 0);
+  assert.deepEqual(
+    db
+      .select()
+      .from(schema.weightEntries)
+      .all()
+      .map((w) => w.weightKg)
+      .sort(),
+    [79.5, 80]
+  );
+  sqlite.close();
+});
+
+test("Health Connect reports each granted permission and reads only those types", async () => {
+  let granted = [];
+  const read = [];
+  const hc = {
+    SdkAvailabilityStatus: { SDK_AVAILABLE: 3 },
+    getSdkStatus: async () => 3,
+    initialize: async () => true,
+    getGrantedPermissions: async () => granted,
+    readRecords: async (type) => {
+      read.push(type);
+      return { records: [] };
+    },
+  };
+  const { getHealthAdapter } = load("src/lib/health-native.android.ts", {
+    "react-native-health-connect": hc,
+  });
+  const adapter = await getHealthAdapter();
+  const allow = (recordType, accessType) => ({ recordType, accessType });
+  granted = [allow("Weight", "read"), allow("Weight", "write"), allow("Height", "read")];
+  assert.deepEqual(await adapter.authorize(false), {
+    read: ["weight", "height"],
+    write: ["weight"],
+  });
+  granted = [allow("Weight", "write"), allow("BodyFat", "write")];
+  assert.deepEqual(await adapter.authorize(false), { read: [], write: ["weight", "bodyFat"] });
+  await adapter.read(["weight"]);
+  assert.deepEqual(read, ["Weight"]);
+});
+
 test("restore maintenance excludes health sync and releases the lock after failure", async () => {
   const { db, sqlite } = database();
   const health = load("src/lib/health.ts", {
@@ -743,7 +987,7 @@ test("restore maintenance excludes health sync and releases the lock after failu
     "./metrics": metrics,
   });
   const adapter = {
-    authorize: async () => {},
+    authorize: async () => fullAccess,
     read: async () => [],
     write: async () => "remote",
     remove: async () => {},
@@ -764,7 +1008,7 @@ test("restore maintenance excludes health sync and releases the lock after failu
   const gate = new Promise((resolve) => (unblock = resolve));
   const pending = health.syncHealth({ ...adapter, authorize: () => gate });
   await assert.rejects(() => health.withHealthPaused(async () => {}), /Wait for health sync/);
-  unblock();
+  unblock(fullAccess);
   await pending;
   sqlite.close();
 });
@@ -785,7 +1029,7 @@ test("restored weight IDs use a new health namespace without changing other expo
     .run();
   const writes = [];
   await health.syncHealth({
-    authorize: async () => {},
+    authorize: async () => fullAccess,
     read: async () => [],
     write: async (record) => {
       writes.push(record);
