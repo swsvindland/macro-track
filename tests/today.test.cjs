@@ -38,6 +38,7 @@ function load(file, dependencies = {}, compile = false) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const rank = load("src/lib/food-rank.ts");
+const foodIcons = load("src/lib/food-icons.ts");
 const metrics = load("src/lib/metrics.ts");
 const foodTime = load("src/lib/food-time.ts", { "./nutrition": nutrition });
 const schema = load("src/db/schema.ts");
@@ -190,6 +191,8 @@ function loggerHarness(diary, fastLog, props = {}) {
     "@/lib/fast-log": fastLog,
     "@/lib/food-catalog": { searchFoods: async () => [] },
     "@/lib/food-rank": rank,
+    "@/lib/food-icons": foodIcons,
+    "./food-icon": { FoodIcon: "FoodIcon" },
     "./amount-picker": {
       AmountPicker: "AmountPicker",
       PortionPreview: "PortionPreview",
@@ -450,5 +453,339 @@ test("compiled logger folds the day and time panel away so the search field stay
     [[other.name, "07:00"]]
   );
   logger.unmount();
+  sqlite.close();
+});
+
+// Home and Library with their sheets and child screens as plain elements. Hooks keep their
+// slots across renders; effects don't run.
+function screenHarness(diary, storeOverrides = {}) {
+  const slots = [];
+  let cursor = 0;
+  const context = { revision: 0, refresh: () => context.revision++ };
+  const react = {
+    createContext: () => ({}),
+    useContext: () => context,
+    useEffect: () => {},
+    useState(initial) {
+      const slot = cursor++;
+      if (!(slot in slots)) slots[slot] = typeof initial === "function" ? initial() : initial;
+      return [
+        slots[slot],
+        (next) => {
+          slots[slot] = typeof next === "function" ? next(slots[slot]) : next;
+        },
+      ];
+    },
+    useRef(initial) {
+      const [ref] = react.useState(() => ({ current: initial }));
+      return ref;
+    },
+    useMemo(read, deps) {
+      const slot = cursor++;
+      const previous = slots[slot];
+      if (!previous || deps.some((value, i) => !Object.is(value, previous.deps[i])))
+        slots[slot] = { deps, value: read() };
+      return slots[slot].value;
+    },
+  };
+  const jsx = (type, props) => ({ type, props });
+  const element = (name) => ({ [name]: name });
+  const dependencies = {
+    react,
+    "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
+    "react/compiler-runtime": {
+      c(size) {
+        const [cache] = react.useState(() =>
+          Array(size).fill(Symbol.for("react.memo_cache_sentinel"))
+        );
+        return cache;
+      },
+    },
+    "react-native": {
+      View: "View",
+      ActivityIndicator: "ActivityIndicator",
+      AppState: {},
+      Platform: { OS: "ios" },
+      Linking: {},
+      AccessibilityInfo: {},
+    },
+    "expo-router": { router: {} },
+    "expo-camera": { CameraView: "CameraView", useCameraPermissions: () => [] },
+    "@/components/system": {
+      SystemButton: "Button",
+      SystemIconButton: "IconButton",
+      SystemIcon: "Icon",
+      SystemLabel: "Label",
+      SystemPanel: { Body: "PanelBody" },
+      SystemText: "Text",
+      PaceBar: "PaceBar",
+      MiniBar: "MiniBar",
+    },
+    "@/components/ui": {
+      ...element("Editor"),
+      ...element("Field"),
+      ...element("Choices"),
+      ...element("DateInput"),
+      ...element("Screen"),
+      ...element("ActionMenu"),
+      ...element("DayPicker"),
+      ...element("SwipeRow"),
+      ErrorText: "Error",
+    },
+    "@/components/measurements/use-measurement-log": { useMeasurementLog: () => ({}) },
+    "@/components/measurements/weight-form": element("WeightForm"),
+    "@/lib/app-actions": load("src/lib/app-actions.ts"),
+    "@/lib/diary": diary,
+    "@/lib/metrics": metrics,
+    "./metrics": metrics,
+    "@/lib/nutrition": nutrition,
+    "@/lib/food-time": foodTime,
+    "@/lib/fast-log": {},
+    "@/lib/food-catalog": {
+      catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
+    },
+    "@/lib/food-rank": rank,
+    "@/lib/food-icons": foodIcons,
+    "@/lib/local-ai": {},
+    "@/lib/nutrition-label": {},
+    "@/lib/weigh-in": { weighInDue: () => false },
+    "./food-icon": element("FoodIcon"),
+    "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
+    "./fast-logger": element("FastLogger"),
+    "./home-check-in": element("HomeCheckIn"),
+    "./weigh-in-card": element("WeighInCard"),
+    "./meal-editor": element("MealEditor"),
+    "./recipe-editor": element("RecipeEditor"),
+    "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
+    "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },
+    "./amount-picker": element("AmountPicker"),
+    "./time-field": element("TimeField"),
+    "./photo-capture": element("PhotoCapture"),
+  };
+  const store = {
+    diaryLayout: "timeline",
+    hideEmptyHours: true,
+    language: "en",
+    number: (n) => String(Math.round(n)),
+    date: (day) => day,
+    ...storeOverrides,
+  };
+  dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
+  dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
+  return {
+    context,
+    load: (file) => load(file, dependencies, true),
+    render(Component, props) {
+      cursor = 0;
+      return nodes(Component(props));
+    },
+  };
+}
+/** The icon a row leads with. */
+const iconIn = (row) => {
+  assert.ok(row, "row");
+  return nodes(row.props.children).find((node) => node.type === "FoodIcon")?.props.icon;
+};
+
+test("food icons name the dish before what it's made of", () => {
+  const { foodIcon, mealIcon } = foodIcons;
+  const icon = (name, more = {}) =>
+    foodIcon({ id: "usda:1", name, brand: "", source: "usda", ...more });
+  const expect = (cases) => {
+    for (const [name, expected] of Object.entries(cases)) assert.equal(icon(name), expected, name);
+  };
+  expect({
+    pizza: "🍕",
+    egg: "🥚",
+    chicken: "🍗",
+    beef: "🥩",
+    steak: "🥩",
+    fish: "🐟",
+    salmon: "🐟",
+    rice: "🍚",
+    bread: "🍞",
+    toast: "🍞",
+    cheese: "🧀",
+    milk: "🥛",
+    coffee: "☕",
+    apple: "🍎",
+    banana: "🍌",
+    salad: "🥗",
+    lettuce: "🥗",
+    cereal: "🥣",
+    yogurt: "🥣",
+    pasta: "🍝",
+    burger: "🍔",
+    fries: "🍟",
+    soda: "🥤",
+    beer: "🍺",
+    cookie: "🍪",
+    donut: "🍩",
+    chocolate: "🍫",
+    nuts: "🥜",
+    potato: "🥔",
+  });
+  // The first match in the table's order: a dish wins over its ingredients.
+  expect({
+    "Chicken pizza": "🍕",
+    "Egg noodles": "🍜",
+    "Chicken noodle soup": "🍲",
+    "Peanut butter cookie": "🍪",
+    "Milk chocolate": "🍫",
+    "Coffee cake": "🍰",
+    "Chicken and rice": "🍗",
+  });
+  // A longer phrase takes its words with it.
+  expect({
+    "Crab cakes": "🦀",
+    "Root beer": "🥤",
+    "Chocolate milk": "🥛",
+    "Peanut butter": "🥜",
+    "Ice cream sandwich": "🍨",
+    "Sweet potato fries": "🍟",
+    "Hot dog bun": "🍞",
+    "Tart cherry juice": "🧃",
+  });
+  // Whole words only, as written or singular, with accents, & and apostrophes read plainly.
+  expect({
+    Eggplant: "🍆",
+    Pineapple: "🍍",
+    Hamburger: "🍔",
+    Popcorn: "🍿",
+    Eggs: "🥚",
+    Cherries: "🍒",
+    Potatoes: "🥔",
+    "Jalapeño poppers": "🌶️",
+    "Crème brûlée": "🍮",
+    "Mac & Cheese": "🍝",
+    "Reese's Peanut Butter Cups": "🍫",
+  });
+  // Catalogs name the kind first; so do the owner's foods from MacroFactor.
+  expect({
+    "Milk, chocolate, fluid, commercial": "🥛",
+    "Rolls, hamburger or hot dog": "🍞",
+    "Oil, olive, salad or cooking": "🫒",
+    "Cheddar Cheese, Natural": "🧀",
+    Pepperoni: "🥓",
+    "Turkey Breast Low Salt Prepackaged Or Deli Meat": "🍗",
+    "Sourdough Bread": "🍞",
+    "Hot & Spicy Chicken Wings Sections By Trader Joe's": "🍗",
+    "Fat Free Ultra Filtered Milk By Fairlife": "🥛",
+    "Frosted Mini-Wheats Bite Size By Kellogg's": "🥣",
+    "Beef Jerky Teriyaki By Jack Link's": "🥩",
+  });
+  // The brand speaks only when the name doesn't.
+  assert.equal(icon("Glazed", { brand: "Dunkin' Donuts" }), "🍩");
+  assert.equal(icon("Pink salmon", { brand: "Chicken of the Sea" }), "🐟");
+  // Quick adds are estimates whatever they're called; recipes and the rest fall back.
+  assert.equal(foodIcon({ id: "quick:1-a", name: "Pizza", brand: "", source: "custom" }), "⚡");
+  assert.equal(icon("Nana's special", { id: "recipe:1", source: "recipe" }), "🍲");
+  assert.equal(icon("Protein pancakes", { id: "recipe:2", source: "recipe" }), "🥞");
+  assert.equal(icon("Mystery item"), "🍽️");
+  assert.equal(icon(""), "🍽️");
+  assert.equal(mealIcon("Usual breakfast"), "🍽️");
+  assert.equal(mealIcon("Burrito bowl"), "🌯");
+});
+
+test("compiled food icon is one small size and silent to screen readers", () => {
+  const jsx = (type, props) => ({ type, props });
+  const { FoodIcon } = load(
+    "src/components/nutrition/food-icon.tsx",
+    {
+      "react/jsx-runtime": { jsx, jsxs: jsx },
+      "react/compiler-runtime": {
+        c: (size) => Array(size).fill(Symbol.for("react.memo_cache_sentinel")),
+      },
+      "@/components/system": { SystemText: "Text" },
+    },
+    true
+  );
+  const { type, props } = FoodIcon({ icon: "🍕" });
+  assert.equal(type, "Text");
+  assert.equal(props.children, "🍕");
+  assert.equal(props.accessibilityElementsHidden, true);
+  assert.equal(props.importantForAccessibility, "no");
+  // Sized like the other icons, not with the text, so every row lines up.
+  assert.equal(props.allowFontScaling, false);
+  assert.match(props.className, /\bw-7\b/);
+});
+
+test("compiled logger leads Log again, search results, saved foods and saved meals with icons", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const day = nutrition.shiftDay(metrics.localDay(), -1);
+  const pizza = { ...food, id: "custom:pizza", name: "Chicken pizza" };
+  const yogurt = { ...food, id: "custom:yogurt", name: "Greek yogurt" };
+  for (const item of [pizza, yogurt])
+    diary.saveEntry({
+      day,
+      meal: "Lunch",
+      loggedTime: "12:00",
+      ...nutrition.portionItem(item, "g", 50),
+    });
+  diary.saveMeal("Burrito bowl", day, "Lunch");
+  diary.toggleFavorite(yogurt);
+  const logger = loggerHarness(diary, fastLog);
+  let tree = logger.render();
+  assert.equal(iconIn(find(tree, "Button", "Adjust Chicken pizza")), "🍕");
+  assert.equal(iconIn(find(tree, "Button", `Adjust ${food.name}`)), "🍽️");
+  assert.equal(iconIn(find(tree, "Button", "Adjust Burrito bowl")), "🌯");
+  // The saved row's tile, not a list row's + button.
+  assert.equal(iconIn(find(tree, "Button", "Add Greek yogurt")), "🥣");
+  search(tree).onChange("pizza");
+  tree = logger.render();
+  assert.equal(iconIn(find(tree, "Button", "Adjust Chicken pizza")), "🍕");
+  logger.unmount();
+  sqlite.close();
+});
+
+test("compiled Home and Library rows lead with the food's icon", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  const pizza = { ...food, id: "custom:pizza", name: "Chicken pizza" };
+  const quick = {
+    ...food,
+    id: "quick:1-a",
+    name: "Pizza slice",
+    basis: "serving",
+    sourceVersion: "quick-1",
+    portions: [{ label: "1 entry", amount: 1 }],
+  };
+  diary.saveEntry({
+    day: today,
+    meal: "Lunch",
+    loggedTime: "00:00",
+    ...nutrition.portionItem(pizza, "g", 100),
+  });
+  diary.saveEntry({
+    day: today,
+    meal: "Lunch",
+    loggedTime: "00:00",
+    food: quick,
+    amount: 1,
+    portionLabel: "1 estimated entry",
+  });
+  const home = screenHarness(diary);
+  const tree = home.render(home.load("src/components/nutrition/today-screen.tsx").TodayScreen);
+  assert.equal(iconIn(find(tree, "Button", "Edit Chicken pizza")), "🍕");
+  assert.equal(iconIn(find(tree, "Button", "Edit Pizza slice")), "⚡");
+
+  diary.saveMeal("Burrito bowl", today, "Lunch");
+  const library = screenHarness(diary);
+  const shelf = library.render(
+    library.load("src/components/nutrition/library-screen.tsx").LibraryScreen
+  );
+  const meal = shelf.find(
+    (node) =>
+      node.type === "Button" &&
+      nodes(node.props.children).some((child) => child.props.children === "Burrito bowl")
+  );
+  assert.equal(iconIn(meal), "🌯");
+  // Every food list in Library and the food finder is a FoodRow.
+  assert.ok(shelf.some((node) => node.type === "FoodRow" && node.props.food.id === pizza.id));
+  const rows = screenHarness(diary);
+  const { FoodRow } = rows.load("src/components/nutrition/food-editor.tsx");
+  const row = rows.render(FoodRow, { food: pizza, onPress: () => {} })[0];
+  assert.equal(row.props.accessibilityLabel, "Log Chicken pizza");
+  assert.equal(iconIn(row), "🍕");
   sqlite.close();
 });

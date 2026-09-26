@@ -13,6 +13,7 @@ import { entriesForDay, targetsForDay, toggleFavorite } from "@/lib/diary";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { logBatch, loggingChoices, type LogChoice, type LogReceipt } from "@/lib/fast-log";
 import { searchFoods } from "@/lib/food-catalog";
+import { foodIcon, mealIcon } from "@/lib/food-icons";
 import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import {
   countText,
@@ -35,6 +36,7 @@ import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import { AmountPicker, DayRing, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
+import { FoodIcon } from "./food-icon";
 import { PhotoLogger } from "./photo-logger";
 import { QuickAdd } from "./quick-add";
 import { TimeField } from "./time-field";
@@ -642,7 +644,7 @@ export function FastLogger({
                 <SystemButton
                   key={choice.key}
                   variant="secondary"
-                  className={`w-32 items-stretch px-3 py-2.5 ${selected ? "bg-accent-soft" : "bg-surface"}`}
+                  className={`w-36 items-stretch px-3 py-2.5 ${selected ? "bg-accent-soft" : "bg-surface"}`}
                   accessibilityLabel={`${selected ? "Remove" : "Add"} ${choice.title}`}
                   accessibilityHint="Long press to adjust the portion"
                   accessibilityState={{ selected: !!selected }}
@@ -650,8 +652,9 @@ export function FastLogger({
                   onLongPress={() => edit(choice)}
                 >
                   <View className="flex-1 gap-1">
-                    <View className="flex-row items-center justify-between gap-1">
-                      <Text className="text-xs text-muted tabular-nums">
+                    <View className="flex-row items-center gap-1">
+                      <FoodIcon icon={foodIcon(choice.items[0].food)} />
+                      <Text numberOfLines={1} className="flex-1 text-xs text-muted tabular-nums">
                         {`${number(calories, 0)} kcal`}
                       </Text>
                       <SystemIcon
@@ -692,10 +695,11 @@ export function FastLogger({
           >
             <SystemButton
               variant="ghost"
-              className="flex-1 justify-start px-0 py-2"
+              className="flex-1 justify-start gap-3 px-0 py-2"
               accessibilityLabel={`Adjust ${choice.title}`}
               onPress={() => edit(choice)}
             >
+              <FoodIcon icon={saved ? mealIcon(choice.title) : foodIcon(food)} />
               <View className="flex-1 gap-0.5">
                 <View className="flex-row items-center gap-2">
                   <Text numberOfLines={2} className="shrink font-medium">

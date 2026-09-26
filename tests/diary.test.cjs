@@ -308,6 +308,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       searchCatalog: async () => [],
       searchFoods: async () => [],
     },
+    "@/lib/food-icons": load("src/lib/food-icons.ts"),
+    "./food-icon": { FoodIcon: "FoodIcon" },
     "@/lib/local-ai": { textRecognitionAvailable: () => false, recognizeText: async () => [] },
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },

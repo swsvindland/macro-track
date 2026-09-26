@@ -177,6 +177,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
     "@/lib/food-rank": rank,
+    "@/lib/food-icons": load("src/lib/food-icons.ts"),
+    "./food-icon": { FoodIcon: "FoodIcon" },
   };
   Object.assign(dependencies, extraDependencies);
   const store = {

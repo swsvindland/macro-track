@@ -35,6 +35,7 @@ import {
   type DiaryReceipt,
 } from "@/lib/diary";
 import { openCatalogs } from "@/lib/food-catalog";
+import { foodIcon } from "@/lib/food-icons";
 import { modelStatus, prewarmModel, type ModelStatus } from "@/lib/local-ai";
 import { localDay } from "@/lib/metrics";
 import {
@@ -60,6 +61,7 @@ import type { FoodEntry } from "@/db";
 import { useMeasurementLog } from "@/components/measurements/use-measurement-log";
 import { WeightForm } from "@/components/measurements/weight-form";
 import { FoodEditor } from "./food-editor";
+import { FoodIcon } from "./food-icon";
 import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
@@ -971,6 +973,7 @@ export function TodayScreen() {
                                 color={picked ? "accent-soft-foreground" : "muted"}
                               />
                             )}
+                            <FoodIcon icon={foodIcon(entry.food)} />
                             <View className="flex-1 gap-0.5">
                               <Text numberOfLines={1}>{entry.food.name}</Text>
                               <Text numberOfLines={1} className="text-sm text-muted">

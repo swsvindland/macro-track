@@ -10,6 +10,7 @@ import {
   listRecipes,
 } from "@/lib/diary";
 import { catalogManifest } from "@/lib/food-catalog";
+import { mealIcon } from "@/lib/food-icons";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import type { SavedMeal } from "@/db";
@@ -17,6 +18,7 @@ import { recipeFood, type Recipe, type Food, totalNutrients } from "@/lib/nutrit
 import { RecipeEditor } from "./recipe-editor";
 import { MealEditor } from "./meal-editor";
 import { FoodEditor, FoodRow } from "./food-editor";
+import { FoodIcon } from "./food-icon";
 
 export function LibraryScreen() {
   const sections = useNutritionQuery(
@@ -86,9 +88,10 @@ export function LibraryScreen() {
             <SystemButton
               key={meal.id}
               variant="secondary"
-              className="justify-start bg-surface p-5"
+              className="justify-start gap-3 bg-surface p-5"
               onPress={() => setMealEditor(meal)}
             >
+              <FoodIcon icon={mealIcon(meal.name)} />
               <View className="flex-1 gap-1">
                 <Text className="font-semibold">{meal.name}</Text>
                 <Text className="text-sm text-muted">
