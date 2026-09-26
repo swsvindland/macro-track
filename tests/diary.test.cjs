@@ -260,6 +260,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       View: "View",
       Pressable: "Pressable",
       ScrollView: "ScrollView",
+      TextInput: "TextInput",
       ActivityIndicator: "ActivityIndicator",
       AppState: {},
       Platform: { OS: "ios" },
@@ -400,18 +401,29 @@ function nodes(tree) {
 }
 const button = (tree, label) =>
   tree.find((node) => node.type === "Button" && node.props.children === label);
-/** Presses keys on the amount picker of the screen `render` shows, rendering it for each. */
+/** Types a keypad key into the amount field as the system keyboard would: a selected amount is replaced. */
+function typeKey(input, key) {
+  const { value, selection } = input.props;
+  const selected = !!selection && selection.end > selection.start;
+  input.props.onChangeText(
+    key === "⌫" ? (selected ? "" : value.slice(0, -1)) : (selected ? "" : value) + key
+  );
+}
+/** Types keys into the amount field of the screen `render` shows, rendering it for each. */
 function press(harness, render, ...keys) {
   for (const key of keys)
-    harness
-      .pad(render())
-      .find((node) => node.props.value === key && node.props.onPress)
-      .props.onPress();
+    typeKey(
+      harness.pad(render()).find((node) => node.type === "TextInput"),
+      key
+    );
 }
 /** What the amount field of the screen in `tree` reads: "355 g", "1 bar". */
-const amountText = (harness, tree) =>
-  harness.pad(tree).find((node) => node.props.accessibilityLabel === "Amount").props
-    .accessibilityValue.text;
+const amountText = (harness, tree) => {
+  const { value, accessibilityLabel } = harness
+    .pad(tree)
+    .find((node) => node.type === "TextInput").props;
+  return `${value || "0"} ${accessibilityLabel.replace("Amount in ", "")}`;
+};
 
 test("typed times read as HH:mm in 24-hour, compact and am/pm forms", () => {
   const cases = {
@@ -2110,11 +2122,11 @@ test("compiled Add & scan another hands the food over and reopens the camera pas
   const editor = scanner(diary, props);
   await editor.scan("04963406");
   assert.equal(editor.quantity(), "1 serving");
-  // Too long for a keypad cell, it keeps a full-width button of its own below the keypad.
+  // Too long to share the actions row, it keeps a full-width button of its own below it.
   const keypad = editor.harness.pad(editor.render());
   assert.equal(button(keypad, "Add & scan another"), undefined);
   assert.equal(button(editor.render(), "Add & scan another").props.icon, "barcode-outline");
-  assert.equal(button(keypad, "Log").props.fit, true, "keypad actions shrink to one line");
+  assert.equal(button(keypad, "Log").props.fit, true, "actions shrink to one line");
   editor.chip("g").props.onPress();
   // "2/" is a fraction cut short.
   editor.press("2", "/");

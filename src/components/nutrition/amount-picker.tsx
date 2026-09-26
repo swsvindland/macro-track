@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Keyboard, Platform, Pressable, ScrollView, View } from "react-native";
+import { useRef, type ReactNode } from "react";
+import { Pressable, ScrollView, TextInput, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { useThemeColor } from "heroui-native";
 import { twMerge } from "tailwind-merge";
@@ -12,9 +12,9 @@ import {
 } from "@/components/system";
 import {
   convertCount,
+  editAmount,
   formatCount,
   parseAmount,
-  typeAmount,
   unitStep,
   type Nutrients,
   type PortionUnit,
@@ -24,35 +24,6 @@ import { useStore } from "@/lib/store";
 
 /** The amount field: text in one of the food's units. `fresh` text is replaced by the next key. */
 export type AmountDraft = { unit: string; text: string; fresh: boolean };
-
-const keys = [
-  ["1", "2", "3", "/"],
-  ["4", "5", "6", " "],
-  ["7", "8", "9", "⌫"],
-];
-const keyNames: Record<string, string> = {
-  "/": "Fraction",
-  " ": "Space",
-  "⌫": "Delete",
-  ".": "Decimal point",
-};
-
-function Key({ value, onPress }: { value: string; onPress: () => void }) {
-  return (
-    <SystemButton
-      variant="secondary"
-      className="h-12 min-h-12 flex-1 rounded-xl px-0 py-0"
-      accessibilityLabel={keyNames[value] ?? value}
-      onPress={onPress}
-    >
-      {value === "⌫" ? (
-        <SystemIcon name="backspace-outline" size={22} />
-      ) : (
-        <Text className="text-xl tabular-nums">{value === " " ? "␣" : value}</Text>
-      )}
-    </SystemButton>
-  );
-}
 
 function UnitChip({
   unit,
@@ -83,9 +54,10 @@ function UnitChip({
 }
 
 /**
- * Amount entry without the system keyboard: the field, ± steppers, the food's units and a
- * keypad whose last row carries the screen's actions. Typing a number and then a unit keeps
- * the number; a prefilled or stepped amount converts to the new unit instead.
+ * Amount entry on the system keyboard, which opens with the sheet: the field, ± steppers, the
+ * food's units and the screen's actions above the decimal pad, the same one for every unit. Typing
+ * a number and then a unit keeps the number; a prefilled or stepped amount converts to the new
+ * unit instead, and stays selected so typing replaces it.
  */
 export function AmountPicker({
   units,
@@ -99,22 +71,8 @@ export function AmountPicker({
   /** One or two actions; the last is the primary one. */
   actions: { label: string; onPress: () => void }[];
 }) {
-  // While the system keyboard types another field (an entry's time), only the actions stay, so
-  // the keypad doesn't stack on the keyboard over that field.
-  const [typing, setTyping] = useState(false);
-  useEffect(() => {
-    const ios = Platform.OS === "ios";
-    const shown = Keyboard.addListener(ios ? "keyboardWillShow" : "keyboardDidShow", () =>
-      setTyping(true)
-    );
-    const hidden = Keyboard.addListener(ios ? "keyboardWillHide" : "keyboardDidHide", () =>
-      setTyping(false)
-    );
-    return () => {
-      shown.remove();
-      hidden.remove();
-    };
-  }, []);
+  const input = useRef<TextInput>(null);
+  const muted = String(useThemeColor("muted"));
   const unit = units.find((row) => row.key === value.unit) ?? units[0];
   const count = parseAmount(value.text);
   const step = unitStep(unit);
@@ -122,8 +80,6 @@ export function AmountPicker({
     onChange({ unit: target.key, text: formatCount(next, target), fresh: true });
   const more = () => set(count > 0 ? count + step : step);
   const less = () => count - step > 0 && set(count - step);
-  const type = (key: string) =>
-    onChange({ ...value, text: typeAmount(value.text, key, value.fresh), fresh: false });
   const stepLabel = `${formatCount(step, unit)} ${unit.label}`;
   const choose = (next: PortionUnit) => {
     if (next.key === unit.key) return;
@@ -142,22 +98,6 @@ export function AmountPicker({
       onPress={() => choose(row)}
     />
   );
-  const buttons = actions.map((action, i) => (
-    <SystemButton
-      key={action.label}
-      variant={i === actions.length - 1 ? "primary" : "secondary"}
-      className={twMerge(
-        "h-12 min-h-12 flex-1 rounded-xl px-2 py-0",
-        actions.length === 1 && "flex-[2]"
-      )}
-      labelClassName="font-semibold"
-      fit
-      onPress={action.onPress}
-    >
-      {action.label}
-    </SystemButton>
-  ));
-  if (typing) return <View className="flex-row gap-1.5">{buttons}</View>;
   return (
     <View className="gap-2">
       <View className="flex-row items-center gap-2">
@@ -169,27 +109,28 @@ export function AmountPicker({
           onPress={less}
         />
         <Pressable
-          accessibilityRole="adjustable"
-          accessibilityLabel="Amount"
-          accessibilityValue={{ text: `${value.text || "0"} ${unit.label}` }}
-          accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
-          onAccessibilityAction={(event) =>
-            event.nativeEvent.actionName === "increment" ? more() : less()
-          }
+          accessible={false}
           className="h-12 flex-1 flex-row items-center rounded-2xl border-2 border-accent bg-surface px-3"
-          onPress={() => onChange({ ...value, fresh: true })}
+          onPress={() => input.current?.focus()}
         >
-          <Text
-            className={twMerge(
-              "rounded-md px-0.5 font-mono text-xl tabular-nums",
-              value.fresh && !!value.text && "bg-accent-soft text-accent-soft-foreground",
-              !value.text && "text-muted"
-            )}
-          >
-            {value.text || "0"}
-          </Text>
-          {!value.fresh && <View className="h-6 w-0.5 rounded-full bg-accent" />}
-          <View className="flex-1" />
+          <TextInput
+            ref={input}
+            autoFocus
+            accessibilityLabel={`Amount in ${unit.label}`}
+            className="h-full flex-1 font-mono text-xl tabular-nums text-foreground"
+            placeholder="0"
+            placeholderTextColor={muted}
+            value={value.text}
+            // A prefilled or stepped amount stays selected so the first key replaces it.
+            selection={value.fresh ? { start: 0, end: value.text.length } : undefined}
+            selectTextOnFocus
+            onChangeText={(next) =>
+              onChange({ ...value, text: editAmount(value.text, next), fresh: false })
+            }
+            keyboardType="decimal-pad"
+            autoCorrect={false}
+            autoComplete="off"
+          />
           <Text className="text-muted">{unit.label}</Text>
         </Pressable>
         <SystemIconButton
@@ -212,20 +153,19 @@ export function AmountPicker({
           {own.map(chip)}
         </ScrollView>
       )}
-      <View className="gap-1.5">
-        {keys.map((row) => (
-          <View key={row.join("")} className="flex-row gap-1.5">
-            {row.map((key) => (
-              <Key key={key} value={key} onPress={() => type(key)} />
-            ))}
-          </View>
+      <View className="flex-row gap-1.5">
+        {actions.map((action, i) => (
+          <SystemButton
+            key={action.label}
+            variant={i === actions.length - 1 ? "primary" : "secondary"}
+            className="h-12 min-h-12 flex-1 rounded-xl px-2 py-0"
+            labelClassName="font-semibold"
+            fit
+            onPress={action.onPress}
+          >
+            {action.label}
+          </SystemButton>
         ))}
-        <View className="flex-row gap-1.5">
-          {[".", "0"].map((key) => (
-            <Key key={key} value={key} onPress={() => type(key)} />
-          ))}
-          {buttons}
-        </View>
       </View>
     </View>
   );

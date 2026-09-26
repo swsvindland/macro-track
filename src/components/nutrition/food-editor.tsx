@@ -639,7 +639,7 @@ export function FoodEditor({
                 },
               ]}
             />
-            {/* Full width: a keypad cell is too narrow for its label. */}
+            {/* Its own row: the actions row above has no room for a third label. */}
             {scanAnother && onPick && (
               <SystemButton variant="secondary" icon="barcode-outline" onPress={() => save(true)}>
                 Add & scan another
