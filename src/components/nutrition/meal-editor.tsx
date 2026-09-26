@@ -9,7 +9,7 @@ import {
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
+import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import {
   copyEntries,
   copyMeal,
@@ -240,8 +240,12 @@ export function MealEditor({
                   Use 0.5 for half this meal, or 2 for double.
                 </Text>
               )}
-              <DateInput label="Add to date" value={day} onChange={setDay} />
-              <TimeField value={loggedTime} onChange={setLoggedTime} />
+              <TimeField
+                value={loggedTime}
+                onChange={setLoggedTime}
+                day={day}
+                onDayChange={setDay}
+              />
               {diaryLayout !== "timeline" && (
                 <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
               )}

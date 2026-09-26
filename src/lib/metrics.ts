@@ -82,6 +82,18 @@ export function shortDay(day: string, language: string, weekday = false) {
 export function localDay(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
+/** "Today", "Yesterday", or a short date such as "Fri, Sep 25". */
+export function dayLabel(day: string, locale?: string) {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (day === localDay()) return "Today";
+  if (day === localDay(yesterday)) return "Yesterday";
+  return new Date(`${day}T12:00:00`).toLocaleDateString(locale, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 export function validDay(day: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
   const date = new Date(`${day}T12:00:00`);

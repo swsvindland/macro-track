@@ -406,8 +406,11 @@ test("compiled logger folds the day and time panel away so the search field stay
   const scrolls = [];
   const when = (tree) =>
     tree.find((node) => node.type === "Button" && node.props.icon === "time-outline");
+  // The day rides on the time field's row rather than a field of its own.
   const panel = (tree) =>
-    ["DateInput", "TimeField"].filter((type) => tree.some((node) => node.type === type));
+    tree
+      .filter((node) => node.type === "TimeField")
+      .flatMap((node) => (node.props.onDayChange ? ["day", "time"] : ["time"]));
   let tree = logger.render();
   editor(tree).scrollRef.current = { scrollTo: (to) => scrolls.push(to) };
   logger.flush();
@@ -416,7 +419,7 @@ test("compiled logger folds the day and time panel away so the search field stay
   // Log something eaten earlier: open the panel and pick the time.
   when(tree).props.onPress();
   tree = logger.render();
-  assert.deepEqual(panel(tree), ["DateInput", "TimeField"]);
+  assert.deepEqual(panel(tree), ["day", "time"]);
   assert.equal(when(tree).props.accessibilityState.expanded, true);
   tree.find((node) => node.type === "TimeField").props.onChange("07:00");
   tree = logger.render();
@@ -434,7 +437,7 @@ test("compiled logger folds the day and time panel away so the search field stay
   logger.flush();
   when(tree).props.onPress();
   tree = logger.render();
-  assert.deepEqual(panel(tree), ["DateInput", "TimeField"]);
+  assert.deepEqual(panel(tree), ["day", "time"]);
   search(tree).onChange("othe");
   tree = logger.render();
   logger.flush();

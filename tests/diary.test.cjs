@@ -402,6 +402,11 @@ function nodes(tree) {
 }
 const button = (tree, label) =>
   tree.find((node) => node.type === "Button" && node.props.children === label);
+/** Taps the editor's folded day-and-time line open, if it has one. */
+const openWhen = (tree) =>
+  tree
+    .find((node) => node.type === "Button" && node.props.icon === "time-outline")
+    ?.props.onPress();
 /** Types a keypad key into the amount field as the system keyboard would: a selected amount is replaced. */
 function typeKey(input, key) {
   const { value, selection } = input.props;
@@ -600,6 +605,7 @@ test("compiled entry edit keeps the portion label unless the amount changes", ()
     let closed = 0;
     const props = { entry: diary.entriesForDay(day)[0], close: () => closed++ };
     const render = () => nodes(harness.render(FoodEditor, props));
+    openWhen(render());
     change(render, harness);
     button(harness.pad(render()), "Save changes").props.onPress();
     assert.equal(closed, 1);
@@ -737,8 +743,9 @@ test("logging from Library in the classic layout defaults to the meal for the ti
   const meal = (file, name, props) => {
     const harness = screenHarness(diary);
     const Component = harness.load(`src/components/nutrition/${file}.tsx`)[name];
-    const tree = nodes(harness.render(Component, { close: () => {}, ...props }));
-    return tree.find((node) => node.type === "Choices").props.value;
+    const render = () => nodes(harness.render(Component, { close: () => {}, ...props }));
+    openWhen(render());
+    return render().find((node) => node.type === "Choices").props.value;
   };
   const now = foodTime.mealAtTime(foodTime.currentFoodTime());
   assert.equal(meal("food-editor", "FoodEditor", { initialFood: food }), now);
@@ -996,6 +1003,7 @@ test("compiled entry delete needs no confirmation and hands Home an undoable rec
   const edit = screenHarness(diary);
   const Editor = edit.load("src/components/nutrition/food-editor.tsx").FoodEditor;
   const editProps = { ...props, entry: diary.entriesForDay(day)[0] };
+  openWhen(nodes(edit.render(Editor, editProps)));
   nodes(edit.render(Editor, editProps))
     .find((node) => node.type === "TimeField")
     .props.onChange("09:15");
