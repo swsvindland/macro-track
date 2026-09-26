@@ -1,7 +1,7 @@
 import { TimeField } from "./time-field";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, View } from "react-native";
+import { ActivityIndicator, Linking, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
@@ -17,6 +17,7 @@ import {
   deleteEntry,
   editedPortionLabel,
   toggleFavorite,
+  type DiaryReceipt,
 } from "@/lib/diary";
 import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
@@ -372,6 +373,7 @@ export function FoodEditor({
   pickLabel,
   initialMode = "search",
   initialQuery = "",
+  onChanged,
 }: {
   close: () => void;
   initialDay?: string;
@@ -387,6 +389,8 @@ export function FoodEditor({
   initialMode?: "search" | "barcode" | "custom";
   /** Prefills the search, e.g. with a food a photo showed but the catalog match missed. */
   initialQuery?: string;
+  /** Hears about each diary write, so the caller can offer Undo. */
+  onChanged?: (receipt: DiaryReceipt, change: "saved" | "deleted") => void;
 }) {
   const { refresh } = useNutrition();
   const { number, diaryLayout } = useStore();
@@ -486,7 +490,7 @@ export function FoodEditor({
         return;
       }
       if (!entry && !loggedTime) throw new Error("Choose a time for this entry.");
-      saveEntry({
+      const receipt = saveEntry({
         id: entry?.id,
         day,
         meal: diaryLayout === "timeline" && loggedTime ? mealAtTime(loggedTime) : meal,
@@ -497,6 +501,7 @@ export function FoodEditor({
       });
       refresh();
       close();
+      onChanged?.(receipt, "saved");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save this entry.");
       saveLock.current = false;
@@ -746,24 +751,20 @@ export function FoodEditor({
           {entry && (
             <SystemButton
               variant="danger-soft"
-              onPress={() =>
-                Alert.alert("Delete this entry?", "This removes it from your food diary.", [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: () => {
-                      try {
-                        deleteEntry(entry);
-                        refresh();
-                        close();
-                      } catch {
-                        setError("Couldn't delete this entry. Try again.");
-                      }
-                    },
-                  },
-                ])
-              }
+              onPress={() => {
+                // No confirmation: Home offers Undo instead.
+                if (saveLock.current) return;
+                saveLock.current = true;
+                try {
+                  const receipt = deleteEntry(entry);
+                  refresh();
+                  close();
+                  onChanged?.(receipt, "deleted");
+                } catch {
+                  saveLock.current = false;
+                  setError("Couldn't delete this entry. Try again.");
+                }
+              }}
             >
               Delete entry
             </SystemButton>

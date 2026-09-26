@@ -1,16 +1,24 @@
 import { TimeField } from "./time-field";
-import { currentFoodTime, inFoodGroup, mealAtTime } from "@/lib/food-time";
+import {
+  currentFoodTime,
+  formatClock,
+  inFoodGroup,
+  mealAtTime,
+  validFoodTime,
+} from "@/lib/food-time";
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
 import {
+  copyEntries,
   copyMeal,
   deleteSavedMeal,
   entriesForDay,
   listSavedMeals,
   logSavedMeal,
   saveMeal,
+  type DiaryReceipt,
 } from "@/lib/diary";
 import { localDay, parseNumber } from "@/lib/metrics";
 import { meals, totalNutrients, type Meal } from "@/lib/nutrition";
@@ -27,23 +35,28 @@ export function MealEditor({
   close,
   onLogged,
 }: {
-  source?: { day: string; meal: Meal; group?: string };
+  /** A meal or hour group of a day, or with `ids`, foods chosen on Home. */
+  source?: { day: string; meal: Meal; group?: string; ids?: number[] };
   saved?: SavedMeal;
   initialDay?: string;
   initialMeal?: Meal;
   initialTime?: string;
   close: () => void;
-  onLogged?: (day: string) => void;
+  onLogged?: (receipt: DiaryReceipt) => void;
 }) {
   const { refresh } = useNutrition();
-  const { number, date, diaryLayout } = useStore();
+  const { number, date, diaryLayout, language } = useStore();
   const available = useNutritionQuery(listSavedMeals);
   const sourceItems = useNutritionQuery(
     () =>
       source
-        ? entriesForDay(source.day).filter((entry) => inFoodGroup(entry, source.meal, source.group))
+        ? entriesForDay(source.day).filter((entry) =>
+            source.ids
+              ? source.ids.includes(entry.id)
+              : inFoodGroup(entry, source.meal, source.group)
+          )
         : [],
-    [source?.day, source?.meal, source?.group]
+    [source?.day, source?.meal, source?.group, source?.ids]
   );
   const [selected, setSelected] = useState(saved);
   const [mode, setMode] = useState<"Save meal" | "Copy meal">("Save meal");
@@ -64,17 +77,27 @@ export function MealEditor({
     locked.current = true;
     try {
       if (source && mode === "Save meal") {
-        const result = saveMeal(name, source.day, source.meal, source.group);
+        const result = saveMeal(name, source.day, source.meal, source.group, source.ids);
         refresh();
         setSuccess(`${result.name} is ready in your library.`);
       } else {
         const destinationMeal = diaryLayout === "timeline" ? mealAtTime(loggedTime) : meal;
-        if (source)
-          copyMeal(source.day, source.meal, day, destinationMeal, loggedTime, source.group);
-        else if (selected) logSavedMeal(selected.id, day, destinationMeal, factor, loggedTime);
+        let receipt: DiaryReceipt;
+        if (source?.ids) receipt = copyEntries(source.ids, day, loggedTime, destinationMeal);
+        else if (source)
+          receipt = copyMeal(
+            source.day,
+            source.meal,
+            day,
+            destinationMeal,
+            loggedTime,
+            source.group
+          );
+        else if (selected)
+          receipt = logSavedMeal(selected.id, day, destinationMeal, factor, loggedTime);
         else throw new Error("Choose a saved meal first.");
         refresh();
-        onLogged?.(day);
+        onLogged?.(receipt);
         close();
       }
       setError("");
@@ -83,14 +106,18 @@ export function MealEditor({
       setError(e instanceof Error ? e.message : "Couldn't save this meal.");
     }
   }
+  const locale = language === "zh" ? "zh-CN" : language;
+  const clock = validFoodTime(loggedTime) ? formatClock(loggedTime, locale) : loggedTime;
   return (
     <Editor
       title={
-        source
-          ? `Reuse ${source.group && source.group !== "untimed" ? source.group + ":00" : source.meal.toLowerCase()}`
-          : selected
-            ? selected.name
-            : "Saved meals"
+        source?.ids
+          ? `Reuse ${source.ids.length === 1 ? "1 food" : `${source.ids.length} foods`}`
+          : source
+            ? `Reuse ${source.group && source.group !== "untimed" ? formatClock(`${source.group}:00`, locale) : source.meal.toLowerCase()}`
+            : selected
+              ? selected.name
+              : "Saved meals"
       }
       open
       close={close}
@@ -157,7 +184,11 @@ export function MealEditor({
             <SystemPanel.Body className="gap-4">
               <View className="gap-1">
                 <Text className="text-sm text-muted">
-                  {source ? `${source.meal} · ${date(source.day)}` : "Meal preview"}
+                  {source?.ids
+                    ? date(source.day)
+                    : source
+                      ? `${source.meal} · ${date(source.day)}`
+                      : "Meal preview"}
                 </Text>
                 <Text className="text-3xl font-semibold tabular-nums">
                   {validFactor ? number(totals.calories * factor, 0) : "—"}{" "}
@@ -216,8 +247,8 @@ export function MealEditor({
               )}
               <Text className="text-sm text-muted">
                 Adds {items.length} food entries to{" "}
-                {diaryLayout === "timeline" ? loggedTime : meal.toLowerCase()} on {date(day)}.
-                Existing food stays in place.
+                {diaryLayout === "timeline" ? clock : meal.toLowerCase()} on {date(day)}. Existing
+                food stays in place.
               </Text>
             </>
           )}
@@ -226,7 +257,7 @@ export function MealEditor({
             {source && mode === "Save meal"
               ? "Save to library"
               : diaryLayout === "timeline"
-                ? `Log at ${loggedTime}`
+                ? `Log at ${clock}`
                 : `Add to ${meal.toLowerCase()}`}
           </SystemButton>
           {!source && selected && (

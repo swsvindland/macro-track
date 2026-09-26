@@ -11,18 +11,21 @@ import {
   SystemPanel,
   SystemText as Text,
 } from "@/components/system";
-import { ActionMenu, DayPicker, ErrorText, Screen } from "@/components/ui";
+import { ActionMenu, DayPicker, Screen, SwipeRow } from "@/components/ui";
 import {
+  copyEntries,
   dayStatus,
   dayToConfirm,
+  deleteEntries,
   entriesForDay,
   isCoached,
   setDayStatus,
   targetsForDay,
   typicalAfter,
   typicalDays,
+  undoReceipt,
+  type DiaryReceipt,
 } from "@/lib/diary";
-import { undoLog, type LogReceipt } from "@/lib/fast-log";
 import { openCatalogs } from "@/lib/food-catalog";
 import { modelStatus, type ModelStatus } from "@/lib/local-ai";
 import { localDay } from "@/lib/metrics";
@@ -53,7 +56,7 @@ import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
 import { PhotoLogger, photoLoggingOffered } from "./photo-logger";
-import { CopyDay } from "./copy-day";
+import { CopyDay, MoveEntries } from "./copy-day";
 import { WeighInCard } from "./weigh-in-card";
 
 const statusLabels: Record<DayState, string> = {
@@ -64,6 +67,20 @@ const statusLabels: Record<DayState, string> = {
 };
 type Toast = { message: string; undo?: () => string };
 type WeightSheet = { open: () => void };
+// The swipe actions, for screen readers.
+const rowActions = [
+  { name: "delete", label: "Delete" },
+  { name: "again", label: "Log again now" },
+  { name: "select", label: "Select" },
+];
+const selectionActions = [
+  { key: "move", label: "Move to…", icon: "arrow-redo-outline" },
+  { key: "copy", label: "Copy to today", icon: "copy-outline" },
+  { key: "meal", label: "Save as meal", icon: "bookmark-outline" },
+  { key: "delete", label: "Delete", icon: "trash-outline", destructive: true },
+] as const;
+const named = (rows: FoodEntry[]) =>
+  rows.length === 1 ? rows[0].food.name : `${rows.length} foods`;
 
 /** The Log weight sheet keeps its own state, so typing a weight doesn't re-render Home. */
 function HomeWeightSheet({ ref }: { ref: Ref<WeightSheet> }) {
@@ -97,11 +114,16 @@ export function TodayScreen() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
   const [mealEditor, setMealEditor] = useState<{
-    source: { day: string; meal: Meal; group?: string };
+    source: { day: string; meal: Meal; group?: string; ids?: number[] };
     meal: Meal;
   } | null>(null);
+  // Entries chosen with a long press; null outside selection mode.
+  const [selected, setSelected] = useState<number[] | null>(null);
+  const [moving, setMoving] = useState<FoodEntry[] | null>(null);
   // One-tap answers: a double tap must not land on whatever moved into place.
   const tapLock = useRef(false);
+  // The selection bar gives way to the Undo message in the same spot.
+  const undoLock = useRef(false);
   const undone = useRef(new WeakSet<Toast>());
   useEffect(() => {
     const warm = setTimeout(() => {
@@ -139,6 +161,7 @@ export function TodayScreen() {
         void modelStatus().then(setAi);
         if (hiddenAt && Date.now() - hiddenAt > 2 * 60000) {
           setDay(localDay());
+          setSelected(null);
           scrollRef.current?.scrollTo({ y: 0, animated: false });
         }
         hiddenAt = 0;
@@ -226,6 +249,7 @@ export function TodayScreen() {
     setDay(value);
     setToast(null);
     setError("");
+    setSelected(null);
   }
   function show(message: string, undo?: () => string) {
     setToast({ message, undo });
@@ -234,21 +258,77 @@ export function TodayScreen() {
   function fail(e: unknown, fallback: string) {
     setError(e instanceof Error ? e.message : fallback);
   }
-  function logged(receipt: LogReceipt) {
-    setDay(receipt.day);
-    const kcal = totalNutrients(receipt.entries.map((entry) => entry.nutrients)).calories;
-    const count = receipt.entries.length;
-    const left = receipt.day === day && targets ? targets.calories - totals.calories - kcal : null;
-    show(
-      `${count === 1 ? receipt.entries[0].food.name : `${count} foods`} · ${number(kcal, 0)} kcal` +
+  function undoable(receipt: DiaryReceipt, message: string, undoneMessage: string) {
+    show(message, () => {
+      undoReceipt(receipt);
+      refresh();
+      return undoneMessage;
+    });
+  }
+  function logged(receipt: DiaryReceipt) {
+    const rows = receipt.inserted;
+    if (!rows.length) return;
+    setDay(rows[0].day);
+    const kcal = totalNutrients(rows.map((entry) => entry.nutrients)).calories;
+    const left = rows[0].day === day && targets ? targets.calories - totals.calories - kcal : null;
+    undoable(
+      receipt,
+      `${named(rows)} · ${number(kcal, 0)} kcal` +
         (left === null
           ? " logged"
           : ` · ${number(Math.abs(left), 0)} ${left >= 0 ? "left" : "over"}`),
-      () => {
-        undoLog(receipt);
-        refresh();
-        return "Log undone.";
-      }
+      "Log undone."
+    );
+  }
+  function removed(receipt: DiaryReceipt) {
+    const what = named(receipt.deleted);
+    undoable(receipt, `${what} deleted.`, `${what} restored.`);
+  }
+  function moved(receipt: DiaryReceipt) {
+    setSelected(null);
+    const rows = receipt.moved.map((row) => row.after);
+    const time = rows.every((row) => row.loggedTime === rows[0].loggedTime) && rows[0].loggedTime;
+    undoable(
+      receipt,
+      `${named(rows)} moved to ${label(rows[0].day)}` +
+        (time ? ` at ${formatClock(time, locale)}.` : "."),
+      "Move undone."
+    );
+  }
+  function changed(receipt: DiaryReceipt, change: "saved" | "deleted") {
+    if (change === "deleted") removed(receipt);
+    else if (receipt.moved.length)
+      undoable(receipt, `${receipt.moved[0].after.food.name} updated.`, "Change undone.");
+    else logged(receipt);
+  }
+  function remove(rows: FoodEntry[]) {
+    try {
+      const receipt = deleteEntries(rows.map((row) => row.id));
+      refresh();
+      setSelected(null);
+      removed(receipt);
+    } catch (e) {
+      fail(e, "Could not delete this food.");
+    }
+  }
+  /** Logs the same foods again, eaten now. */
+  function again(rows: FoodEntry[]) {
+    try {
+      const receipt = copyEntries(
+        rows.map((row) => row.id),
+        today,
+        currentFoodTime()
+      );
+      refresh();
+      setSelected(null);
+      logged(receipt);
+    } catch (e) {
+      fail(e, "Could not log this again.");
+    }
+  }
+  function toggle(id: number) {
+    setSelected(
+      (ids) => ids && (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id])
     );
   }
   function locked() {
@@ -260,7 +340,7 @@ export function TodayScreen() {
     return false;
   }
   function undo() {
-    if (!toast?.undo || undone.current.has(toast)) return;
+    if (!toast?.undo || undone.current.has(toast) || undoLock.current) return;
     undone.current.add(toast);
     try {
       show(toast.undo());
@@ -415,8 +495,48 @@ export function TodayScreen() {
           Scan
         </SystemButton>
       </View>
+    </View>
+  );
+
+  const chosen = entries.filter((entry) => selected?.includes(entry.id));
+  function selectionAction(key: (typeof selectionActions)[number]["key"]) {
+    if (key === "move") return setMoving(chosen);
+    if (key === "meal") {
+      setMealEditor({
+        source: { day, meal: chosen[0].meal, ids: chosen.map((entry) => entry.id) },
+        meal: chosen[0].meal,
+      });
+      return setSelected(null);
+    }
+    // The bar gives way to the Undo message, so a double tap must not repeat the
+    // action or land on Undo.
+    if (locked()) return;
+    undoLock.current = true;
+    setTimeout(() => {
+      undoLock.current = false;
+    }, 600);
+    if (key === "copy") again(chosen);
+    else remove(chosen);
+  }
+  // Pinned above the tab bar, so it stays in reach wherever the list is scrolled.
+  const footer = (toast || error || selected) && (
+    <View className="gap-2">
+      {!!error && (
+        <View className="flex-row items-center gap-2 rounded-2xl border border-border bg-overlay py-1 pl-4 pr-1 shadow-overlay">
+          <Text className="flex-1 text-sm text-danger" accessibilityRole="alert">
+            {error}
+          </Text>
+          <SystemIconButton
+            icon="close"
+            iconSize={18}
+            color="muted"
+            accessibilityLabel="Dismiss"
+            onPress={() => setError("")}
+          />
+        </View>
+      )}
       {toast && (
-        <View className="flex-row items-center gap-2 rounded-2xl bg-surface py-1 pl-4 pr-1">
+        <View className="flex-row items-center gap-2 rounded-2xl border border-border bg-overlay py-1 pl-4 pr-1 shadow-overlay">
           <Text className="flex-1 text-sm" numberOfLines={2} accessibilityLiveRegion="polite">
             {toast.message}
           </Text>
@@ -439,13 +559,59 @@ export function TodayScreen() {
           )}
         </View>
       )}
-      <ErrorText message={error} />
+      {selected && (
+        <View className="gap-1 rounded-3xl border border-border bg-overlay p-2 shadow-overlay">
+          <View className="flex-row items-center pl-3">
+            <Text className="flex-1 font-semibold" accessibilityLiveRegion="polite">
+              {chosen.length} selected
+            </Text>
+            <SystemButton
+              variant="ghost"
+              labelClassName="text-accent-soft-foreground"
+              onPress={() => setSelected(null)}
+            >
+              Cancel
+            </SystemButton>
+          </View>
+          <View className="flex-row">
+            {selectionActions.map((action) => (
+              <SystemButton
+                key={action.key}
+                variant="ghost"
+                className="flex-1 flex-col gap-1 px-1 py-2"
+                isDisabled={!chosen.length}
+                accessibilityLabel={action.label}
+                onPress={() => selectionAction(action.key)}
+              >
+                <SystemIcon
+                  name={action.icon}
+                  size={20}
+                  color={"destructive" in action ? "danger" : "accent-soft-foreground"}
+                />
+                <Text
+                  className={`text-xs ${"destructive" in action ? "text-danger" : "text-accent-soft-foreground"}`}
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {action.label}
+                </Text>
+              </SystemButton>
+            ))}
+          </View>
+        </View>
+      )}
     </View>
   );
 
   return (
     <>
-      <Screen title="Today" compact scrollRef={scrollRef} header={header}>
+      <Screen
+        title="Today"
+        compact
+        scrollRef={scrollRef}
+        header={header}
+        footer={footer || undefined}
+      >
         <SystemPanel className="p-4">
           <SystemPanel.Body className="gap-3">
             <Text
@@ -652,6 +818,19 @@ export function TodayScreen() {
                                           meal: group.meal,
                                         }),
                                     },
+                                    {
+                                      key: "move",
+                                      label: "Move all to…",
+                                      icon: "arrow-redo-outline" as const,
+                                      onPress: () => setMoving(group.entries),
+                                    },
+                                    {
+                                      key: "select",
+                                      label: "Select these foods",
+                                      icon: "checkmark-circle-outline" as const,
+                                      onPress: () =>
+                                        setSelected(group.entries.map((entry) => entry.id)),
+                                    },
                                   ]
                                 : []),
                             ],
@@ -659,24 +838,67 @@ export function TodayScreen() {
                         ]}
                       />
                     </View>
-                    {group.entries.map((entry) => (
-                      <SystemButton
-                        key={entry.id}
-                        variant="ghost"
-                        className="justify-start gap-3 rounded-none px-4 py-2"
-                        accessibilityLabel={`Edit ${entry.food.name}`}
-                        onPress={() => setEditor(entry)}
-                      >
-                        <View className="flex-1 gap-0.5">
-                          <Text numberOfLines={1}>{entry.food.name}</Text>
-                          <Text numberOfLines={1} className="text-sm text-muted">
-                            {entry.loggedTime ? `${formatClock(entry.loggedTime, locale)} · ` : ""}
-                            {entry.portionLabel}
-                          </Text>
-                        </View>
-                        <Text className="tabular-nums">{number(entry.nutrients.calories, 0)}</Text>
-                      </SystemButton>
-                    ))}
+                    {group.entries.map((entry) => {
+                      const picked = !!selected?.includes(entry.id);
+                      return (
+                        <SwipeRow
+                          key={entry.id}
+                          enabled={!selected}
+                          swipeLeft={{
+                            label: "Delete",
+                            icon: "trash-outline",
+                            destructive: true,
+                            onAction: () => remove([entry]),
+                          }}
+                          swipeRight={{
+                            label: "Log again",
+                            icon: "repeat",
+                            onAction: () => again([entry]),
+                          }}
+                        >
+                          <SystemButton
+                            variant="ghost"
+                            className="justify-start gap-3 rounded-none px-4 py-2"
+                            accessibilityLabel={
+                              selected ? entry.food.name : `Edit ${entry.food.name}`
+                            }
+                            accessibilityState={selected ? { selected: picked } : undefined}
+                            accessibilityActions={selected ? undefined : rowActions}
+                            onAccessibilityAction={({ nativeEvent }) =>
+                              nativeEvent.actionName === "delete"
+                                ? remove([entry])
+                                : nativeEvent.actionName === "again"
+                                  ? again([entry])
+                                  : setSelected([entry.id])
+                            }
+                            onPress={() => (selected ? toggle(entry.id) : setEditor(entry))}
+                            onLongPress={() =>
+                              selected ? toggle(entry.id) : setSelected([entry.id])
+                            }
+                          >
+                            {selected && (
+                              <SystemIcon
+                                name={picked ? "checkmark-circle" : "ellipse-outline"}
+                                size={22}
+                                color={picked ? "accent-soft-foreground" : "muted"}
+                              />
+                            )}
+                            <View className="flex-1 gap-0.5">
+                              <Text numberOfLines={1}>{entry.food.name}</Text>
+                              <Text numberOfLines={1} className="text-sm text-muted">
+                                {entry.loggedTime
+                                  ? `${formatClock(entry.loggedTime, locale)} · `
+                                  : ""}
+                                {entry.portionLabel}
+                              </Text>
+                            </View>
+                            <Text className="tabular-nums">
+                              {number(entry.nutrients.calories, 0)}
+                            </Text>
+                          </SystemButton>
+                        </SwipeRow>
+                      );
+                    })}
                   </View>
                 ))}
               </SystemPanel.Body>
@@ -713,15 +935,16 @@ export function TodayScreen() {
           onLogged={logged}
         />
       )}
-      {editor && <FoodEditor entry={editor} close={() => setEditor(null)} />}
-      {copying && <CopyDay destination={day} close={() => setCopying(false)} />}
+      {editor && <FoodEditor entry={editor} close={() => setEditor(null)} onChanged={changed} />}
+      {copying && <CopyDay destination={day} close={() => setCopying(false)} onLogged={logged} />}
+      {moving && <MoveEntries entries={moving} close={() => setMoving(null)} onMoved={moved} />}
       {mealEditor && (
         <MealEditor
           source={mealEditor.source}
           initialDay={today}
           initialMeal={mealEditor.meal}
           close={() => setMealEditor(null)}
-          onLogged={setDay}
+          onLogged={logged}
         />
       )}
       <HomeWeightSheet ref={weightSheet} />

@@ -470,7 +470,7 @@ test("saved meals preserve snapshots and scale quantities without changing previ
     food: { ...food, nutrients: { ...food.nutrients, calories: 999 } },
   });
   diary.setDayStatus("2024-01-02", "fasting");
-  assert.equal(diary.logSavedMeal(saved.id, "2024-01-02", "Lunch", 0.5), 2);
+  assert.equal(diary.logSavedMeal(saved.id, "2024-01-02", "Lunch", 0.5).inserted.length, 2);
   const logged = diary.entriesForDay("2024-01-02");
   assert.deepEqual(
     logged.map((entry) => entry.nutrients.calories),
@@ -553,7 +553,7 @@ test("compiled saved-meal form logs the chosen quantity once and closes after su
     initialDay: "2024-01-02",
     initialMeal: "Lunch",
     close: () => closed++,
-    onLogged: (day) => (selectedDay = day),
+    onLogged: (receipt) => (selectedDay = receipt.inserted[0].day),
   };
   let tree = nodes(harness.render(MealEditor, props));
   tree
@@ -965,7 +965,7 @@ test("whole-day copy preserves meal snapshots, appends, reopens only destination
   diary.setDayStatus("2024-01-01", "complete");
   diary.saveEntry({ day: "2024-01-02", meal: "Snacks", food, amount: 50, portionLabel: "50 g" });
   diary.setDayStatus("2024-01-02", "complete");
-  assert.equal(diary.copyDay("2024-01-01", "2024-01-02"), 2);
+  assert.equal(diary.copyDay("2024-01-01", "2024-01-02").inserted.length, 2);
   assert.equal(diary.entriesForDay("2024-01-02").length, 3);
   assert.equal(diary.dayStatus("2024-01-01"), "complete");
   assert.equal(diary.dayStatus("2024-01-02"), "in-progress");

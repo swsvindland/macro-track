@@ -1,18 +1,21 @@
-import { desc, eq } from "drizzle-orm";
-import { db, diaryDays, foodEntries, type FoodEntry } from "@/db";
-import { entriesForDay, favoriteFoods, listSavedMeals, personalFoods, recipeFoods } from "./diary";
+import { desc } from "drizzle-orm";
+import { db, foodEntries, type FoodEntry } from "@/db";
+import {
+  favoriteFoods,
+  listSavedMeals,
+  personalFoods,
+  recipeFoods,
+  touchDays,
+  undoReceipt,
+  type DiaryReceipt,
+} from "./diary";
 import { currentFoodTime, mealAtTime, normalizeFoodTime, validFoodTime } from "./food-time";
 import { localDay, validDay } from "./metrics";
 import { scaleNutrients, validateFood, type Food, type Meal, type MealItem } from "./nutrition";
 
 export type LogChoice = { key: string; title: string; detail: string; items: MealItem[] };
-export type LogReceipt = {
-  day: string;
-  entries: FoodEntry[];
-  before: string;
-  beforeStatus: string | null;
-  afterStatus: string;
-};
+/** A batch log's receipt; `entries` are its new rows, all on `day`. */
+export type LogReceipt = DiaryReceipt & { day: string; entries: FoodEntry[] };
 export function portionFor(food: Food, recent?: FoodEntry): MealItem {
   const reuse =
     recent?.food.basis === food.basis &&
@@ -103,14 +106,7 @@ export function logBatch(
       throw new Error("Check the quantities in this meal.");
   }
   return db.transaction((tx) => {
-    const before = JSON.stringify(entriesForDay(day));
-    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, day)).get();
-    const afterStatus = options.complete
-      ? "complete"
-      : previous?.status === "partial"
-        ? "partial"
-        : "in-progress";
-    const entries = items.map((item) =>
+    const inserted = items.map((item) =>
       tx
         .insert(foodEntries)
         .values({
@@ -123,41 +119,9 @@ export function logBatch(
         .returning()
         .get()
     );
-    tx.insert(diaryDays)
-      .values({ day, status: afterStatus })
-      .onConflictDoUpdate({ target: diaryDays.day, set: { status: afterStatus } })
-      .run();
-    return { day, entries, before, beforeStatus: previous?.status ?? null, afterStatus };
+    const days = touchDays(tx, [day], options.complete ? "complete" : undefined);
+    return { day, entries: inserted, inserted, deleted: [], moved: [], days };
   });
 }
-export function undoLog(receipt: LogReceipt) {
-  db.transaction((tx) => {
-    const existing = entriesForDay(receipt.day);
-    if (
-      receipt.entries.some(
-        (entry) =>
-          JSON.stringify(existing.find((row) => row.id === entry.id)) !== JSON.stringify(entry)
-      )
-    )
-      throw new Error("This log has changed. Edit it in your timeline instead.");
-    for (const entry of receipt.entries)
-      tx.delete(foodEntries).where(eq(foodEntries.id, entry.id)).run();
-    const remaining = entriesForDay(receipt.day);
-    const status = tx.select().from(diaryDays).where(eq(diaryDays.day, receipt.day)).get()?.status;
-    if (JSON.stringify(remaining) === receipt.before && status === receipt.afterStatus) {
-      if (receipt.beforeStatus === null)
-        tx.delete(diaryDays).where(eq(diaryDays.day, receipt.day)).run();
-      else
-        tx.update(diaryDays)
-          .set({
-            status: receipt.beforeStatus as "complete" | "partial" | "fasting" | "in-progress",
-          })
-          .where(eq(diaryDays.day, receipt.day))
-          .run();
-    } else if (!remaining.length && status === "complete")
-      tx.update(diaryDays)
-        .set({ status: "in-progress" })
-        .where(eq(diaryDays.day, receipt.day))
-        .run();
-  });
-}
+/** A log undoes like any other diary write. */
+export const undoLog = undoReceipt;

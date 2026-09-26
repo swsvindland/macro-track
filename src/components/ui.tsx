@@ -1,4 +1,12 @@
-import { createContext, useContext, useId, useState, type ReactNode, type Ref } from "react";
+import {
+  createContext,
+  useContext,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -18,6 +26,10 @@ import { PortalHost } from "heroui-native/portal";
 import { Calendar, DateField } from "heroui-native-pro";
 import { parseDate } from "@internationalized/date";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import ReanimatedSwipeable, {
+  SwipeDirection,
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 import {
   SystemButton,
   SystemIcon,
@@ -42,6 +54,7 @@ export function Screen({
   action,
   compact = false,
   header,
+  footer,
   scrollRef,
 }: {
   title: string;
@@ -52,9 +65,12 @@ export function Screen({
   compact?: boolean;
   /** Replaces the large title with a fixed row that stays put while content scrolls. */
   header?: ReactNode;
+  /** Floats over the content just above the tab bar, e.g. an Undo message. */
+  footer?: ReactNode;
   scrollRef?: Ref<ScrollView>;
 }) {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   return (
     <SafeAreaView
       className="flex-1 bg-background"
@@ -69,7 +85,7 @@ export function Screen({
         contentContainerStyle={{
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
           paddingTop: header ? 4 : compact ? 12 : 24,
-          paddingBottom: 40,
+          paddingBottom: footer ? 160 : 40,
           gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,
@@ -92,7 +108,80 @@ export function Screen({
         )}
         {children}
       </ScrollView>
+      {footer && (
+        <View
+          pointerEvents="box-none"
+          className="absolute inset-x-0 items-center px-4"
+          // On iOS the tab bar floats over the screen and is part of its safe area.
+          style={{ bottom: (Platform.OS === "ios" ? insets.bottom : 0) + 8 }}
+        >
+          <View className="w-full max-w-xl">{footer}</View>
+        </View>
+      )}
     </SafeAreaView>
+  );
+}
+
+type SwipeAction = { label: string; icon: IconName; onAction: () => void; destructive?: boolean };
+
+/**
+ * A list row with an action on each swipe. The action runs as soon as the swipe
+ * passes the threshold, so a destructive one should offer Undo. Screen readers
+ * need the same actions as accessibilityActions on the row itself.
+ */
+export function SwipeRow({
+  children,
+  enabled = true,
+  swipeLeft,
+  swipeRight,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+  swipeLeft?: SwipeAction;
+  swipeRight?: SwipeAction;
+}) {
+  const ref = useRef<SwipeableMethods>(null);
+  const panel = (action: SwipeAction, side: "left" | "right") => (
+    <View
+      className={twMerge(
+        "w-24 justify-center gap-1 px-4",
+        side === "left" ? "items-start" : "items-end",
+        action.destructive ? "bg-danger" : "bg-accent-soft"
+      )}
+    >
+      <SystemIcon
+        name={action.icon}
+        size={20}
+        color={action.destructive ? "danger-foreground" : "accent-soft-foreground"}
+      />
+      <Text
+        className={twMerge(
+          "text-xs font-medium",
+          action.destructive ? "text-danger-foreground" : "text-accent-soft-foreground"
+        )}
+      >
+        {action.label}
+      </Text>
+    </View>
+  );
+  return (
+    <ReanimatedSwipeable
+      ref={ref}
+      enabled={enabled}
+      friction={1.5}
+      leftThreshold={72}
+      rightThreshold={72}
+      renderLeftActions={swipeRight && (() => panel(swipeRight, "left"))}
+      renderRightActions={swipeLeft && (() => panel(swipeLeft, "right"))}
+      onSwipeableWillOpen={(direction) => {
+        const action = direction === SwipeDirection.LEFT ? swipeLeft : swipeRight;
+        // A destructive action removes the row; anything else springs back.
+        if (!action?.destructive) ref.current?.close();
+        action?.onAction();
+      }}
+    >
+      <View className="bg-surface">{children}</View>
+    </ReanimatedSwipeable>
   );
 }
 export function Field({

@@ -1,4 +1,4 @@
-import { currentFoodTime, validFoodTime, inFoodGroup } from "./food-time";
+import { currentFoodTime, validFoodTime, inFoodGroup, mealAtTime } from "./food-time";
 import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import {
   coachingGoals,
@@ -64,6 +64,38 @@ export function setDayStatus(day: string, status: DayState) {
     .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
     .run();
 }
+/** What a diary write changed, so Undo can put exactly that back. */
+export type DiaryReceipt = {
+  inserted: FoodEntry[];
+  deleted: FoodEntry[];
+  moved: { before: FoodEntry; after: FoodEntry }[];
+  /** Each day the write touched: its status before and after, and its rows right after. */
+  days: Record<string, { before: DayState | null; after: DayState; rows: string }>;
+};
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Reopens each day a write touched, keeping a day answered "partial" as it is, and
+ * records what Undo needs. Runs last in the write's transaction.
+ */
+export function touchDays(
+  tx: Transaction,
+  days: string[],
+  status?: DayState
+): DiaryReceipt["days"] {
+  const touched: DiaryReceipt["days"] = {};
+  for (const day of new Set(days)) {
+    const before = tx.select().from(diaryDays).where(eq(diaryDays.day, day)).get()?.status ?? null;
+    const after = status ?? (before === "partial" ? "partial" : "in-progress");
+    tx.insert(diaryDays)
+      .values({ day, status: after })
+      .onConflictDoUpdate({ target: diaryDays.day, set: { status: after } })
+      .run();
+    touched[day] = { before, after, rows: JSON.stringify(entriesForDay(day)) };
+  }
+  return touched;
+}
+
 export function saveEntry({
   id,
   day,
@@ -80,13 +112,13 @@ export function saveEntry({
   amount: number;
   portionLabel: string;
   loggedTime?: string | null;
-}) {
+}): DiaryReceipt {
   if (!validDay(day)) throw new Error("Choose today or an earlier date.");
   if (!meals.includes(meal)) throw new Error("Choose a meal.");
   validateFood(food);
   const nutrients = scaleNutrients(food, amount);
   if (!portionLabel.trim()) throw new Error("Choose a serving.");
-  db.transaction((tx) => {
+  return db.transaction((tx) => {
     const existing =
       id === undefined ? null : tx.select().from(foodEntries).where(eq(foodEntries.id, id)).get();
     if (id !== undefined && !existing) throw new Error("This entry no longer exists.");
@@ -95,30 +127,165 @@ export function saveEntry({
     if (time !== null && !validFoodTime(time))
       throw new Error("Enter a time such as 9:30 or 21:30.");
     const data = { day, meal, food, amount, portionLabel, nutrients, loggedTime: time };
-    if (id === undefined)
-      tx.insert(foodEntries)
+    if (!existing) {
+      const row = tx
+        .insert(foodEntries)
         .values({ ...data, createdAt: Date.now() })
-        .run();
-    else tx.update(foodEntries).set(data).where(eq(foodEntries.id, id)).run();
-    for (const affectedDay of new Set([day, existing?.day].filter((d): d is string => !!d))) {
-      const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, affectedDay)).get();
-      const status = previous?.status === "partial" ? "partial" : "in-progress";
-      tx.insert(diaryDays)
-        .values({ day: affectedDay, status })
-        .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
-        .run();
+        .returning()
+        .get();
+      return { inserted: [row], deleted: [], moved: [], days: touchDays(tx, [day]) };
     }
+    const row = tx
+      .update(foodEntries)
+      .set(data)
+      .where(eq(foodEntries.id, existing.id))
+      .returning()
+      .get();
+    return {
+      inserted: [],
+      deleted: [],
+      moved: [{ before: existing, after: row }],
+      days: touchDays(tx, [day, existing.day]),
+    };
+  });
+}
+
+/** The chosen entries, oldest first, or an error when any of them is gone. */
+function chosenEntries(tx: Transaction, ids: number[]) {
+  const rows = ids.length
+    ? tx
+        .select()
+        .from(foodEntries)
+        .where(inArray(foodEntries.id, ids))
+        .orderBy(foodEntries.createdAt, foodEntries.id)
+        .all()
+    : [];
+  if (!rows.length || rows.length !== new Set(ids).size)
+    throw new Error("Some of these foods are no longer in your diary.");
+  return rows;
+}
+function checkDestination(day: string, time: string | null, meal?: Meal | null) {
+  if (!validDay(day)) throw new Error("Choose today or an earlier date.");
+  if (time !== null && !validFoodTime(time)) throw new Error("Enter a time such as 9:30 or 21:30.");
+  if (meal != null && !meals.includes(meal)) throw new Error("Choose a meal.");
+}
+/**
+ * A new time sets the meal too, unless one is given or `meal` is null; no time, or a
+ * null meal, keeps each entry's own.
+ */
+function placed(row: FoodEntry, day: string, time: string | null, meal?: Meal | null) {
+  return {
+    day,
+    loggedTime: time ?? row.loggedTime,
+    meal: meal === null ? row.meal : (meal ?? (time ? mealAtTime(time) : row.meal)),
+  };
+}
+
+export function deleteEntries(ids: number[]): DiaryReceipt {
+  return db.transaction((tx) => {
+    const rows = chosenEntries(tx, ids);
+    tx.delete(foodEntries).where(inArray(foodEntries.id, ids)).run();
+    const days = touchDays(
+      tx,
+      rows.map((row) => row.day)
+    );
+    return { inserted: [], deleted: rows, moved: [], days };
   });
 }
 export function deleteEntry(entry: FoodEntry) {
+  return deleteEntries([entry.id]);
+}
+
+/** Moves entries to another day and, unless `time` is null, to one new time. */
+export function moveEntries(
+  ids: number[],
+  day: string,
+  time: string | null,
+  meal?: Meal | null
+): DiaryReceipt {
+  checkDestination(day, time, meal);
+  return db.transaction((tx) => {
+    const rows = chosenEntries(tx, ids).filter((row) => {
+      const next = placed(row, day, time, meal);
+      return next.day !== row.day || next.loggedTime !== row.loggedTime || next.meal !== row.meal;
+    });
+    if (!rows.length) throw new Error("Choose a different day or time.");
+    const moved = rows.map((before) => ({
+      before,
+      after: tx
+        .update(foodEntries)
+        .set(placed(before, day, time, meal))
+        .where(eq(foodEntries.id, before.id))
+        .returning()
+        .get(),
+    }));
+    const days = touchDays(tx, [...rows.map((row) => row.day), day]);
+    return { inserted: [], deleted: [], moved, days };
+  });
+}
+
+/** Logs entries again on `day`, at one `time` or, when it is null, at their own times. */
+export function copyEntries(
+  ids: number[],
+  day: string,
+  time: string | null,
+  meal?: Meal | null
+): DiaryReceipt {
+  checkDestination(day, time, meal);
+  return db.transaction((tx) => {
+    const inserted = chosenEntries(tx, ids).map((row) => {
+      const { id: _id, ...copy } = row;
+      return tx
+        .insert(foodEntries)
+        .values({ ...copy, ...placed(row, day, time, meal), createdAt: Date.now() })
+        .returning()
+        .get();
+    });
+    return { inserted, deleted: [], moved: [], days: touchDays(tx, [day]) };
+  });
+}
+
+/**
+ * Puts back what a write changed: rows it added go, rows it deleted return with their
+ * ids and creation times, and moved rows go back where they were. Refuses when any of
+ * those rows changed since. Each day's status goes back too, unless the day changed
+ * since; then it keeps its current answer while that still fits the day's food.
+ */
+export function undoReceipt(receipt: DiaryReceipt) {
   db.transaction((tx) => {
-    tx.delete(foodEntries).where(eq(foodEntries.id, entry.id)).run();
-    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, entry.day)).get();
-    const status = previous?.status === "partial" ? "partial" : "in-progress";
-    tx.insert(diaryDays)
-      .values({ day: entry.day, status })
-      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
-      .run();
+    const current = (id: number) =>
+      tx.select().from(foodEntries).where(eq(foodEntries.id, id)).get();
+    const status = (day: string) =>
+      tx.select().from(diaryDays).where(eq(diaryDays.day, day)).get()?.status;
+    const same = (row: FoodEntry | undefined, entry: FoodEntry) =>
+      JSON.stringify(row) === JSON.stringify(entry);
+    if (
+      receipt.inserted.some((entry) => !same(current(entry.id), entry)) ||
+      receipt.moved.some(({ after }) => !same(current(after.id), after)) ||
+      receipt.deleted.some((entry) => current(entry.id))
+    )
+      throw new Error("This has changed since. Edit it in your diary instead.");
+    const days = Object.entries(receipt.days).map(([day, state]) => ({
+      day,
+      state,
+      untouched: status(day) === state.after && JSON.stringify(entriesForDay(day)) === state.rows,
+    }));
+    for (const entry of receipt.inserted)
+      tx.delete(foodEntries).where(eq(foodEntries.id, entry.id)).run();
+    for (const entry of receipt.deleted) tx.insert(foodEntries).values(entry).run();
+    for (const { before } of receipt.moved) {
+      const { id, ...row } = before;
+      tx.update(foodEntries).set(row).where(eq(foodEntries.id, id)).run();
+    }
+    for (const { day, state, untouched } of days) {
+      const now = status(day),
+        count = entriesForDay(day).length;
+      if (untouched && state.before)
+        tx.update(diaryDays).set({ status: state.before }).where(eq(diaryDays.day, day)).run();
+      else if (untouched) tx.delete(diaryDays).where(eq(diaryDays.day, day)).run();
+      else if ((now === "complete" && !count) || (now === "fasting" && count))
+        tx.update(diaryDays).set({ status: "in-progress" }).where(eq(diaryDays.day, day)).run();
+    }
   });
 }
 /** An edit keeps the entry's label, including an "≈" estimate, unless its amount or basis changed. */
@@ -208,9 +375,12 @@ export function listSavedMeals() {
     .all();
 }
 
-function mealItems(day: string, meal: Meal, group?: string): MealItem[] {
+/** A meal or hour group's entries, or with `ids`, just those entries of the day. */
+function mealItems(day: string, meal: Meal, group?: string, ids?: number[]): MealItem[] {
   if (!validDay(day) || !meals.includes(meal)) throw new Error("Choose a valid day and meal.");
-  const items = entriesForDay(day).filter((entry) => inFoodGroup(entry, meal, group));
+  const items = entriesForDay(day).filter((entry) =>
+    ids ? ids.includes(entry.id) : inFoodGroup(entry, meal, group)
+  );
   if (!items.length) throw new Error("Add food to this meal first.");
   return items.map(({ food, amount, portionLabel, nutrients }) => ({
     food,
@@ -220,13 +390,13 @@ function mealItems(day: string, meal: Meal, group?: string): MealItem[] {
   }));
 }
 
-export function saveMeal(name: string, day: string, meal: Meal, group?: string) {
+export function saveMeal(name: string, day: string, meal: Meal, group?: string, ids?: number[]) {
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 80)
     throw new Error("Give your meal a name up to 80 characters.");
   return db
     .insert(savedMeals)
-    .values({ name: trimmed, items: mealItems(day, meal, group), createdAt: Date.now() })
+    .values({ name: trimmed, items: mealItems(day, meal, group, ids), createdAt: Date.now() })
     .returning()
     .get();
 }
@@ -241,7 +411,7 @@ function addMealItems(
   meal: Meal,
   multiplier: number,
   loggedTime = currentFoodTime()
-) {
+): DiaryReceipt {
   if (!validDay(day) || !meals.includes(meal))
     throw new Error("Choose today or an earlier date and a meal.");
   if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 100)
@@ -274,16 +444,10 @@ function addMealItems(
           : `${Number(amount.toFixed(4))} ${item.food.basis === "serving" ? "serving(s)" : item.food.basis}`,
     };
   });
-  db.transaction((tx) => {
-    for (const entry of entries) tx.insert(foodEntries).values(entry).run();
-    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, day)).get();
-    const status = previous?.status === "partial" ? "partial" : "in-progress";
-    tx.insert(diaryDays)
-      .values({ day, status })
-      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
-      .run();
+  return db.transaction((tx) => {
+    const inserted = entries.map((entry) => tx.insert(foodEntries).values(entry).returning().get());
+    return { inserted, deleted: [], moved: [], days: touchDays(tx, [day]) };
   });
-  return entries.length;
 }
 
 export function copyMeal(
@@ -347,24 +511,21 @@ function resolveRecipeSnapshots(foods: Food[]): Food[] {
   );
 }
 
-export function copyDay(sourceDay: string, destination: string) {
+export function copyDay(sourceDay: string, destination: string): DiaryReceipt {
   if (!validDay(sourceDay) || !validDay(destination) || sourceDay === destination)
     throw new Error("Choose two different dates, today or earlier.");
   const entries = entriesForDay(sourceDay);
   if (!entries.length) throw new Error("There is no food to copy on that day.");
-  db.transaction((tx) => {
-    for (const { id: _id, ...entry } of entries)
-      tx.insert(foodEntries)
+  return db.transaction((tx) => {
+    const inserted = entries.map(({ id: _id, ...entry }) =>
+      tx
+        .insert(foodEntries)
         .values({ ...entry, day: destination, createdAt: Date.now() })
-        .run();
-    const previous = tx.select().from(diaryDays).where(eq(diaryDays.day, destination)).get();
-    const status = previous?.status === "partial" ? "partial" : "in-progress";
-    tx.insert(diaryDays)
-      .values({ day: destination, status })
-      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
-      .run();
+        .returning()
+        .get()
+    );
+    return { inserted, deleted: [], moved: [], days: touchDays(tx, [destination]) };
   });
-  return entries.length;
 }
 
 type TimedCalories = { loggedTime: string; calories: number }[];

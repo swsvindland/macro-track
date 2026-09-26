@@ -128,6 +128,7 @@ function bundledCatalog() {
 // Runs the compiler output with persistent hook slots; native views are plain element types.
 function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const slots = [];
+  const alerts = [];
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
   const react = {
@@ -172,19 +173,27 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       View: "View",
       ActivityIndicator: "ActivityIndicator",
       AppState: {},
-      Alert: { alert: () => {} },
+      Platform: { OS: "ios" },
+      AccessibilityInfo: { announceForAccessibility: () => {} },
+      Alert: { alert: (...args) => alerts.push(args) },
       Linking: { openSettings: async () => {} },
     },
     "heroui-native": {
       TextField: "TextField",
       Input: "Input",
       Label: "Label",
+      Description: "Description",
       FieldError: "FieldError",
     },
     "@/components/system": {
       SystemButton: "Button",
+      SystemIconButton: "IconButton",
+      SystemIcon: "Icon",
+      SystemLabel: "Label",
       SystemPanel: { Body: "PanelBody" },
       SystemText: "Text",
+      PaceBar: "PaceBar",
+      MiniBar: "MiniBar",
     },
     "@/components/ui": {
       Editor: "Editor",
@@ -192,6 +201,10 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       Choices: "Choices",
       DateInput: "DateInput",
       ErrorText: "Error",
+      Screen: "Screen",
+      ActionMenu: "ActionMenu",
+      DayPicker: "DayPicker",
+      SwipeRow: "SwipeRow",
     },
     "@/lib/diary": diary,
     "@/lib/metrics": metrics,
@@ -203,6 +216,18 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
     "./time-field": { TimeField: "TimeField" },
+    // Home's sheets and cards render as plain elements.
+    "expo-router": { router: {} },
+    "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
+    "@/components/measurements/use-measurement-log": { useMeasurementLog: () => ({}) },
+    "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
+    "./fast-logger": { FastLogger: "FastLogger" },
+    "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
+    "./weigh-in-card": { WeighInCard: "WeighInCard" },
+    "./food-editor": { FoodEditor: "FoodEditor" },
+    "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
+    "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },
+    "./meal-editor": { MealEditor: "MealEditor" },
     "expo-camera": {
       CameraView: "CameraView",
       useCameraPermissions: () => [{ granted: true }, async () => {}],
@@ -215,6 +240,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,
+    alerts,
     load: (file) => load(file, dependencies, true),
     render(Component, props) {
       cursor = 0;
@@ -226,7 +252,12 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
 function nodes(tree) {
   if (!tree || typeof tree !== "object") return [];
   if (Array.isArray(tree)) return tree.flatMap(nodes);
-  return [tree, ...nodes(tree.props?.children), ...nodes(tree.props?.footer)];
+  return [
+    tree,
+    ...nodes(tree.props?.children),
+    ...nodes(tree.props?.footer),
+    ...nodes(tree.props?.header),
+  ];
 }
 const button = (tree, label) =>
   tree.find((node) => node.type === "Button" && node.props.children === label);
@@ -536,5 +567,583 @@ test("logging from Library in the classic layout defaults to the meal for the ti
   );
   assert.equal(meal("meal-editor", "MealEditor", { saved }), now);
   assert.equal(meal("meal-editor", "MealEditor", { saved, initialTime: "12:30" }), "Lunch");
+  sqlite.close();
+});
+
+// B6: every diary write returns a receipt that Undo puts back exactly.
+function logAt(diary, day, loggedTime, name) {
+  return diary.saveEntry({
+    day,
+    meal: foodTime.mealAtTime(loggedTime),
+    loggedTime,
+    food: { ...food, name },
+    amount: 100,
+    portionLabel: "100 g",
+  }).inserted[0];
+}
+function diarySnapshot(diary, sqlite, days) {
+  return {
+    rows: days.flatMap((day) => diary.entriesForDay(day)),
+    status: days.map(
+      (day) =>
+        sqlite.prepare("SELECT status FROM diary_days WHERE day = ?").get(day)?.status ?? null
+    ),
+  };
+}
+
+test("delete, move and copy undo to the same rows, ids and day answers", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const days = ["2024-05-01", "2024-05-02", "2024-05-03"];
+  const oats = logAt(diary, days[0], "08:00", "Oats");
+  const soup = logAt(diary, days[0], "12:30", "Soup");
+  const rice = logAt(diary, days[1], "19:00", "Rice");
+  diary.setDayStatus(days[0], "partial");
+  diary.setDayStatus(days[1], "complete");
+  const original = diarySnapshot(diary, sqlite, days);
+  const same = () => assert.deepEqual(diarySnapshot(diary, sqlite, days), original);
+
+  let receipt = diary.deleteEntries([oats.id, rice.id]);
+  assert.deepEqual(
+    receipt.deleted.map((row) => row.id),
+    [oats.id, rice.id]
+  );
+  assert.deepEqual(diary.entriesForDay(days[0]), [soup]);
+  assert.equal(diary.dayStatus(days[0]), "partial", "a partial day stays partial");
+  assert.equal(diary.dayStatus(days[1]), "in-progress");
+  diary.undoReceipt(receipt);
+  same();
+  assert.throws(() => diary.undoReceipt(receipt), /changed/, "Undo runs once");
+
+  receipt = diary.moveEntries([oats.id, soup.id], days[1], "18:15");
+  assert.ok(
+    receipt.moved.every(
+      ({ after }) =>
+        after.day === days[1] && after.loggedTime === "18:15" && after.meal === "Dinner"
+    )
+  );
+  assert.equal(diary.entriesForDay(days[0]).length, 0);
+  assert.equal(diary.dayStatus(days[1]), "in-progress");
+  diary.undoReceipt(receipt);
+  same();
+
+  // Without a time, only the day changes.
+  receipt = diary.moveEntries([oats.id, soup.id], days[2], null);
+  assert.deepEqual(
+    receipt.moved.map(({ after }) => `${after.day} ${after.loggedTime} ${after.meal}`),
+    [`${days[2]} 08:00 Breakfast`, `${days[2]} 12:30 Lunch`]
+  );
+  diary.undoReceipt(receipt);
+  same();
+
+  receipt = diary.copyEntries([soup.id, rice.id], days[2], "13:00");
+  assert.equal(receipt.inserted.length, 2);
+  assert.ok(
+    receipt.inserted.every(
+      (row) => row.day === days[2] && row.loggedTime === "13:00" && row.meal === "Lunch"
+    )
+  );
+  assert.equal(diary.dayStatus(days[1]), "complete", "copying leaves the source day alone");
+  diary.undoReceipt(receipt);
+  same();
+
+  assert.throws(() => diary.moveEntries([oats.id], days[0], "08:00"), /different/);
+  assert.throws(() => diary.deleteEntries([oats.id, 9999]));
+  assert.throws(() => diary.deleteEntries([]));
+  assert.throws(() => diary.moveEntries([oats.id], "2999-01-01", null));
+  assert.throws(() => diary.copyEntries([oats.id], days[2], "25:00"));
+  same();
+  sqlite.close();
+});
+
+test("undo is refused after a later edit, and a later change keeps the day's answer", () => {
+  const { diary, fastLog, sqlite } = diaryDatabase();
+  const day = "2024-06-01";
+  const oats = logAt(diary, day, "08:00", "Oats");
+
+  const copied = diary.copyEntries([oats.id], day, "09:00");
+  diary.saveEntry({ ...copied.inserted[0], amount: 50, portionLabel: "50 g" });
+  assert.throws(() => diary.undoReceipt(copied), /changed/);
+  assert.equal(diary.entriesForDay(day).length, 2);
+
+  const moved = diary.moveEntries([oats.id], day, "10:00");
+  diary.saveEntry({ ...moved.moved[0].after, loggedTime: "10:30" });
+  assert.throws(() => diary.undoReceipt(moved));
+  assert.equal(diary.entriesForDay(day)[0].loggedTime, "10:30");
+
+  // An edit is a write too: Undo puts the old day, time and meal back.
+  const before = diary.entriesForDay(day)[0];
+  const edit = diary.saveEntry({ ...before, day: "2024-06-02", loggedTime: "19:00" });
+  assert.deepEqual(edit.moved[0].before, before);
+  diary.undoReceipt(edit);
+  assert.deepEqual(diary.entriesForDay(day)[0], before);
+  assert.equal(diary.entriesForDay("2024-06-02").length, 0);
+
+  // A deleted food returns even after other logging, but the day stays open for it.
+  diary.setDayStatus(day, "complete");
+  const removed = diary.deleteEntries([before.id]);
+  fastLog.logBatch([fastLog.portionFor(food)], { day, time: "20:00" });
+  diary.undoReceipt(removed);
+  assert.equal(diary.entriesForDay(day).length, 3);
+  assert.equal(diary.dayStatus(day), "in-progress");
+  // A day answered again since keeps that answer.
+  diary.setDayStatus(day, "complete");
+  const again = diary.deleteEntries([before.id]);
+  diary.setDayStatus(day, "partial");
+  diary.undoReceipt(again);
+  assert.equal(diary.dayStatus(day), "partial");
+  sqlite.close();
+});
+
+test("copying a day, a meal or a saved meal can be undone", () => {
+  const { diary, fastLog, sqlite } = diaryDatabase();
+  logAt(diary, "2024-07-01", "08:00", "Oats");
+  logAt(diary, "2024-07-01", "08:10", "Coffee");
+  diary.setDayStatus("2024-07-01", "complete");
+  logAt(diary, "2024-07-02", "12:00", "Soup");
+  diary.setDayStatus("2024-07-02", "partial");
+  const days = ["2024-07-01", "2024-07-02", "2024-07-03"];
+  const original = diarySnapshot(diary, sqlite, days);
+  const same = () => assert.deepEqual(diarySnapshot(diary, sqlite, days), original);
+
+  let receipt = diary.copyDay("2024-07-01", "2024-07-02");
+  assert.equal(receipt.inserted.length, 2);
+  assert.equal(diary.dayStatus("2024-07-02"), "partial");
+  diary.undoReceipt(receipt);
+  same();
+  diary.undoReceipt(diary.copyDay("2024-07-01", "2024-07-03"));
+  same();
+  receipt = diary.copyMeal("2024-07-01", "Breakfast", "2024-07-02", "Dinner", "18:00");
+  assert.deepEqual(
+    receipt.inserted.map((row) => `${row.food.name} ${row.loggedTime} ${row.meal}`),
+    ["Oats 18:00 Dinner", "Coffee 18:00 Dinner"]
+  );
+  diary.undoReceipt(receipt);
+  same();
+  const saved = diary.saveMeal("Usual", "2024-07-01", "Breakfast");
+  receipt = diary.logSavedMeal(saved.id, "2024-07-03", "Lunch", 2, "12:00");
+  assert.deepEqual(
+    receipt.inserted.map((row) => row.amount),
+    [200, 200]
+  );
+  diary.undoReceipt(receipt);
+  same();
+  // A log that finished the day undoes to the answer before it.
+  const log = fastLog.logBatch([fastLog.portionFor(food)], {
+    day: "2024-07-02",
+    time: "21:00",
+    complete: true,
+  });
+  assert.equal(diary.dayStatus("2024-07-02"), "complete");
+  assert.deepEqual(log.entries, log.inserted);
+  fastLog.undoLog(log);
+  same();
+  sqlite.close();
+});
+
+test("chosen foods save as a meal on their own", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const day = "2024-08-01";
+  const oats = logAt(diary, day, "08:00", "Oats");
+  logAt(diary, day, "08:10", "Coffee");
+  const soup = logAt(diary, day, "12:30", "Soup");
+  const saved = diary.saveMeal("Pair", day, "Breakfast", undefined, [soup.id, oats.id]);
+  assert.deepEqual(
+    saved.items.map((item) => item.food.name),
+    ["Oats", "Soup"]
+  );
+  sqlite.close();
+});
+
+test("compiled time field sets the time from a chip and previews it as Home shows it", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 12, 10) });
+  const render = (language, value, onChange = () => {}) => {
+    const harness = screenHarness({}, { language });
+    const { TimeField } = harness.load("src/components/nutrition/time-field.tsx");
+    return nodes(harness.render(TimeField, { value, onChange }));
+  };
+  let value = "08:00";
+  const chips = render("en-US", value, (next) => (value = next)).filter(
+    (node) => node.type === "Button" && node.props.accessibilityLabel
+  );
+  assert.deepEqual(
+    chips.map((node) => node.props.children),
+    ["Now", "−15 m", "−30 m", "−1 h"]
+  );
+  const times = chips.map((chip) => (chip.props.onPress(), value));
+  assert.deepEqual(times, ["12:10", "11:55", "11:40", "11:10"]);
+  const preview = (language, time) =>
+    render(language, time).find((node) => node.type === "Description")?.props.children;
+  assert.equal(preview("en-US", "21:30"), foodTime.formatClock("21:30", "en-US"));
+  assert.match(preview("en-US", "21:30"), /9:30/);
+  assert.equal(preview("en-GB", "21:30"), undefined, "no preview when the field already reads so");
+  assert.equal(preview("en-US", "9:3"), undefined);
+});
+
+test("compiled entry delete needs no confirmation and hands Home an undoable receipt", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const day = "2024-09-01";
+  const oats = logAt(diary, day, "08:00", "Oats");
+  diary.setDayStatus(day, "partial");
+  const harness = screenHarness(diary);
+  const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
+  const changes = [];
+  let closed = 0;
+  const props = {
+    entry: oats,
+    close: () => closed++,
+    onChanged: (receipt, change) => changes.push([receipt, change]),
+  };
+  const remove = button(nodes(harness.render(FoodEditor, props)), "Delete entry");
+  remove.props.onPress();
+  remove.props.onPress();
+  assert.equal(harness.alerts.length, 0);
+  assert.equal(closed, 1);
+  assert.equal(diary.entriesForDay(day).length, 0);
+  assert.deepEqual(
+    changes.map(([receipt, change]) => [receipt.deleted[0].id, change]),
+    [[oats.id, "deleted"]]
+  );
+  diary.undoReceipt(changes[0][0]);
+  assert.deepEqual(diary.entriesForDay(day), [oats]);
+  assert.equal(diary.dayStatus(day), "partial");
+
+  // Saving an edit reports its receipt too.
+  const edit = screenHarness(diary);
+  const Editor = edit.load("src/components/nutrition/food-editor.tsx").FoodEditor;
+  const editProps = { ...props, entry: diary.entriesForDay(day)[0] };
+  nodes(edit.render(Editor, editProps))
+    .find((node) => node.type === "TimeField")
+    .props.onChange("09:15");
+  button(nodes(edit.render(Editor, editProps)), "Save changes").props.onPress();
+  const [receipt, change] = changes.at(-1);
+  assert.equal(change, "saved");
+  assert.equal(receipt.moved[0].after.loggedTime, "09:15");
+  diary.undoReceipt(receipt);
+  assert.deepEqual(diary.entriesForDay(day), [oats]);
+  sqlite.close();
+});
+
+function homeScreen(diary) {
+  const harness = screenHarness(diary, { diaryLayout: "timeline", hideEmptyHours: true });
+  const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
+  const render = () => nodes(harness.render(TodayScreen));
+  const row = (tree, name) =>
+    tree.find(
+      (node) =>
+        node.type === "Button" &&
+        (node.props.accessibilityLabel === `Edit ${name}` ||
+          (node.props.accessibilityState && node.props.accessibilityLabel === name))
+    );
+  const swipe = (tree, name) =>
+    tree.find(
+      (node) => node.type === "SwipeRow" && nodes(node.props.children).includes(row(tree, name))
+    );
+  const says = (tree, pattern) =>
+    tree.some(
+      (node) =>
+        node.type === "Text" &&
+        typeof node.props.children === "string" &&
+        pattern.test(node.props.children)
+    );
+  return { render, row, swipe, says };
+}
+
+test("compiled Home deletes with a swipe, logs again with the other and undoes both", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  const oats = logAt(diary, today, "08:00", "Oats");
+  const eggs = logAt(diary, today, "08:30", "Eggs");
+  diary.setDayStatus(today, "partial");
+  const { render, row, swipe, says } = homeScreen(diary);
+
+  let tree = render();
+  assert.equal(swipe(tree, "Oats").props.enabled, true);
+  swipe(tree, "Oats").props.swipeLeft.onAction();
+  assert.deepEqual(diary.entriesForDay(today), [eggs]);
+  tree = render();
+  assert.ok(says(tree, /^Oats deleted\.$/));
+  assert.equal(row(tree, "Oats"), undefined);
+  button(tree, "Undo").props.onPress();
+  assert.deepEqual(diary.entriesForDay(today), [oats, eggs], "the same rows come back");
+  assert.equal(diary.dayStatus(today), "partial");
+  assert.ok(says(render(), /^Oats restored\.$/));
+
+  swipe(render(), "Eggs").props.swipeRight.onAction();
+  const again = diary.entriesForDay(today).at(-1);
+  assert.equal(again.food.name, "Eggs");
+  assert.notEqual(again.id, eggs.id);
+  assert.equal(again.loggedTime, "12:00");
+  tree = render();
+  assert.ok(says(tree, /^Eggs · 180 kcal/));
+  button(tree, "Undo").props.onPress();
+  assert.deepEqual(diary.entriesForDay(today), [oats, eggs]);
+
+  // VoiceOver reaches the same actions from the row.
+  const oatsRow = row(render(), "Oats");
+  assert.deepEqual(
+    oatsRow.props.accessibilityActions.map((action) => action.name),
+    ["delete", "again", "select"]
+  );
+  oatsRow.props.onAccessibilityAction({ nativeEvent: { actionName: "delete" } });
+  assert.deepEqual(diary.entriesForDay(today), [eggs]);
+  button(render(), "Undo").props.onPress();
+  assert.deepEqual(diary.entriesForDay(today), [oats, eggs]);
+  sqlite.close();
+});
+
+test("compiled Home selection copies, deletes, moves and saves chosen foods with Undo", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  const yesterday = nutrition.shiftDay(today, -1);
+  const oats = logAt(diary, yesterday, "08:00", "Oats");
+  const eggs = logAt(diary, yesterday, "08:30", "Eggs");
+  diary.setDayStatus(yesterday, "complete");
+  const { render, row, swipe, says } = homeScreen(diary);
+  const action = (tree, label) =>
+    tree.find((node) => node.type === "Button" && node.props.accessibilityLabel === label);
+  const select = () => {
+    render()
+      .find((node) => node.type === "DayPicker")
+      .props.onChange(yesterday);
+    row(render(), "Oats").props.onLongPress();
+    row(render(), "Eggs").props.onPress();
+    const tree = render();
+    assert.deepEqual(
+      tree.find((node) => node.type === "Text" && node.props.children?.[1] === " selected").props
+        .children[0],
+      2
+    );
+    assert.equal(row(tree, "Eggs").props.accessibilityState.selected, true);
+    assert.equal(swipe(tree, "Oats").props.enabled, false, "no swiping while choosing");
+    return tree;
+  };
+
+  action(select(), "Copy to today").props.onPress();
+  const copies = diary.entriesForDay(today);
+  assert.deepEqual(
+    copies.map((entry) => entry.food.name),
+    ["Oats", "Eggs"]
+  );
+  let tree = render();
+  assert.ok(says(tree, /^2 foods · 360 kcal/));
+  assert.ok(!says(tree, /selected/));
+  button(tree, "Undo").props.onPress();
+  assert.equal(diary.entriesForDay(today).length, 2, "a quick second tap can't land on Undo");
+  t.mock.timers.tick(1000);
+  button(render(), "Undo").props.onPress();
+  assert.equal(diary.entriesForDay(today).length, 0);
+
+  action(select(), "Delete").props.onPress();
+  assert.equal(diary.entriesForDay(yesterday).length, 0);
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  assert.ok(says(render(), /^2 foods deleted\.$/));
+  t.mock.timers.tick(1000);
+  button(render(), "Undo").props.onPress();
+  assert.deepEqual(diary.entriesForDay(yesterday), [oats, eggs]);
+  assert.equal(diary.dayStatus(yesterday), "complete");
+
+  action(select(), "Move to…").props.onPress();
+  const moving = render().find((node) => node.type === "MoveEntries");
+  assert.deepEqual(
+    moving.props.entries.map((entry) => entry.id),
+    [oats.id, eggs.id]
+  );
+  moving.props.close();
+  moving.props.onMoved(diary.moveEntries([oats.id, eggs.id], today, "09:00"));
+  assert.ok(says(render(), /^2 foods moved to Today at /));
+  button(render(), "Undo").props.onPress();
+  assert.deepEqual(diary.entriesForDay(yesterday), [oats, eggs]);
+
+  action(select(), "Save as meal").props.onPress();
+  tree = render();
+  const editor = tree.find((node) => node.type === "MealEditor");
+  assert.deepEqual(editor.props.source, {
+    day: yesterday,
+    meal: "Breakfast",
+    ids: [oats.id, eggs.id],
+  });
+  assert.ok(!says(tree, /selected/));
+  editor.props.close();
+
+  // The hour's menu moves all of its foods at once.
+  const menu = render().find(
+    (node) => node.type === "ActionMenu" && /^Options for /.test(node.props.accessibilityLabel)
+  );
+  menu.props.sections[0].actions.find((item) => item.label === "Move all to…").onPress();
+  assert.deepEqual(
+    render()
+      .find((node) => node.type === "MoveEntries")
+      .props.entries.map((entry) => entry.id),
+    [oats.id, eggs.id]
+  );
+  sqlite.close();
+});
+
+test("compiled move sheet changes day and time together or keeps each food's time", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  const yesterday = nutrition.shiftDay(today, -1);
+  const oats = logAt(diary, today, "08:00", "Oats");
+  const soup = logAt(diary, today, "12:30", "Soup");
+  const sheet = (entries) => {
+    const harness = screenHarness(diary, { diaryLayout: "timeline" });
+    const { MoveEntries } = harness.load("src/components/nutrition/copy-day.tsx");
+    const receipts = [];
+    let closed = 0;
+    const props = { entries, close: () => closed++, onMoved: (r) => receipts.push(r) };
+    const render = () => nodes(harness.render(MoveEntries, props));
+    return { render, receipts, closed: () => closed };
+  };
+  let move = sheet([oats, soup]);
+  assert.equal(move.render().find((node) => node.type === "Choices").props.value, "keep");
+  assert.ok(!move.render().some((node) => node.type === "TimeField"));
+  move
+    .render()
+    .find((node) => node.type === "DateInput")
+    .props.onChange(yesterday);
+  const submit = button(move.render(), "Move");
+  submit.props.onPress();
+  submit.props.onPress();
+  assert.equal(move.closed(), 1);
+  assert.equal(move.receipts.length, 1);
+  assert.deepEqual(
+    diary.entriesForDay(yesterday).map((entry) => entry.loggedTime),
+    ["08:00", "12:30"]
+  );
+  diary.undoReceipt(move.receipts[0]);
+
+  move = sheet([oats]);
+  assert.ok(!move.render().some((node) => node.type === "Choices"));
+  move
+    .render()
+    .find((node) => node.type === "TimeField")
+    .props.onChange("07:15");
+  button(move.render(), "Move").props.onPress();
+  assert.deepEqual(
+    diary.entriesForDay(today).map((entry) => `${entry.food.name} ${entry.loggedTime}`),
+    ["Oats 07:15", "Soup 12:30"]
+  );
+  sqlite.close();
+});
+
+test("classic-layout move sheet keeps each food's meal unless one is chosen", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  const yesterday = nutrition.shiftDay(today, -1);
+  const oats = logAt(diary, yesterday, "08:00", "Oats");
+  const rice = logAt(diary, yesterday, "19:00", "Rice");
+  const toast = logAt(diary, yesterday, "08:30", "Toast");
+  const sheet = (entries) => {
+    const harness = screenHarness(diary);
+    const { MoveEntries } = harness.load("src/components/nutrition/copy-day.tsx");
+    const receipts = [];
+    const props = { entries, close: () => {}, onMoved: (r) => receipts.push(r) };
+    const render = () => nodes(harness.render(MoveEntries, props));
+    const choices = (value) =>
+      render().find((node) => node.type === "Choices" && node.props.values.includes(value));
+    return { render, receipts, choices };
+  };
+  const placedOn = (day) =>
+    diary
+      .entriesForDay(day)
+      .map((entry) => `${entry.food.name} ${entry.loggedTime} ${entry.meal}`)
+      .sort();
+
+  let move = sheet([oats, rice]);
+  assert.equal(move.choices("Breakfast").props.value, "keep");
+  assert.equal(move.choices("Breakfast").props.label("keep"), "Keep their meals");
+  move
+    .render()
+    .find((node) => node.type === "DateInput")
+    .props.onChange(today);
+  button(move.render(), "Move").props.onPress();
+  assert.deepEqual(placedOn(today), ["Oats 08:00 Breakfast", "Rice 19:00 Dinner"]);
+  diary.undoReceipt(move.receipts[0]);
+
+  // One new time still keeps each meal; choosing a meal files them all there.
+  move = sheet([oats, rice]);
+  move.choices("one").props.onChange("one");
+  move
+    .render()
+    .find((node) => node.type === "TimeField")
+    .props.onChange("12:00");
+  button(move.render(), "Move").props.onPress();
+  assert.deepEqual(placedOn(yesterday), [
+    "Oats 12:00 Breakfast",
+    "Rice 12:00 Dinner",
+    "Toast 08:30 Breakfast",
+  ]);
+  diary.undoReceipt(move.receipts[0]);
+  move = sheet([oats, rice]);
+  move.choices("Breakfast").props.onChange("Lunch");
+  button(move.render(), "Move").props.onPress();
+  assert.deepEqual(placedOn(yesterday), [
+    "Oats 08:00 Lunch",
+    "Rice 19:00 Lunch",
+    "Toast 08:30 Breakfast",
+  ]);
+  diary.undoReceipt(move.receipts[0]);
+
+  // Foods from one meal start on that meal, with no keep option.
+  move = sheet([oats, toast]);
+  assert.equal(move.choices("Breakfast").props.value, "Breakfast");
+  assert.ok(!move.choices("Breakfast").props.values.includes("keep"));
+
+  const receipt = diary.copyEntries([oats.id, rice.id], today, "13:00", null);
+  assert.deepEqual(
+    receipt.inserted.map((row) => `${row.loggedTime} ${row.meal}`),
+    ["13:00 Breakfast", "13:00 Dinner"]
+  );
+  sqlite.close();
+});
+
+test("compiled copy-day and reuse sheets hand Home an undoable receipt", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  const yesterday = nutrition.shiftDay(today, -1);
+  const oats = logAt(diary, yesterday, "08:00", "Oats");
+  logAt(diary, yesterday, "08:10", "Coffee");
+  const soup = logAt(diary, yesterday, "12:30", "Soup");
+
+  let harness = screenHarness(diary);
+  const { CopyDay } = harness.load("src/components/nutrition/copy-day.tsx");
+  const receipts = [];
+  const copyProps = { destination: today, close: () => {}, onLogged: (r) => receipts.push(r) };
+  const add = nodes(harness.render(CopyDay, copyProps)).find(
+    (node) => node.type === "Button" && [node.props.children].flat().join("") === "Add 3 foods"
+  );
+  add.props.onPress();
+  add.props.onPress();
+  assert.equal(receipts.length, 1);
+  assert.equal(diary.entriesForDay(today).length, 3);
+  diary.undoReceipt(receipts[0]);
+  assert.equal(diary.entriesForDay(today).length, 0);
+
+  // Chosen foods reuse as a meal of their own.
+  harness = screenHarness(diary, { diaryLayout: "timeline" });
+  const { MealEditor } = harness.load("src/components/nutrition/meal-editor.tsx");
+  const props = {
+    source: { day: yesterday, meal: "Breakfast", ids: [oats.id, soup.id] },
+    initialDay: today,
+    initialTime: "13:00",
+    close: () => {},
+    onLogged: (r) => receipts.push(r),
+  };
+  let tree = nodes(harness.render(MealEditor, props));
+  assert.equal(tree.find((node) => node.type === "Editor").props.title, "Reuse 2 foods");
+  tree.find((node) => node.type === "Choices").props.onChange("Copy meal");
+  tree = nodes(harness.render(MealEditor, props));
+  tree
+    .find((node) => node.type === "Button" && /^Log at /.test(node.props.children))
+    .props.onPress();
+  const receipt = receipts.at(-1);
+  assert.deepEqual(
+    receipt.inserted.map((row) => `${row.food.name} ${row.day} ${row.loggedTime} ${row.meal}`),
+    [`Oats ${today} 13:00 Lunch`, `Soup ${today} 13:00 Lunch`]
+  );
+  diary.undoReceipt(receipt);
+  assert.equal(diary.entriesForDay(today).length, 0);
   sqlite.close();
 });
