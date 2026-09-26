@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Macro Track",
+    "name": "Vector Macros",
     "slug": "macro-track",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,6 +16,7 @@
       "supportsTablet": false,
       "bundleIdentifier": "dev.svindland.vector.macro",
       "infoPlist": {
+        "CFBundleDisplayName": "Macros",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -60,8 +61,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Choose progress photos to save privately in Macro Track.",
-          "cameraPermission": "Take progress photos to save privately in Macro Track.",
+          "photosPermission": "Choose progress photos to save privately in Vector Macros.",
+          "cameraPermission": "Take progress photos to save privately in Vector Macros.",
           "microphonePermission": false
         }
       ],
@@ -70,13 +71,19 @@
         "@kingstinct/react-native-healthkit",
         {
           "background": false,
-          "NSHealthShareUsageDescription": "Import your weight and height into Macro Track when you choose to sync.",
-          "NSHealthUpdateUsageDescription": "Save your Macro Track weight, height, waist circumference and recorded body fat to Apple Health when you choose to sync."
+          "NSHealthShareUsageDescription": "Import your weight and height into Vector Macros when you choose to sync.",
+          "NSHealthUpdateUsageDescription": "Save your Vector Macros weight, height, waist circumference and recorded body fat to Apple Health when you choose to sync."
         }
       ],
       "react-native-health-connect",
       "./plugins/with-health-rationale",
       "./plugins/with-scene-lifecycle",
+      [
+        "./plugins/with-launcher-name",
+        {
+          "name": "Macros"
+        }
+      ],
       [
         "./plugins/with-kotlin-plugin-version",
         {
@@ -96,7 +103,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan food barcodes with Macro Track.",
+          "cameraPermission": "Scan food barcodes with Vector Macros.",
           "recordAudioAndroid": false
         }
       ]

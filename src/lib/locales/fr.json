@@ -74,7 +74,7 @@
   "photoPermission": "Autorisez les photos dans les réglages du téléphone.",
   "healthUnavailable": "La synchro nécessite une version native et un service de santé compatible.",
   "syncFailed": "Échec de la synchro. Vérifiez les autorisations et réessayez.",
-  "healthWeightDenied": "Autorisez Macro Track à lire le poids dans les autorisations Santé, puis réessayez.",
+  "healthWeightDenied": "Autorisez Macros à lire le poids dans les autorisations Santé, puis réessayez.",
   "syncDone": "Synchro terminée",
   "healthPrivacy": "Le poids et la taille se synchronisent dans les deux sens. La masse grasse saisie est exportée sur les deux plateformes, et le tour de taille vers Apple Health. Les autres mesures et estimations restent dans l’app.",
   "trendHelp": "Moyenne quotidienne lissée avec une demi-vie de 7 jours. Les premières tendances sont provisoires.",

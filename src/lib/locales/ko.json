@@ -74,7 +74,7 @@
   "photoPermission": "기기 설정에서 사진 접근을 허용하세요.",
   "healthUnavailable": "동기화에는 네이티브 빌드와 지원되는 건강 서비스가 필요합니다.",
   "syncFailed": "동기화하지 못했습니다. 권한을 확인하고 다시 시도하세요.",
-  "healthWeightDenied": "건강 권한에서 Macro Track의 체중 읽기를 허용한 후 다시 시도하세요.",
+  "healthWeightDenied": "건강 권한에서 Macros의 체중 읽기를 허용한 후 다시 시도하세요.",
   "syncDone": "동기화 완료",
   "healthPrivacy": "체중과 키는 양방향으로 동기화됩니다. 기록한 체지방률은 두 플랫폼에, 허리둘레는 Apple Health에도 내보냅니다. 다른 둘레와 추정치는 앱에 유지됩니다.",
   "trendHelp": "일일 평균을 반감기 7일로 평활화합니다. 초기 추세는 잠정적입니다.",

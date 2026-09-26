@@ -74,7 +74,7 @@
   "photoPermission": "Consenti l’accesso alle foto nelle impostazioni.",
   "healthUnavailable": "La sincronizzazione richiede una build nativa e un servizio salute compatibile.",
   "syncFailed": "Sincronizzazione non riuscita. Controlla i permessi e riprova.",
-  "healthWeightDenied": "Consenti a Macro Track di leggere il peso nei permessi salute, poi riprova.",
+  "healthWeightDenied": "Consenti a Macros di leggere il peso nei permessi salute, poi riprova.",
   "syncDone": "Sincronizzazione completata",
   "healthPrivacy": "Peso e altezza si sincronizzano in entrambe le direzioni. Il grasso corporeo registrato viene esportato su entrambe le piattaforme e la vita su Apple Health. Le altre misure e stime restano nell’app.",
   "trendHelp": "Media giornaliera smussata con emivita di 7 giorni. Le prime tendenze sono provvisorie.",

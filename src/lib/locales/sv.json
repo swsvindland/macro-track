@@ -74,7 +74,7 @@
   "photoPermission": "Tillåt fotoåtkomst i enhetens inställningar.",
   "healthUnavailable": "Synk kräver en native-version och en hälsotjänst som stöds.",
   "syncFailed": "Synk misslyckades. Kontrollera behörigheter och försök igen.",
-  "healthWeightDenied": "Låt Macro Track läsa vikt i hälsobehörigheterna och försök igen.",
+  "healthWeightDenied": "Låt Macros läsa vikt i hälsobehörigheterna och försök igen.",
   "syncDone": "Synk klar",
   "healthPrivacy": "Vikt och längd synkas åt båda håll. Registrerat kroppsfett exporteras på båda plattformarna, midjeomkrets även till Apple Health. Övriga mått och uppskattningar stannar i appen.",
   "trendHelp": "Utjämnat dagsmedel med 7 dagars halveringstid. Tidiga trender är preliminära.",

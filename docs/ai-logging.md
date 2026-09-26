@@ -21,7 +21,7 @@ Branded menu items and packaged foods are logged whole: a Domino's pizza is one 
 | iPhone   | Apple Foundation Models (`SystemLanguageModel`), with Apple Intelligence | iOS 27 on eligible iPhones               | iOS 26+      |
 | Android  | Gemini Nano through ML Kit GenAI Prompt API (`genai-prompt:1.0.0-beta4`) | Supported Pixel, Galaxy and other models | Same devices |
 
-Only Apple's on-device model is used, never Private Cloud Compute. On Android, AICore installs Gemini Nano; the logger offers a one-time **Download Gemini Nano** when the model is downloadable. Gemini Nano runs only while Macro Track is in the foreground and has a per-app daily quota. Phones without either model do not show the button; if Apple Intelligence is merely turned off, the logger explains how to turn it on. Search, Scan and Quick add are unaffected everywhere.
+Only Apple's on-device model is used, never Private Cloud Compute. On Android, AICore installs Gemini Nano; the logger offers a one-time **Download Gemini Nano** when the model is downloadable. Gemini Nano runs only while Vector Macros is in the foreground and has a per-app daily quota. Phones without either model do not show the button; if Apple Intelligence is merely turned off, the logger explains how to turn it on. Search, Scan and Quick add are unaffected everywhere.
 
 Photos are downscaled to at most 1,280 px on iPhone and 1,024 px on Android before analysis, and the camera or picker copy is deleted from the app cache when the logger closes. Photos are not stored with diary entries.
 
