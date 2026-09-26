@@ -1746,8 +1746,8 @@ const bar = {
   barcode: "0036000291452",
   portions: [{ label: "1 bar", amount: 40 }],
 };
-function scanner(diary, props) {
-  const harness = screenHarness(diary);
+function scanner(diary, props, dependencies) {
+  const harness = screenHarness(diary, {}, dependencies);
   const { FoodEditor, FoodRow, BarcodeCamera } = harness.load(
     "src/components/nutrition/food-editor.tsx"
   );
@@ -1758,7 +1758,7 @@ function scanner(diary, props) {
     render()
       .find((node) => node.type === BarcodeCamera)
       .props.onScan(code);
-  return { render, quantity, scan, FoodRow, BarcodeCamera };
+  return { harness, render, quantity, scan, FoodRow, BarcodeCamera };
 }
 
 test("compiled scans, searches and Library reuse the quantity last logged", async () => {
@@ -1802,6 +1802,59 @@ test("compiled scans, searches and Library reuse the quantity last logged", asyn
       close: () => {},
     }).quantity().props.value,
     "1"
+  );
+  sqlite.close();
+});
+
+test("compiled scan, search and Library open a catalog food whose first portion is out of range", async (t) => {
+  const { diary, sqlite } = diaryDatabase();
+  const bundled = bundledCatalog();
+  // The bundled Froot Loops record lists its first portion as 5.46e31 g.
+  const loops = await bundled.catalog.lookupBarcode("00038000256974");
+  bundled.close();
+  assert.ok(loops.portions[0].amount > 100000);
+  const catalog = {
+    "@/lib/food-catalog": {
+      lookupBarcode: async () => loops,
+      searchCatalog: async () => [loops],
+      searchFoods: async () => [loops],
+    },
+  };
+  let editor = scanner(diary, { initialMode: "barcode", close: () => {} }, catalog);
+  await editor.scan("038000256974");
+  assert.equal(editor.quantity().props.value, "100");
+  assert.equal(editor.render().find((node) => node.type === "Error").props.message, "");
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  editor = scanner(diary, { close: () => {} }, catalog);
+  editor
+    .render()
+    .find((node) => node.type === "Field" && node.props.label === "Search foods")
+    .props.onChange("froot loops");
+  editor.render();
+  editor.harness.runEffects();
+  t.mock.timers.tick(180);
+  await new Promise(setImmediate);
+  editor
+    .render()
+    .find((node) => node.type === editor.FoodRow && node.props.food.id === loops.id)
+    .props.onPress();
+  assert.equal(editor.quantity().props.value, "100");
+
+  assert.equal(
+    scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity().props.value,
+    "100"
+  );
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food: loops,
+    amount: 39,
+    portionLabel: "39 g",
+  });
+  assert.equal(
+    scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity().props.value,
+    "39"
   );
   sqlite.close();
 });

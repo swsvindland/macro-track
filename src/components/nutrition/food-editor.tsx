@@ -195,7 +195,14 @@ function LabelScanner({
 }
 
 /** The amount last logged of a food, else its first portion. */
-const rememberedAmount = (food: Food) => portionFor(food, lastEntryFor(food.id)).amount;
+function rememberedAmount(food: Food) {
+  try {
+    return portionFor(food, lastEntryFor(food.id)).amount;
+  } catch {
+    // A catalog portion out of range starts at the basis default, ready to correct.
+    return food.basis === "serving" ? 1 : 100;
+  }
+}
 
 const shown = (value: number | null) => (value === null ? "" : String(Number(value.toFixed(1))));
 
