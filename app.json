@@ -14,7 +14,7 @@
         "tinted": "./assets/images/icon-tinted.png"
       },
       "supportsTablet": false,
-      "bundleIdentifier": "dev.svindland.macrotrack",
+      "bundleIdentifier": "dev.svindland.vector.macro",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -32,9 +32,10 @@
         "android.permission.health.READ_HEIGHT",
         "android.permission.health.WRITE_HEIGHT",
         "android.permission.health.WRITE_BODY_FAT",
-        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
+        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+        "android.permission.CAMERA"
       ],
-      "package": "dev.svindland.macrotrack"
+      "package": "dev.svindland.vector.macro"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -76,7 +77,12 @@
       "react-native-health-connect",
       "./plugins/with-health-rationale",
       "./plugins/with-scene-lifecycle",
-      ["./plugins/with-kotlin-plugin-version", { "version": "2.2.21" }],
+      [
+        "./plugins/with-kotlin-plugin-version",
+        {
+          "version": "2.2.21"
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -100,7 +106,10 @@
       "reactCompiler": true
     },
     "extra": {
-      "router": {}
+      "router": {},
+      "eas": {
+        "projectId": "0246986b-8fd7-4909-aa44-b4ae05678608"
+      }
     }
   }
 }

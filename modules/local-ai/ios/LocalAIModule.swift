@@ -97,11 +97,14 @@ public final class LocalAIModule: Module {
     switch model.availability {
     case .available:
       result["state"] = "available"
+      // Vision needs the iOS 27 SDK (Swift 6.4, Xcode 27); older toolchains build text-only.
+      #if compiler(>=6.4)
       if #available(iOS 27.0, *) {
         result["vision"] = model.capabilities.contains(.vision)
       } else {
         result["reason"] = "os"
       }
+      #endif
     case .unavailable(let reason):
       switch reason {
       case .deviceNotEligible: result["reason"] = "device"
@@ -147,10 +150,15 @@ public final class LocalAIModule: Module {
     let session = LanguageModelSession(model: .default, instructions: instructions)
     warm = nil
     // Greedy decoding keeps the same photo producing the same draft.
-    let options = GenerationOptions(
-      samplingMode: .greedy, maximumResponseTokens: max(64, min(maxTokens, 2048)))
+    let maximumResponseTokens = max(64, min(maxTokens, 2048))
+    #if compiler(>=6.4)
+    let options = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: maximumResponseTokens)
+    #else
+    let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: maximumResponseTokens)
+    #endif
     do {
       if let imageUri, !imageUri.isEmpty {
+        #if compiler(>=6.4)
         guard #available(iOS 27.0, *), SystemLanguageModel.default.capabilities.contains(.vision)
         else {
           throw LocalAIError("no-vision", "Photo analysis needs iOS 27 with Apple Intelligence.")
@@ -161,6 +169,9 @@ public final class LocalAIModule: Module {
           prompt
         }
         return response.content.jsonString
+        #else
+        throw LocalAIError("no-vision", "Photo analysis needs iOS 27 with Apple Intelligence.")
+        #endif
       }
       let response = try await session.respond(to: prompt, schema: generationSchema, options: options)
       return response.content.jsonString
@@ -173,6 +184,7 @@ public final class LocalAIModule: Module {
 
   @available(iOS 26.0, *)
   static func classify(_ error: Error) -> LocalAIError {
+    #if compiler(>=6.4)
     if #available(iOS 27.0, *), let error = error as? LanguageModelError {
       switch error {
       case .rateLimited: return LocalAIError("busy", "The on-device model is busy. Try again in a moment.")
@@ -185,6 +197,7 @@ public final class LocalAIModule: Module {
       default: return LocalAIError("failed", error.localizedDescription)
       }
     }
+    #endif
     if let error = error as? LanguageModelSession.GenerationError {
       switch error {
       case .rateLimited, .concurrentRequests:
