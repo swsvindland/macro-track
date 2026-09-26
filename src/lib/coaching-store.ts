@@ -6,6 +6,7 @@ import {
   reviewProgram,
   startingTargets,
   validateProgram,
+  validateShift,
   type Program,
 } from "./program";
 import { and, asc, desc, eq, gt, gte, isNull, lt, lte } from "drizzle-orm";
@@ -19,8 +20,8 @@ import {
   nutritionTargets,
 } from "@/db";
 import { dayOf, localDay, weightTrend } from "./metrics";
-import { shiftDay, type Targets } from "./nutrition";
-import { targetsForDay } from "./diary";
+import { shiftDay, type CalorieShift, type Targets } from "./nutrition";
+import { baseTargetsForDay } from "./diary";
 import { reviewWeek, type Goal, type Review } from "./coaching";
 
 export function currentGoal() {
@@ -78,7 +79,7 @@ export function currentReview(day = localDay(), goal = currentGoal(), history?: 
   const input = {
     day,
     goal,
-    targets: targetsForDay(day),
+    targets: baseTargetsForDay(day),
     days: db
       .select()
       .from(diaryDays)
@@ -163,7 +164,8 @@ export function coachingSnapshot(day = localDay(), { onlyWhenDue = false } = {})
     history,
     due,
     isDue,
-    targets: targetsForDay(day),
+    /** The daily budget, which check-ins review and propose; calorie shifting leaves it alone. */
+    targets: baseTargetsForDay(day),
     review: coached && (isDue || !onlyWhenDue) ? currentReview(day, goal, history) : null,
   };
 }
@@ -183,7 +185,7 @@ export function finishCheckIn(decision: "accepted" | "kept" | "adjusted", overri
   return db.transaction((tx) => {
     const goal = currentGoal(),
       review = currentReview(day),
-      current = targetsForDay(day);
+      current = baseTargetsForDay(day);
     if (!goal || !review || !current || goal.mode === "manual")
       throw new Error("Set up your goal and targets first.");
     if (day < nextCheckInDay()) throw new Error("Your next check-in is not due yet.");
@@ -319,7 +321,29 @@ export function previewProgram(
   validateProgram(program);
   const goal: Goal = { mode, pace: mode === "maintain" ? 0 : pace, startedDay: localDay() };
   const targets = startingTargets(goal, program, weight);
+  if (program.shift) validateShift(program.shift, targets);
   return { goal, program, targets };
+}
+/**
+ * Changes only the running program's calorie shifting, from today. Its daily budget stays as the
+ * last check-in or program left it, and its estimate carries into the new revision.
+ */
+export function saveShift(shift?: CalorieShift) {
+  const day = localDay(),
+    goal = currentGoal(),
+    budget = baseTargetsForDay(day);
+  if (!goal?.program || goal.mode === "manual" || !budget)
+    throw new Error("Set up your program first.");
+  if (shift) validateShift(shift, budget);
+  const program: Program = {
+    ...goal.program,
+    initialExpenditure: priorExpenditure(goal.startedDay, goal.program, checkInHistory()),
+    shift,
+  };
+  if (!shift) delete program.shift;
+  db.insert(coachingGoals)
+    .values({ mode: goal.mode, pace: goal.pace, startedDay: day, program })
+    .run();
 }
 export function createProgram(
   mode: Goal["mode"],

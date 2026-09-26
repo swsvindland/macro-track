@@ -1,4 +1,4 @@
-import { shiftDay, type Targets } from "./nutrition";
+import { coachedWeek, shiftDay, type CalorieShift, type Targets } from "./nutrition";
 import { weightTrend, type TrendPoint } from "./metrics";
 import type { Goal, Review } from "./coaching";
 
@@ -15,9 +15,29 @@ export type Program = {
   checkInDay: number;
   /** Macros set at a check-in: fixed protein grams, and carbs' percentage of the other calories. */
   custom?: { proteinG?: number; carbPct?: number };
+  /** Higher-calorie weekdays inside the same weekly budget; none when absent. */
+  shift?: CalorieShift;
 };
+/**
+ * Checks calorie shifting. With targets, the other days also keep at least 75% of them and enough
+ * calories for carbs and fat, and every day stays in the coached range.
+ */
+export function validateShift(shift: CalorieShift, targets?: Targets) {
+  const { days, size, unit } = shift;
+  if (
+    !Array.isArray(days) ||
+    days.length < 1 ||
+    days.length > 6 ||
+    new Set(days).size !== days.length ||
+    days.some((day) => !Number.isInteger(day) || day < 0 || day > 6) ||
+    !(unit === "%" ? size >= 1 && size <= 50 : unit === "kcal" && size >= 10 && size <= 1000)
+  )
+    throw new Error("Choose one to six higher days and how much more they get.");
+  if (targets) coachedWeek(targets, shift);
+}
 export function validateProgram(p: Program) {
   const { proteinG, carbPct } = p.custom ?? {};
+  if (p.shift) validateShift(p.shift);
   if (
     (proteinG !== undefined && !(proteinG >= 40 && proteinG <= 500)) ||
     (carbPct !== undefined && !(carbPct >= 0 && carbPct <= 100)) ||

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
+import { ShiftWeek, weekOf } from "@/components/plan/calorie-shift";
 import {
   SystemButton,
   SystemIconButton,
@@ -58,6 +59,8 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
   const finished = useRef(""),
     switched = useRef<number | null>(null);
   const program = goal?.program;
+  // A shift a lower budget can't fit is paused, and each day gets the budget itself.
+  const shifted = !!program?.shift && !!targets && !!weekOf(targets, program.shift);
   const weight = (kg: number) => formatWeight(kg, units, number);
   const pace = (kg: number | null) => (kg === null ? "—" : formatPace(kg, units, number));
   function act(action: () => void, setError: (message: string) => void) {
@@ -151,7 +154,9 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                     maxFontSizeMultiplier={1.35}
                   >
                     {number(targets.calories, 0)}
-                    <Text className="text-base font-medium text-muted"> kcal/day</Text>
+                    <Text className="text-base font-medium text-muted">
+                      {shifted ? " kcal/day on average" : " kcal/day"}
+                    </Text>
                   </Text>
                   <View className="flex-row gap-4">
                     {(
@@ -172,6 +177,15 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
                       </View>
                     ))}
                   </View>
+                  {shifted ? (
+                    <ShiftWeek targets={targets} shift={program.shift!} />
+                  ) : (
+                    program.shift && (
+                      <Text className="text-sm text-muted">
+                        Calorie shifting is paused: it doesn’t fit this budget.
+                      </Text>
+                    )
+                  )}
                 </>
               )}
               <Text className="text-sm text-muted">

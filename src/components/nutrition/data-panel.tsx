@@ -46,6 +46,13 @@ export function DataPanel() {
           Export weight CSV
         </SystemButton>
         <SystemButton
+          variant="secondary"
+          isDisabled={busy}
+          onPress={() => void run(() => shareCsv("targets"))}
+        >
+          Export targets CSV
+        </SystemButton>
+        <SystemButton
           variant="danger-soft"
           isDisabled={busy}
           onPress={() =>

@@ -1277,7 +1277,11 @@ test("compiled guided setup previews generated targets and starts the program on
   const harness = screenHarness(
     diary,
     { weights: [], units: "metric" },
-    { "@/lib/coaching-store": store, "@/lib/program": program }
+    {
+      "@/lib/coaching-store": store,
+      "@/lib/program": program,
+      "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+    }
   );
   const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");
   let closed = 0;
@@ -2681,6 +2685,7 @@ test("compiled Plan check-in waits for the last open day, then accepts once in t
       "@/lib/coaching-store": store,
       "@/lib/metrics": fakeMetrics,
       "./program-editor": { ProgramEditor: "ProgramEditor" },
+      "@/components/plan/calorie-shift": { ShiftWeek: "ShiftWeek" },
     }
   );
   const { CoachingPanel } = harness.load("src/components/nutrition/coaching-panel.tsx");

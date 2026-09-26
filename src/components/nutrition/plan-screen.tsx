@@ -6,7 +6,7 @@ import { useState } from "react";
 import { AccessibilityInfo, Platform, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { ErrorText, Field, Screen } from "@/components/ui";
-import { targetsForDay, saveTargets } from "@/lib/diary";
+import { baseTargetsForDay, saveTargets } from "@/lib/diary";
 import { localDay, parseNumber } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
@@ -22,7 +22,7 @@ const targetValues = (targets: Targets | null): TargetValues => ({
 const savedMessage = "Targets saved. You’re ready to log.";
 
 export function PlanScreen() {
-  const targets = useNutritionQuery(() => targetsForDay(localDay()));
+  const targets = useNutritionQuery(() => baseTargetsForDay(localDay()));
   const goal = useNutritionQuery(currentGoal);
   const { refresh } = useNutrition();
   const { number } = useStore();
@@ -92,7 +92,7 @@ export function PlanScreen() {
                     fat: parseNumber(values.fat),
                   });
                   setDraft(null);
-                  setSaved(JSON.stringify(targetsForDay(localDay())));
+                  setSaved(JSON.stringify(baseTargetsForDay(localDay())));
                   refresh();
                   setError("");
                   if (Platform.OS === "ios")

@@ -1,11 +1,14 @@
 import { useRef, useState } from "react";
+import { CalorieShiftPicker } from "@/components/plan/calorie-shift";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
-import { createProgram, currentGoal, previewProgram } from "@/lib/coaching-store";
+import { createProgram, currentGoal, previewProgram, saveShift } from "@/lib/coaching-store";
+import { baseTargetsForDay } from "@/lib/diary";
 import { type Program } from "@/lib/program";
-import { parseNumber, weightTrend } from "@/lib/metrics";
+import { localDay, parseNumber, weightTrend } from "@/lib/metrics";
+import type { CalorieShift } from "@/lib/nutrition";
 import type { Goal } from "@/lib/coaching";
 
 export function ProgramEditor({ close }: { close: () => void }) {
@@ -40,6 +43,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
     custom?.carbPct !== undefined ? "custom" : (saved?.diet ?? "balanced")
   );
   const [checkDay, setCheckDay] = useState(String(saved?.checkInDay ?? 1));
+  const [shift, setShift] = useState<CalorieShift | undefined>(saved?.shift);
   const [eligible, setEligible] = useState(false);
   const [error, setError] = useState("");
   const locked = useRef(false);
@@ -47,7 +51,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
     ...(protein === "custom" ? { proteinG: custom?.proteinG } : {}),
     ...(diet === "custom" ? { carbPct: custom?.carbPct } : {}),
   };
-  const draft = {
+  const budget = {
     age: parseNumber(age),
     heightCm: parseNumber(height) * (units === "metric" ? 1 : 2.54),
     weightKg: parseNumber(weight) / factor,
@@ -59,13 +63,22 @@ export function ProgramEditor({ close }: { close: () => void }) {
     checkInDay: Number(checkDay),
     ...(Object.keys(kept).length ? { custom: kept } : {}),
   };
-  const preview = useNutritionQuery(() => {
+  const draft = shift ? { ...budget, shift } : budget;
+  // A change to calorie shifting alone keeps today's budget instead of rebuilding it.
+  const settings = JSON.stringify([mode, pace, budget]);
+  const [opened] = useState(settings);
+  const onlyShift =
+    !!saved && settings === opened && JSON.stringify(shift) !== JSON.stringify(saved.shift);
+  const current = useNutritionQuery(() => baseTargetsForDay(localDay()));
+  // The daily budget before shifting, so a shift that doesn't fit shows why in its own section.
+  const rebuilt = useNutritionQuery(() => {
     try {
-      return previewProgram(mode, Number(pace), draft).targets;
+      return previewProgram(mode, Number(pace), budget).targets;
     } catch {
       return null;
     }
   }, [mode, pace, age, height, weight, target, formula, activity, protein, diet, checkDay, units]);
+  const preview = onlyShift ? current : rebuilt;
   return (
     <Editor title={saved ? "Update your program" : "Build your program"} open close={close}>
       <Choices
@@ -165,31 +178,42 @@ export function ProgramEditor({ close }: { close: () => void }) {
         <SystemPanel>
           <SystemPanel.Body className="gap-2">
             <Text className="text-3xl font-semibold">{number(preview.calories, 0)} kcal/day</Text>
+            {(shift || onlyShift) && (
+              <Text className="text-sm text-muted">
+                {onlyShift
+                  ? `Your current budget${shift ? ", as a weekly average" : ""}`
+                  : "Average across the week"}
+              </Text>
+            )}
             <Text>
               {preview.protein} g protein · {preview.carbs} g carbs · {preview.fat} g fat
             </Text>
           </SystemPanel.Body>
         </SystemPanel>
       )}
+      <CalorieShiftPicker value={shift} onChange={setShift} budget={preview} />
       <Text className="text-sm text-muted">
         Coaching is for adults who are not pregnant or breastfeeding. Use professionally guided
         manual targets for medical nutrition needs or eating disorder care.
       </Text>
-      <SystemButton
-        variant="outline"
-        onPress={() => setEligible((value) => !value)}
-        accessibilityState={{ checked: eligible }}
-      >
-        {eligible ? "✓ " : ""}This applies to me
-      </SystemButton>
+      {!onlyShift && (
+        <SystemButton
+          variant="outline"
+          onPress={() => setEligible((value) => !value)}
+          accessibilityState={{ checked: eligible }}
+        >
+          {eligible ? "✓ " : ""}This applies to me
+        </SystemButton>
+      )}
       <ErrorText message={error} />
       <SystemButton
-        isDisabled={!eligible || !formula}
+        isDisabled={!onlyShift && (!eligible || !formula)}
         onPress={() => {
           if (locked.current) return;
           try {
             locked.current = true;
-            createProgram(mode, Number(pace), draft);
+            if (onlyShift) saveShift(shift);
+            else createProgram(mode, Number(pace), draft);
             refresh();
             close();
           } catch (e) {
@@ -198,7 +222,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
           }
         }}
       >
-        Start this program
+        {onlyShift ? "Save calorie shifting" : "Start this program"}
       </SystemButton>
     </Editor>
   );

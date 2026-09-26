@@ -172,6 +172,95 @@ export function shiftDay(day: string, offset: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * Calorie shifting: the higher weekdays (0 = Sunday) get `size` more, in kcal or as a share of the
+ * daily budget, and the other days give it up, so the week still adds up to seven budgets.
+ */
+export type CalorieShift = { days: number[]; size: number; unit: "%" | "kcal" };
+/** Whole numbers near `values` that add up to their rounded total, largest remainders first. */
+function wholeNumbers(values: number[]) {
+  const whole = values.map(Math.floor);
+  let left = Math.round(values.reduce((a, b) => a + b, 0)) - whole.reduce((a, b) => a + b, 0);
+  const order = values
+    .map((_, i) => i)
+    .sort((a, b) => values[b] - whole[b] - (values[a] - whole[a]) || a - b);
+  for (const i of order) if (left-- > 0) whole[i]++;
+  return whole;
+}
+/**
+ * A week of targets under calorie shifting, Sunday first. Protein stays the same; the difference
+ * comes from carbs and fat in their current split. Days are whole kcal and grams, and the week's
+ * totals stay seven times `targets`. Throws when the other days would run out of carbs and fat.
+ */
+export function shiftWeek(targets: Targets, shift?: CalorieShift | null): Targets[] {
+  const high = new Set(shift?.days);
+  if (!shift || !high.size || high.size > 6 || !(shift.size > 0))
+    return Array.from({ length: 7 }, () => targets);
+  const raise = shift.unit === "%" ? (targets.calories * shift.size) / 100 : shift.size,
+    drop = (raise * high.size) / (7 - high.size);
+  const calories = wholeNumbers(
+    Array.from({ length: 7 }, (_, day) => targets.calories + (high.has(day) ? raise : -drop))
+  );
+  const carbEnergy = targets.carbs * 4,
+    fatEnergy = targets.fat * 9;
+  const fatShare = carbEnergy + fatEnergy > 0 ? fatEnergy / (carbEnergy + fatEnergy) : 0.5;
+  const fat = wholeNumbers(
+    calories.map((kcal) => targets.fat + ((kcal - targets.calories) * fatShare) / 9)
+  );
+  // Carbs also take up fat's rounding, so each day's macros add up to its calories.
+  const carbs = wholeNumbers(
+    calories.map(
+      (kcal, i) => targets.carbs + (kcal - targets.calories - (fat[i] - targets.fat) * 9) / 4
+    )
+  );
+  if ([...carbs, ...fat].some((grams) => grams < 0))
+    throw new Error(
+      "The other days would run out of carbs and fat. Choose fewer higher days or a smaller shift."
+    );
+  return calories.map((kcal, i) => ({
+    calories: kcal,
+    protein: targets.protein,
+    carbs: carbs[i],
+    fat: fat[i],
+  }));
+}
+/**
+ * A coached budget's week under calorie shifting. Also throws when the other days would drop by
+ * more than a quarter or any day would leave the coached 1,500–5,000 kcal.
+ */
+export function coachedWeek(targets: Targets, shift?: CalorieShift | null) {
+  const count = shift?.days?.length ?? 0;
+  if (shift && count && count < 7) {
+    const raise = shift.unit === "%" ? (targets.calories * shift.size) / 100 : shift.size,
+      drop = (raise * count) / (7 - count);
+    if (drop > targets.calories * 0.25)
+      throw new Error(
+        "The other days would drop by more than a quarter. Choose fewer higher days or a smaller shift."
+      );
+    if (targets.calories - drop < 1500 || targets.calories + raise > 5000)
+      throw new Error(
+        "Every day stays between 1,500 and 5,000 kcal. Choose fewer higher days or a smaller shift."
+      );
+  }
+  return shiftWeek(targets, shift);
+}
+/**
+ * `day`'s targets under calorie shifting; unchanged without a shift or when it no longer fits,
+ * as after a check-in lowers the budget.
+ */
+export function shiftedTargets(
+  targets: Targets,
+  shift: CalorieShift | null | undefined,
+  day: string
+) {
+  if (!shift?.days?.length) return targets;
+  try {
+    return coachedWeek(targets, shift)[new Date(`${day}T12:00:00`).getDay()];
+  } catch {
+    return targets;
+  }
+}
+
 export type RecipeIngredient = { food: Food; amount: number };
 export type Recipe = {
   id: string;

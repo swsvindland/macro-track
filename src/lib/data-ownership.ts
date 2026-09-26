@@ -101,6 +101,50 @@ export function exportWeightCsv() {
       .map((row) => [row.measuredAt, row.weightKg, row.excluded]),
   ]);
 }
+const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/**
+ * A row for each day the daily budget or the goal changed: the budget from then on, the goal, and
+ * its calorie shifting (higher days and how much more they get).
+ */
+export function exportTargetsCsv() {
+  return db.transaction((tx) => {
+    const targets = tx.select().from(nutritionTargets).orderBy(nutritionTargets.effectiveDay).all();
+    const goals = tx.select().from(coachingGoals).orderBy(coachingGoals.id).all();
+    const days = [
+      ...new Set([
+        ...targets.map((row) => row.effectiveDay),
+        ...goals.map((row) => row.startedDay),
+      ]),
+    ].sort();
+    return csv([
+      [
+        "date",
+        "goal",
+        "calories_kcal",
+        "protein_g",
+        "carbs_g",
+        "fat_g",
+        "higher_days",
+        "higher_day_extra",
+      ],
+      ...days.map((day) => {
+        const budget = targets.filter((row) => row.effectiveDay <= day).at(-1)?.targets,
+          goal = goals.filter((row) => row.startedDay <= day).at(-1),
+          shift = goal?.program?.shift;
+        return [
+          day,
+          goal?.mode,
+          budget?.calories,
+          budget?.protein,
+          budget?.carbs,
+          budget?.fat,
+          shift?.days.map((weekday) => weekdays[weekday]).join(" "),
+          shift && `${shift.size}${shift.unit === "%" ? "%" : " kcal"}`,
+        ];
+      }),
+    ]);
+  });
+}
 // Call only while health sync is paused and after explicit UI confirmation.
 export function erasePersonalRecords() {
   // Deleted rows are overwritten instead of left readable in free pages. Pragmas that return a
