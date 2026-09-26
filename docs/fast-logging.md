@@ -47,7 +47,7 @@ Counts start on Home and exclude typing, biometric phone unlock and opening the 
 | Nudge this week's proposal by 50 kcal      | Adjust + step + Save targets = 3 taps        |
 | Read the reasoning before accepting        | Why? + Accept = 2 taps                       |
 
-Catalogs warm after the initial Home render. Screens read the diary once per change rather than on every render: opening a sheet, typing or the minute clock reuse those reads, and the pace line moves with the clock from them. Recent-food retrieval uses an index on creation time and ID, and weights an index on time. The personal database uses write-ahead logging. Progress, Plan and Library defer their first render until visited, then retain their state. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
+Catalogs warm after the initial Home render. Screens read the diary once per change rather than on every render: opening a sheet, typing or the minute clock reuse those reads, and the pace line moves with the clock from them. Recent-food retrieval uses an index on creation time and ID, and weights an index on time. The personal database uses write-ahead logging. Progress, Plan and Library defer their first render until visited, then retain their state; Progress reads its history in one grouped pass once per change, and only while it is on screen. Search waits 120 ms after a query change and ignores results from superseded requests. Personal history still works if a catalog cannot open. No network service or analytics is added.
 
 ## Phone timing protocol
 

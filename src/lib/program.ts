@@ -182,6 +182,68 @@ export function startingTargets(
   const rate = goalRate(goal, weight, p.targetWeightKg);
   return programMacros(Math.round(expenditure + (rate * 7700) / 7), weight, p);
 }
+const DAY_MS = 86400000;
+/**
+ * The trend on each of `length` days from `from`: a weigh-in day's own value, or a straight line
+ * between trend points at most seven days apart. Other days are null.
+ */
+export function dailyTrend(series: TrendPoint[], from: string, length: number) {
+  const start = Date.parse(from),
+    times = series.map((row) => Date.parse(row.day));
+  const values: (number | null)[] = [];
+  let after = 0;
+  for (let i = 0; i < length; i++) {
+    const time = start + i * DAY_MS;
+    while (after < times.length && times[after] < time) after++;
+    if (after === times.length) values.push(null);
+    else if (times[after] === time) values.push(series[after].trend);
+    else if (after === 0) values.push(null);
+    else {
+      const a = series[after - 1],
+        b = series[after];
+      const span = (times[after] - times[after - 1]) / DAY_MS;
+      values.push(
+        span > 7
+          ? null
+          : a.trend + ((b.trend - a.trend) * ((time - times[after - 1]) / DAY_MS)) / span
+      );
+    }
+  }
+  return values;
+}
+/**
+ * Method 2's evidence over consecutive days: complete runs of at least seven known days, each
+ * with a trend that day and the day before. `before` is the trend the day before the first.
+ * Known-day intake is never projected across an unknown day.
+ */
+export function observeRuns(
+  days: { known: boolean; calories: number; trend: number | null }[],
+  before: number | null
+) {
+  const previous = (i: number) => (i ? days[i - 1].trend : before);
+  let used = 0,
+    calories = 0,
+    deltaKg = 0;
+  let run: number[] = [];
+  const consume = () => {
+    if (run.length >= 7) {
+      const first = previous(run[0]),
+        last = days[run.at(-1)!].trend;
+      if (first !== null && last !== null) {
+        used += run.length;
+        deltaKg += last - first;
+        calories += run.reduce((sum, i) => sum + days[i].calories, 0);
+      }
+    }
+    run = [];
+  };
+  days.forEach((day, i) => {
+    if (day.known && day.trend !== null && previous(i) !== null) run.push(i);
+    else consume();
+  });
+  consume();
+  return { used, calories, deltaKg };
+}
 export type ProgramInput = {
   day: string;
   goal: Goal;
@@ -235,42 +297,15 @@ export function reviewProgram(input: ProgramInput): Review {
     (statuses.get(date) === "fasting" && !totals.has(date));
   result.completeDays = calendar.filter(known).length;
   if (goal.mode === "manual") return hold("Manual targets stay under your control.", "holding");
-  // Interpolate only between observed trend points at most seven days apart.
-  const at = (date: string) => {
-    const after = series.findIndex((row) => row.day >= date);
-    if (after < 0) return null;
-    if (series[after].day === date) return series[after].trend;
-    if (after === 0) return null;
-    const a = series[after - 1],
-      b = series[after];
-    const span = (Date.parse(b.day) - Date.parse(a.day)) / 86400000;
-    return span > 7
-      ? null
-      : a.trend +
-          ((b.trend - a.trend) * ((Date.parse(date) - Date.parse(a.day)) / 86400000)) / span;
-  };
-  // Use complete contiguous intervals, never project known-day intake across an unknown day.
-  let used = 0,
-    calories = 0,
-    deltaKg = 0;
-  let run: string[] = [];
-  const consume = () => {
-    if (run.length >= 7) {
-      const first = at(shiftDay(run[0], -1)),
-        last = at(run.at(-1)!);
-      if (first !== null && last !== null) {
-        used += run.length;
-        deltaKg += last - first;
-        calories += run.reduce((sum, date) => sum + (totals.get(date) ?? 0), 0);
-      }
-    }
-    run = [];
-  };
-  for (const date of calendar) {
-    if (known(date) && at(date) !== null && at(shiftDay(date, -1)) !== null) run.push(date);
-    else consume();
-  }
-  consume();
+  const trend = dailyTrend(series, shiftDay(start, -1), 22);
+  const { used, calories, deltaKg } = observeRuns(
+    calendar.map((date, i) => ({
+      known: known(date),
+      calories: totals.get(date) ?? 0,
+      trend: trend[i + 1],
+    })),
+    trend[0]
+  );
   result.observedDays = used;
   if (!latest || latest.day < shiftDay(end, -3))
     return hold("Add a recent weigh-in so the plan can use your current trend.");

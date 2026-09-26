@@ -14,7 +14,7 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
 - Guided Cut/Bulk/Maintain programs generate calories and macros from your profile, goal and preferences. Weekly reviews use normalized weight and observed intake; maintenance gently corrects drift around a target weight. Goal changes preserve learning. Manual mode remains available. See [coaching method and limits](docs/coaching.md).
 - Quick-add estimates, whole-day copying, and optional cooked batch weights for gram-based recipe portions.
-- Progress includes complete-day intake averages and the next check-in.
+- Progress at a glance: the week's calories, protein, fat and carbs day by day against target (consumed or remaining), a daily expenditure estimate and the weight trend (each opens a chart with 1W–All ranges), the week's complete-day average against budget with "~X kcal/day for the rest of the week lands on budget" (or how far over or under the week is when that would stray more than 500 kcal from target), the projected goal date and the next check-in. Add a weight from its header; the full weight history opens from Weight trend.
 - Readable food/weight CSV exports and confirmed local personal-data erasure.
 - Inherited weight history, smoothed trend, and opt-in HealthKit / Health Connect integration.
 - Password-protected local backup and restore in Settings, with an automatic encrypted recovery copy before replacement. See [backup scope and recovery](docs/backups.md).

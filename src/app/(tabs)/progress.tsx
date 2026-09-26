@@ -1,10 +1,10 @@
 import { DeferredTab } from "@/components/deferred-tab";
-import { WeightLog } from "@/components/measurements/weight-log";
+import { ProgressScreen } from "@/components/progress/progress-screen";
 
 export default function ProgressTab() {
   return (
     <DeferredTab>
-      <WeightLog />
+      <ProgressScreen />
     </DeferredTab>
   );
 }

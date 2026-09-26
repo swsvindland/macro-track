@@ -1449,3 +1449,792 @@ test("compiled weight history dims an ignored weigh-in and includes it again in 
   const dimmed = tree.filter((node) => /opacity-50/.test(node.props.className ?? ""));
   assert.equal(dimmed.length, 2, "the ignored row's date and value");
 });
+
+// Progress at a glance: the week against its budget, the goal's date and daily expenditure.
+function insightsDatabase(today) {
+  const data = coachingDatabase(today);
+  const insights = load("src/lib/insights.ts", {
+    "@/db": { db: data.db, ...schema },
+    "./coaching-store": data.store,
+    "./metrics": data.fakeMetrics,
+    "./nutrition": nutrition,
+    "./program": program,
+  });
+  return { ...data, insights };
+}
+const days = (from, count) => Array.from({ length: count }, (_, i) => nutrition.shiftDay(from, i));
+
+test("daily intake groups a range into one row a day and keeps days with only a status", () => {
+  const { db, insights, sqlite } = insightsDatabase("2024-01-10");
+  db.insert(schema.foodEntries)
+    .values([
+      entry("2024-01-01", "08:00", 1, "Oats"),
+      entry("2024-01-01", "12:00", 2, "Soup"),
+      entry("2024-01-02", "12:00", 3, "Bread"),
+      entry("2024-01-05", "12:00", 4, "Outside the range"),
+    ])
+    .run();
+  db.insert(schema.diaryDays)
+    .values([
+      { day: "2024-01-02", status: "complete" },
+      { day: "2024-01-03", status: "fasting" },
+    ])
+    .run();
+  const intake = insights.dailyIntake("2024-01-01", "2024-01-03");
+  assert.deepEqual(Object.fromEntries(intake), {
+    "2024-01-01": {
+      calories: 200,
+      protein: 10,
+      carbs: 20,
+      fat: 8,
+      entries: 2,
+      status: null,
+    },
+    "2024-01-02": {
+      calories: 100,
+      protein: 5,
+      carbs: 10,
+      fat: 4,
+      entries: 1,
+      status: "complete",
+    },
+    "2024-01-03": { calories: 0, protein: 0, carbs: 0, fat: 0, entries: 0, status: "fasting" },
+  });
+  sqlite.close();
+});
+
+test("the week's budget leaves out unlogged days and spreads what is left over the rest", () => {
+  const { db, diary, insights, sqlite } = insightsDatabase("2024-02-01");
+  diary.saveTargets("2024-01-01", targets);
+  diary.saveTargets("2024-01-31", { calories: 2000, protein: 150, carbs: 200, fat: 66.667 });
+  const eat = (day, calories) =>
+    db
+      .insert(schema.foodEntries)
+      .values({
+        ...entry(day, "12:00", 1, "Meal"),
+        nutrients: { ...nutrients, calories, protein: 150 },
+      })
+      .run();
+  eat("2024-01-28", 5000); // last week
+  eat("2024-01-29", 1800);
+  eat("2024-01-30", 2600);
+  eat("2024-01-31", 900);
+  db.insert(schema.diaryDays)
+    .values([
+      { day: "2024-01-29", status: "complete" },
+      { day: "2024-01-30", status: "complete" },
+      { day: "2024-01-31", status: "partial" },
+    ])
+    .run();
+
+  // Thursday Feb 1: the week starts on Monday, or Sunday where that is the first weekday.
+  assert.equal(insights.weekStart("2024-02-01"), "2024-01-29");
+  assert.equal(insights.weekStart("2024-02-01", 0), "2024-01-28");
+  assert.equal(insights.weekStart("2024-01-29"), "2024-01-29");
+  const week = insights.weekDays(
+    "2024-01-29",
+    insights.dailyIntake("", "2024-02-01"),
+    insights.targetTimeline()
+  );
+  assert.deepEqual(
+    week.map((day) => [day.day, day.eaten.calories, day.target?.calories, day.logged, day.partial]),
+    [
+      ["2024-01-29", 1800, 2200, true, false],
+      ["2024-01-30", 2600, 2200, true, false],
+      ["2024-01-31", 900, 2000, false, true],
+      ["2024-02-01", 0, 2000, false, false],
+      ["2024-02-02", 0, 2000, false, false],
+      ["2024-02-03", 0, 2000, false, false],
+      ["2024-02-04", 0, 2000, false, false],
+    ]
+  );
+  const budget = insights.weekBudget(week, "2024-02-01");
+  assert.equal(budget.days, 2);
+  assert.equal(budget.average, 2200);
+  assert.equal(budget.averageTarget, 2200);
+  // Monday and Tuesday ate their budget exactly; the partial Wednesday counts on neither side.
+  assert.equal(budget.restPerDay, 2000);
+  assert.equal(budget.balance, 0);
+  assert.deepEqual(budget.adherence, { protein: 1, carbs: 20 / 500, fat: 8 / 133.334 });
+  sqlite.close();
+});
+
+test("the week's budget counts today once it is done or past its share, within sane limits", () => {
+  const { insights, sqlite } = insightsDatabase("2024-02-01");
+  // Monday Jan 29 to Sunday Feb 4, each [calories, status]; unlisted days have nothing logged.
+  const budget = (today, logged, calories = 2200) => {
+    const intake = new Map(
+      Object.entries(logged).map(([day, [kcal, status]]) => [
+        day,
+        { calories: kcal, protein: 0, carbs: 0, fat: 0, entries: kcal ? 1 : 0, status },
+      ])
+    );
+    const week = insights.weekDays("2024-01-29", intake, () => ({ ...targets, calories }));
+    return insights.weekBudget(week, today);
+  };
+  const complete = (...calories) =>
+    Object.fromEntries(calories.map((kcal, i) => [days("2024-01-29", 7)[i], [kcal, "complete"]]));
+
+  // Nothing known on Monday morning: no suggestion and no balance.
+  assert.deepEqual(
+    [budget("2024-01-29", {}).restPerDay, budget("2024-01-29", {}).balance],
+    [null, null]
+  );
+  // Wednesday marked complete 800 over: Thursday to Sunday take it back.
+  let week = budget("2024-01-31", complete(2200, 2200, 3000));
+  assert.deepEqual([week.days, week.restPerDay, week.balance], [3, 2000, 800]);
+  // Sunday marked complete: no days are left, so the week reports its balance instead.
+  week = budget("2024-02-04", complete(2200, 2200, 2200, 2200, 2200, 2200, 3000));
+  assert.deepEqual([week.restPerDay, week.balance], [null, 800]);
+
+  // Thursday still open after on-budget days: its food counts once it passes an even share.
+  const monToWed = complete(2200, 2200, 2200);
+  const thursday = (kcal) =>
+    budget("2024-02-01", { ...monToWed, "2024-02-01": [kcal, "in-progress"] });
+  assert.equal(thursday(0).restPerDay, 2200);
+  assert.equal(thursday(1000).restPerDay, 2200);
+  assert.equal(thursday(1000).balance, 0);
+  assert.equal(thursday(3500).restPerDay, (4 * 2200 - 3500) / 3);
+  assert.equal(thursday(3500).balance, 1300);
+  // A partial today counts on neither side.
+  week = budget("2024-02-01", { ...monToWed, "2024-02-01": [3500, "partial"] });
+  assert.deepEqual([week.restPerDay, week.balance], [2200, 0]);
+  // An unanswered Monday is not taken as eating 400 kcal.
+  week = budget("2024-01-31", {
+    "2024-01-29": [400, "in-progress"],
+    "2024-01-30": [2200, "complete"],
+  });
+  assert.deepEqual([week.days, week.average, week.restPerDay], [1, 2200, 2200]);
+  // A fast counts as a complete day at zero.
+  week = budget("2024-01-30", { "2024-01-29": [0, "fasting"] });
+  assert.deepEqual([week.days, week.average, week.balance], [1, 0, -2200]);
+
+  // The suggestion stays within 500 kcal of the target; beyond that only the balance shows.
+  assert.equal(budget("2024-02-02", complete(2500, 2500, 2500, 2500)).restPerDay, 1800);
+  week = budget("2024-02-02", complete(3500, 3500, 3500, 3500));
+  assert.deepEqual([week.restPerDay, week.balance], [null, 5200]);
+  week = budget("2024-02-02", complete(1200, 1200, 1200, 1200));
+  assert.deepEqual([week.restPerDay, week.balance], [null, -4000]);
+  // And never under 1,500 kcal.
+  assert.equal(
+    budget("2024-02-02", complete(2000, 2000, 2000, 2000), 1800).restPerDay,
+    (3 * 1800 - 800) / 3
+  );
+  assert.equal(budget("2024-02-02", complete(2100, 2100, 2100, 2100), 1800).restPerDay, null);
+  sqlite.close();
+});
+
+test("the goal's date follows the program's pace from the trend and stops at the goal", () => {
+  const today = "2024-02-01";
+  const goal = (mode, pace, targetWeightKg = 75) => ({
+    mode,
+    pace,
+    startedDay: "2024-01-01",
+    program: { ...profile, targetWeightKg, initialExpenditure: 2600 },
+  });
+  const trend = (kg) => [{ day: "2024-01-31", raw: kg, trend: kg }];
+  const { insights, sqlite } = insightsDatabase(today);
+
+  const cut = insights.goalProjection(trend(80), goal("lose", 0.5), today);
+  // 0.5% a week of a shrinking weight: 80 → 75 kg takes a little under 13 weeks.
+  const weeks = Math.log(75 / 80) / Math.log(0.995);
+  assert.equal(cut.reached, false);
+  assert.ok(
+    cut.eta >= nutrition.shiftDay(today, Math.floor(weeks * 7) - 1) &&
+      cut.eta <= nutrition.shiftDay(today, Math.ceil(weeks * 7) + 1),
+    cut.eta
+  );
+  assert.deepEqual(insights.goalProjection(trend(74.9), goal("lose", 0.5), today), {
+    mode: "lose",
+    targetKg: 75,
+    weightKg: 74.9,
+    reached: true,
+    eta: null,
+  });
+  const bulk = insights.goalProjection(trend(70), goal("gain", 0.25), today);
+  assert.ok(bulk.eta > nutrition.shiftDay(today, 7 * 25), bulk.eta);
+  assert.equal(insights.goalProjection(trend(75.5), goal("maintain", 0), today).reached, true);
+  assert.deepEqual(insights.goalProjection(trend(76), goal("maintain", 0), today), {
+    mode: "maintain",
+    targetKg: 75,
+    weightKg: 76,
+    reached: false,
+    eta: null,
+  });
+  // No weigh-ins yet: the goal stays without a date.
+  assert.equal(insights.goalProjection([], goal("lose", 0.5), today).weightKg, null);
+  assert.equal(
+    insights.goalProjection(trend(80), { ...goal("manual", 0), program: null }, today),
+    null
+  );
+  assert.equal(insights.goalProjection(trend(80), null, today), null);
+
+  // The trend's pace over about three weeks, in kg a week.
+  assert.equal(
+    insights.trendPace([
+      { day: "2024-01-01", raw: 82, trend: 82 },
+      { day: "2024-01-10", raw: 81, trend: 81 },
+      { day: "2024-01-31", raw: 80, trend: 80 },
+    ]),
+    (-1 / 21) * 7
+  );
+  assert.equal(insights.trendPace(trend(80)), null);
+  sqlite.close();
+});
+
+/** Complete days of `calories` and a weigh-in each day from `weight(i)`. */
+function steadyDays(from, count, calories, weight) {
+  const intake = new Map(),
+    weights = [];
+  days(from, count).forEach((day, i) => {
+    intake.set(day, { calories, protein: 0, carbs: 0, fat: 0, entries: 1, status: "complete" });
+    weights.push({ measuredAt: day, weightKg: weight(i) });
+  });
+  return { intake, weights };
+}
+
+test("daily expenditure is intake minus the trend's change and settles on the true value", () => {
+  const { insights, sqlite } = insightsDatabase("2024-06-01");
+  const estimate = (intake, weights, extra = {}) =>
+    insights.estimateExpenditure({
+      from: "2024-01-01",
+      to: "2024-04-29",
+      intake,
+      trend: metrics.weightTrend(weights),
+      ...extra,
+    });
+  // Losing 0.5 kg a week on 2,000 kcal, with scale noise, burns 2,000 + 0.5 × 7,700 / 7 = 2,550.
+  const noise = [0.4, -0.3, 0];
+  const losing = steadyDays("2024-01-01", 120, 2000, (i) => 90 - (0.5 / 7) * i + noise[i % 3]);
+  const points = estimate(losing.intake, losing.weights, {
+    provisional: [{ day: "2024-01-01", kcal: 2800 }],
+  });
+  assert.equal(points.length, 120);
+  // The program's starting estimate holds until there is evidence, then the estimate learns.
+  assert.deepEqual(points[0], {
+    day: "2024-01-01",
+    kcal: 2800,
+    low: 2500,
+    high: 3100,
+    holding: true,
+  });
+  const learned = points.findIndex((point) => !point.holding);
+  assert.ok(learned > 10 && learned < 21, `learned on day ${learned}`);
+  const last = points.at(-1);
+  assert.equal(last.day, "2024-04-29");
+  assert.equal(last.holding, false);
+  assert.ok(Math.abs(last.kcal - 2550) <= 10, `${last.kcal}`);
+  assert.ok(last.low < last.kcal && last.high > last.kcal && last.high - last.low <= 400);
+
+  // Steady weight on 2,500 kcal is 2,500 kcal a day, with no starting estimate to hold.
+  const steady = steadyDays("2024-01-01", 60, 2500, () => 80);
+  const flat = estimate(steady.intake, steady.weights);
+  assert.equal(flat[0].holding, false);
+  // Twelve usable days, each with a trend the day before, first line up on Jan 13.
+  assert.equal(flat[0].day, "2024-01-13");
+  assert.equal(flat.at(-1).kcal, 2500);
+
+  // A month with no logs holds the last estimate and widens its range, never reading as zero.
+  const gap = steadyDays("2024-01-01", 120, 2500, () => 80);
+  for (const day of days("2024-03-01", 30)) gap.intake.delete(day);
+  const held = estimate(gap.intake, gap.weights);
+  const during = held.filter((point) => point.day >= "2024-03-15" && point.day < "2024-03-31");
+  assert.ok(during.every((point) => point.holding && point.kcal === 2500));
+  assert.ok(during.at(-1).high - during.at(-1).low > during[0].high - during[0].low);
+  assert.equal(held.at(-1).holding, false);
+  sqlite.close();
+});
+
+test("the expenditure series spans every logged day and every check-in, not the last 12", () => {
+  const data = insightsDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  const { db, insights, weights } = data;
+  const points = insights.expenditureSeries("", "2024-02-01", weights());
+  // From the program's start: its 2,600 kcal holds until the logs can say more.
+  assert.deepEqual(points[0], {
+    day: "2024-01-01",
+    kcal: 2600,
+    low: 2300,
+    high: 2900,
+    holding: true,
+  });
+  const last = points.at(-1);
+  assert.equal(last.day, "2024-02-01");
+  assert.equal(last.holding, false);
+  assert.ok(last.kcal < 2600 && last.kcal > 2400, `${last.kcal}`);
+  assert.deepEqual(
+    insights.expenditureSeries("2024-01-31", "2024-02-01", weights()),
+    points.slice(-2)
+  );
+
+  const review = data.store.currentReview();
+  for (let i = 0; i < 14; i++) {
+    const day = nutrition.shiftDay("2023-10-26", i * 7);
+    db.insert(schema.checkIns)
+      .values({
+        day,
+        goalId: 1,
+        decision: "kept",
+        review: { ...review, day, expenditure: 2600 - i },
+        targets,
+      })
+      .run();
+  }
+  db.insert(schema.checkIns)
+    .values({
+      day: "2024-02-01",
+      goalId: 1,
+      decision: "kept",
+      review: { ...review, method: 1 },
+      targets,
+    })
+    .run();
+  const estimates = insights.checkInEstimates();
+  assert.equal(estimates.length, 14);
+  assert.deepEqual(estimates[0], { day: "2023-10-26", kcal: 2600 });
+  assert.deepEqual(estimates.at(-1), { day: "2024-01-25", kcal: 2587 });
+  data.sqlite.close();
+});
+
+test("chart colors for calories and macros stand out from their track in both themes", () => {
+  const css = readFileSync("src/global.css", "utf8");
+  const theme = (variant) => {
+    const block = css.slice(css.indexOf(`@variant ${variant}`)).split("}")[0];
+    return Object.fromEntries(
+      [...block.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)].map(([, name, value]) => [name, value])
+    );
+  };
+  for (const variant of ["light", "dark"]) {
+    const colors = theme(variant);
+    for (const key of ["calories", "protein", "fat", "carbs"])
+      assert.ok(
+        contrast(colors[`chart-${key}`], colors["surface-secondary"]) >= 3,
+        `${variant} ${key}`
+      );
+  }
+  assert.match(css, /--color-chart-protein: var\(--chart-protein\)/);
+});
+
+/** Compiled Progress screens over a real database; charts and nested cards stay unrendered. */
+function progressHarness(data) {
+  const Segment = Object.assign(() => null, {
+    Group: "SegmentGroup",
+    Indicator: "SegmentIndicator",
+    Item: "SegmentItem",
+    Label: "SegmentLabel",
+  });
+  const system = {
+    SystemButton: "Button",
+    SystemIcon: "Icon",
+    SystemIconButton: "IconButton",
+    SystemLabel: "Label",
+    SystemPanel: Object.assign(() => null, { Body: "PanelBody" }),
+    SystemText: "Text",
+  };
+  const chart = load("src/components/progress/chart.tsx", {
+    "react-native": { View: "View" },
+    "react-native-svg": {
+      default: "Svg",
+      Circle: "Circle",
+      Line: "Line",
+      Path: "Path",
+      Rect: "Rect",
+    },
+    "heroui-native": {},
+    "heroui-native-pro": { Segment },
+    "@/components/system": system,
+    "@/lib/metrics": metrics,
+    "@/lib/store": {},
+  });
+  const pushed = [];
+  const focus = { current: true };
+  const words = {
+    add: "Add",
+    weight: "Weight",
+    needWeight: "Add a weight to get started.",
+    sourcesTitle: "Sources & methods",
+  };
+  const harness = () =>
+    screenHarness(
+      {
+        "@/lib/insights": data.insights,
+        "@/lib/coaching-store": data.store,
+        "@/lib/metrics": data.fakeMetrics,
+        "./metrics": data.fakeMetrics,
+        "@/lib/nutrition": nutrition,
+        "react-native": { View: "View", Pressable: "Pressable", AppState: {} },
+        "expo-router": {
+          router: { push: (href) => pushed.push(href), navigate: (href) => pushed.push(href) },
+          useIsFocused: () => focus.current,
+        },
+        "expo-localization": { useCalendars: () => [{ firstWeekday: 2 }] },
+        "heroui-native": {
+          useThemeColor: (color) => (Array.isArray(color) ? color.map(() => "#000000") : "#000000"),
+        },
+        "heroui-native-pro": { Segment },
+        "@/components/system": system,
+        "@/components/ui": { Screen: "Screen" },
+        "@/components/measurements/use-measurement-log": {
+          useMeasurementLog: () => ({ launch() {} }),
+        },
+        "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
+        "./chart": chart,
+        "./detail-screen": { DetailScreen: "DetailScreen", Explainer: "Explainer" },
+      },
+      { t: (key) => words[key] ?? key, weights: data.weights() }
+    );
+  return { harness, chart, pushed, focus, Segment };
+}
+const texts = (tree) =>
+  tree
+    .filter((node) => node.type === "Text")
+    .map((node) =>
+      [node.props.children]
+        .flat()
+        .filter((part) => typeof part === "string")
+        .join("")
+    );
+
+test("compiled Progress starts empty for a new user without inventing numbers", () => {
+  const data = insightsDatabase("2024-02-01");
+  const { harness } = progressHarness(data);
+  const main = harness();
+  const screen = main.load("src/components/progress/progress-screen.tsx");
+  const tree = nodes(main.render(screen.ProgressScreen));
+  const week = tree.find((node) => node.type === screen.WeeklyNutrition);
+  assert.deepEqual(
+    [week.props.today, week.props.current, week.props.first],
+    ["2024-02-01", "2024-01-29", "2024-02-01"]
+  );
+  const cards = tree.filter((node) => node.props?.href);
+  assert.deepEqual(
+    cards.map((node) => [node.props.href, node.props.value, node.props.points.length]),
+    [
+      ["/expenditure", "—", 0],
+      ["/weight-trend", "—", 0],
+    ]
+  );
+  const summary = tree.find((node) => node.type === screen.ThisWeek);
+  assert.equal(summary.props.budget.average, null);
+  assert.equal(summary.props.data.projection, null);
+
+  const card = harness();
+  const shownSummary = nodes(
+    card.render(card.load("src/components/progress/progress-screen.tsx").ThisWeek, summary.props)
+  );
+  assert.ok(texts(shownSummary).includes("Set targets in Plan to see your week against a budget."));
+  assert.ok(shown(shownSummary, "Button", "Set up your plan"));
+
+  const grid = harness();
+  const bars = nodes(
+    grid.render(
+      grid.load("src/components/progress/progress-screen.tsx").WeeklyNutrition,
+      week.props
+    )
+  );
+  assert.ok(shown(bars, "Text", "This week"));
+  assert.equal(
+    bars.find((node) => node.props.accessibilityLabel === "Previous week").props.isDisabled,
+    true
+  );
+  assert.equal(bars.filter((node) => node.type === "Pressable").length, 7);
+  assert.equal(texts(bars).filter((text) => text === "no target").length, 4);
+  data.sqlite.close();
+});
+
+test("compiled Progress shows the week against its budget, the goal's date and the check-in", () => {
+  const data = insightsDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  const { harness, Segment } = progressHarness(data);
+  const main = harness();
+  const screen = main.load("src/components/progress/progress-screen.tsx");
+  const tree = nodes(main.render(screen.ProgressScreen));
+  const [expenditure, weight] = tree.filter((node) => node.props?.href);
+  const series = data.insights.expenditureSeries("2024-01-26", "2024-02-01", data.weights());
+  assert.equal(expenditure.props.value, series.at(-1).kcal.toFixed(0));
+  assert.deepEqual(
+    expenditure.props.points.map((point) => point.day),
+    series.map((point) => point.day)
+  );
+  assert.deepEqual(
+    [weight.props.value, weight.props.unit, weight.props.points.length],
+    ["80.0", "kg", 6]
+  );
+
+  const summary = tree.find((node) => node.type === screen.ThisWeek);
+  const card = harness();
+  const week = nodes(
+    card.render(card.load("src/components/progress/progress-screen.tsx").ThisWeek, summary.props)
+  );
+  const average = week.find((node) => node.props.label === "Average intake");
+  assert.equal(average.props.value, "2400 / 2200 kcal");
+  assert.equal(average.props.note, "3 complete days · Protein 100% · Carbs 100% · Fat 120%");
+  // Mon–Wed ran 600 kcal over; Thursday to Sunday share the rest of the budget.
+  assert.ok(texts(week).includes("~2050 kcal/day for the rest of the week lands on budget"));
+  // Out of reach within 500 kcal of the target, or with no days left: the week's balance instead.
+  const balance = (value) => {
+    const view = harness();
+    return texts(
+      nodes(
+        view.render(view.load("src/components/progress/progress-screen.tsx").ThisWeek, {
+          ...summary.props,
+          budget: { ...summary.props.budget, restPerDay: null, balance: value },
+        })
+      )
+    );
+  };
+  assert.ok(balance(5204).includes("5200 kcal over this week’s budget"));
+  assert.ok(balance(-4000).includes("4000 kcal under this week’s budget"));
+  assert.ok(balance(2).includes("On this week’s budget"));
+  const goal = week.find((node) => node.props.label === "Goal 75.0 kg");
+  assert.equal(goal.props.value, `~${metrics.shortDay(summary.props.data.projection.eta, "en")}`);
+  assert.equal(goal.props.note, "Trend 80.0 kg · 0.0 kg/wk");
+  assert.ok(shown(week, "Button", "Review check-in"));
+
+  const grid = harness();
+  const Grid = grid.load("src/components/progress/progress-screen.tsx").WeeklyNutrition;
+  const props = tree.find((node) => node.type === screen.WeeklyNutrition).props;
+  // The chosen day's calories on the right: the value, then "of" its target, "left" or "over".
+  const calories = (tree) => {
+    const all = texts(tree),
+      unit = all.indexOf(" kcal");
+    return [all[unit - 1], all[unit + 1]];
+  };
+  let bars = nodes(grid.render(Grid, props));
+  assert.equal(
+    bars.find((node) => node.props.accessibilityLabel === "Previous week").props.isDisabled,
+    false
+  );
+  assert.deepEqual(calories(bars), ["0", "of 2200"]);
+  bars.find((node) => node.type === "Pressable").props.onPress();
+  bars = nodes(grid.render(Grid, props));
+  assert.deepEqual(calories(bars), ["2400", "of 2200"]);
+  bars.find((node) => node.type === Segment).props.onValueChange("remaining");
+  bars = nodes(grid.render(Grid, props));
+  assert.deepEqual(calories(bars), ["200", "over"]);
+  data.sqlite.close();
+});
+
+test("compiled weight trend and expenditure screens chart the range and reach the history", () => {
+  const empty = insightsDatabase("2024-02-01");
+  const blank = progressHarness(empty).harness();
+  const none = nodes(
+    blank.render(blank.load("src/components/progress/weight-trend-screen.tsx").WeightTrendScreen)
+  );
+  assert.ok(texts(none).includes("Add a weight to get started."));
+  const noEstimate = progressHarness(empty).harness();
+  assert.ok(
+    shown(
+      nodes(
+        noEstimate.render(
+          noEstimate.load("src/components/progress/expenditure-screen.tsx").ExpenditureScreen
+        )
+      ),
+      "Text",
+      "No estimate yet"
+    )
+  );
+  empty.sqlite.close();
+
+  const data = insightsDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01", { weight: (date) => (date < "2024-01-20" ? 81 : 80) });
+  const { harness, chart, pushed } = progressHarness(data);
+  const trend = harness();
+  const tree = nodes(
+    trend.render(trend.load("src/components/progress/weight-trend-screen.tsx").WeightTrendScreen)
+  );
+  const summary = tree.find((node) => node.type === chart.RangeSummary);
+  assert.deepEqual(
+    summary.props.stats.map((stat) => stat.label),
+    ["Average", "Difference"]
+  );
+  assert.ok(summary.props.stats[1].value.startsWith("−"));
+  const plot = tree.find((node) => node.type === chart.TrendChart);
+  assert.deepEqual(plot.props.goal, { value: 75, label: "Goal 75.0 kg" });
+  assert.equal(plot.props.from, "2024-01-10");
+  assert.deepEqual(
+    plot.props.lines.map((line) => [line.key, line.segments[0].length]),
+    [
+      ["scale", 22],
+      ["trend", 22],
+    ]
+  );
+  shown(tree, "Button", "All weigh-ins · 22").props.onPress();
+  assert.deepEqual(pushed, ["/weight-history"]);
+
+  const spend = harness();
+  const chartTree = nodes(
+    spend.render(spend.load("src/components/progress/expenditure-screen.tsx").ExpenditureScreen)
+  );
+  const line = chartTree.find((node) => node.type === chart.TrendChart);
+  const points = data.insights.expenditureSeries("", "2024-02-01", data.weights());
+  assert.equal(line.props.from, points[0].day);
+  // The program's starting estimate holds, then the learned estimate takes over.
+  assert.deepEqual(
+    line.props.lines.map((item) => [item.key, item.segments.length]),
+    [
+      ["estimate", 1],
+      ["holding", 1],
+    ]
+  );
+  assert.equal(line.props.band.points.length, points.length);
+  data.sqlite.close();
+});
+
+test("compiled Progress in manual mode or before any weigh-in shows only what it knows", () => {
+  const data = insightsDatabase("2024-02-01");
+  const { db, diary, store } = data;
+  store.saveGoal("manual", 0);
+  diary.saveTargets("2024-01-01", targets);
+  diary.saveEntry({ day: "2024-01-29", meal: "Lunch", food, amount: 1, portionLabel: "1 serving" });
+  diary.setDayStatus("2024-01-29", "complete");
+  const { harness } = progressHarness(data);
+  const render = () => {
+    const main = harness();
+    const screen = main.load("src/components/progress/progress-screen.tsx");
+    const tree = nodes(main.render(screen.ProgressScreen));
+    const card = harness();
+    const summary = tree.find((node) => node.type === screen.ThisWeek).props;
+    return {
+      cards: tree.filter((node) => node.props?.href).map((node) => node.props.value),
+      summary,
+      week: nodes(
+        card.render(card.load("src/components/progress/progress-screen.tsx").ThisWeek, summary)
+      ),
+    };
+  };
+  let { cards, summary, week } = render();
+  assert.deepEqual(cards, ["—", "—"]);
+  assert.equal(summary.data.projection, null);
+  assert.equal(
+    week.find((node) => node.props.label === "Average intake").props.value,
+    "2400 / 2200 kcal"
+  );
+  // Monday ran 200 over; unlogged Tuesday and Wednesday count on neither side, so Thursday to
+  // Sunday share it.
+  assert.ok(texts(week).includes("~2150 kcal/day for the rest of the week lands on budget"));
+  assert.equal(week.filter((node) => node.type === "Button").length, 0);
+
+  // A new program before any weigh-in: its starting estimate, the goal without a date yet.
+  db.insert(schema.coachingGoals)
+    .values({
+      mode: "lose",
+      pace: 0.5,
+      startedDay: "2024-02-01",
+      program: { ...profile, initialExpenditure: 2600 },
+    })
+    .run();
+  ({ cards, week } = render());
+  assert.deepEqual(cards, ["2600", "—"]);
+  assert.equal(
+    week.find((node) => node.props.label === "Goal 75.0 kg").props.value,
+    "Add a weigh-in"
+  );
+  assert.ok(shown(week, "Button", `Next check-in · ${metrics.shortDay("2024-02-08", "en", true)}`));
+  data.sqlite.close();
+});
+
+test("compiled Progress reads once per change and not again on returning to it", () => {
+  const data = insightsDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  const { harness, focus } = progressHarness(data);
+  const main = harness();
+  const { ProgressScreen } = main.load("src/components/progress/progress-screen.tsx");
+  let reads = 0;
+  const prepare = data.sqlite.prepare;
+  data.sqlite.prepare = function (...args) {
+    reads++;
+    return prepare.apply(this, args);
+  };
+  const render = () => {
+    reads = 0;
+    main.render(ProgressScreen);
+    return reads;
+  };
+  assert.ok(render() > 0);
+  // Plan and back, or Weight trend and back, with nothing changed.
+  focus.current = false;
+  assert.equal(render(), 0);
+  focus.current = true;
+  assert.equal(render(), 0);
+  // A log made while away is read once on return.
+  focus.current = false;
+  main.context.refresh();
+  assert.equal(render(), 0);
+  focus.current = true;
+  assert.ok(render() > 0);
+  assert.equal(render(), 0);
+  data.sqlite.close();
+});
+
+test("compiled Progress dates a weight trend with no weigh-in in the last seven days", () => {
+  const data = insightsDatabase("2024-02-01");
+  seedProgram(data, "2024-02-01");
+  // Weigh-ins run to Jan 31; it is now Feb 20.
+  data.clock.today = "2024-02-20";
+  const { harness } = progressHarness(data);
+  const main = harness();
+  const screen = main.load("src/components/progress/progress-screen.tsx");
+  const tree = nodes(main.render(screen.ProgressScreen));
+  const weight = tree.find((node) => node.props?.href === "/weight-trend");
+  const asOf = `As of ${metrics.shortDay("2024-01-31", "en")}`;
+  assert.equal(weight.props.caption, asOf);
+  assert.deepEqual(
+    weight.props.points.map((point) => point.day),
+    days("2024-01-25", 7)
+  );
+  const expenditure = tree.find((node) => node.props?.href === "/expenditure");
+  assert.equal(expenditure.props.caption, undefined);
+  const summary = tree.find((node) => node.type === screen.ThisWeek);
+  const card = harness();
+  const week = nodes(
+    card.render(card.load("src/components/progress/progress-screen.tsx").ThisWeek, summary.props)
+  );
+  assert.match(
+    week.find((node) => node.props.label === "Goal 75.0 kg").props.note,
+    new RegExp(`^Trend 80.0 kg on ${metrics.shortDay("2024-01-31", "en")} · `)
+  );
+
+  // A weigh-in this week brings back the last seven days.
+  data.db
+    .insert(schema.weightEntries)
+    .values({ weightKg: 79.5, measuredAt: new Date("2024-02-19T12:00:00").toISOString() })
+    .run();
+  const fresh = progressHarness(data).harness();
+  const card2 = nodes(
+    fresh.render(fresh.load("src/components/progress/progress-screen.tsx").ProgressScreen)
+  ).find((node) => node.props?.href === "/weight-trend");
+  assert.equal(card2.props.caption, undefined);
+  assert.deepEqual(
+    card2.props.points.map((point) => point.day),
+    ["2024-02-19"]
+  );
+  data.sqlite.close();
+});
+
+test("compiled weight history opens Health settings in the tabs underneath", () => {
+  const calls = [];
+  const screen = screenHarness(
+    {
+      "./metrics": metrics,
+      "react-native": { Platform: { OS: "ios" } },
+      "expo-router": {
+        router: {
+          dismissTo: (href) => calls.push(["dismissTo", href]),
+          navigate: (href) => calls.push(["navigate", href]),
+          push: (href) => calls.push(["push", href]),
+        },
+      },
+      "@/components/system": { SystemButton: "Button", SystemIconButton: "IconButton" },
+      "@/components/progress/detail-screen": { DetailScreen: "DetailScreen" },
+      "./use-measurement-log": { useMeasurementLog: () => ({ launch() {} }) },
+      "./weight-form": { WeightForm: "WeightForm" },
+      "./measurement-history": { MeasurementHistory: "MeasurementHistory" },
+    },
+    { t: (key) => key, healthSyncEnabled: false, lastSync: null }
+  );
+  const { WeightLog } = screen.load("src/components/measurements/weight-log.tsx");
+  const tree = nodes(screen.render(WeightLog));
+  shown(tree, "Button", "Sync weights with Apple Health").props.onPress();
+  assert.deepEqual(calls, [["dismissTo", "/(tabs)/settings"]]);
+});
