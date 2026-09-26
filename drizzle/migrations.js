@@ -14,6 +14,7 @@ import m0009 from "./0009_organic_terrax.sql";
 import m0010 from "./0010_fast_recent_foods.sql";
 import m0011 from "./0011_weight_time_index.sql";
 import m0012 from "./0012_weight_excluded.sql";
+import m0013 from "./0013_portion_units.sql";
 
 export default {
   journal,
@@ -31,5 +32,6 @@ export default {
     m0010,
     m0011,
     m0012,
+    m0013,
   },
 };

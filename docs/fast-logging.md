@@ -24,6 +24,8 @@ The Undo message disappears after 8 seconds (not while a screen reader is runnin
 
 A scanned food starts at the quantity you last logged. After a scan, **Add & scan another** adds the food and reopens the camera for the next product. Quick add works out calories as 4 × protein + 4 × carbs + 9 × fat when they are left blank, and notes when entered calories and macros differ by more than 15%.
 
+A food's portion screen keeps the amount, unit chips and a keypad at the bottom instead of the system keyboard. Units are g and oz, volumes the food converts, its own portions ("slice", "cup, sliced", "serving") and kcal ("300 kcal" logs the weight with 300 kcal). Fractions and mixed numbers ("1 1/2") work; ± steps half a unit or 10 g. The amount opens selected; switching unit converts a prefilled amount and keeps a typed number. **Add** returns to the list, **Log** saves the selection. Above them are calories, macros with their share of the calories, the portion's share of the day's targets, and fiber and sodium; the header ring includes the selection. Each food reopens at the unit and count last logged, and changing only an entry's time keeps its label and "≈".
+
 ## Morning weigh-in
 
 When Health isn't delivering weights, Home shows a weigh-in card until noon on days without a weight: type the scale reading and **Save** (decimal keypad, the user's units, last weight shown below). A reading more than 3% away from a weigh-in in the previous two weeks asks for a second tap before saving, so a typo doesn't hold coaching for weeks. The card is skipped for the day with its ×, and hidden when Health sync is on without errors and has imported a weight in the last week. Log weight in the day menu and Progress remain available at any time.
@@ -40,6 +42,7 @@ Counts start on Home and exclude typing, biometric phone unlock and opening the 
 | ------------------------------------------ | -------------------------------------------- |
 | Repeat a familiar food or saved meal       | Log food + select + Log = 3 taps; Undo       |
 | Repeat a food with a new amount            | Log food + row + Log = 3 taps                |
+| Log a food in its own unit ("2 slices")    | Log food + row + slice + Log = 4 taps        |
 | Log three usual foods                      | Log food + 3 selections + Log = 5 taps       |
 | Log a meal from a photo                    | Photo + shutter + Log = 3 taps               |
 | Scan a packaged food with nothing selected | Scan + Log = 2 taps                          |

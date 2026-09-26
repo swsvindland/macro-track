@@ -461,6 +461,13 @@ test("a named chain's item is logged whole, with plain foods kept as alternative
   const slice = pizza.item.food.portions.find((portion) => portion.label === "1 slice").amount;
   assert.equal(pizza.item.amount, 3 * slice);
   assert.equal(pizza.item.portionLabel, `≈ 3 slices · ${3 * slice} g`);
+  // The portion screen opens on the same 3 slices.
+  assert.equal(pizza.item.portionCount, 3);
+  assert.equal(
+    nutrition.portionUnits(pizza.item.food).find((unit) => unit.key === pizza.item.portionUnit)
+      .label,
+    "slice"
+  );
   assert.equal(
     pizza.item.nutrients.calories,
     (pizza.item.food.nutrients.calories * 3 * slice) / 100
@@ -490,6 +497,8 @@ test("amounts come from catalog portions, checked against the model's weight", (
   assert.deepEqual(ai.resolveAmount(seen("egg", { quantity: 2, grams: 100 }), egg), {
     amount: 92,
     portionLabel: "≈ 2 large · 92 g",
+    unit: "portion:1",
+    count: 2,
   });
   // A lettuce "piece" is a leaf's weight, not the catalog's whole head.
   const lettuce = food([{ label: "1 head, large", amount: 755 }]);
@@ -526,6 +535,8 @@ test("amounts come from catalog portions, checked against the model's weight", (
   assert.deepEqual(ai.resolveAmount(seen("bar", { quantity: 2 }), serving), {
     amount: 2,
     portionLabel: "≈ 2 bars",
+    unit: "portion:0",
+    count: 2,
   });
   // Short plurals and fluid ounces are units too, even without the model's weight.
   for (const [unit, key] of [
@@ -540,7 +551,7 @@ test("amounts come from catalog portions, checked against the model's weight", (
   assert.equal(ai.resolveAmount(seen("steak", { unit: "lbs" }), food([])).amount, 453.6);
   assert.deepEqual(
     ai.resolveAmount(seen("cola", { quantity: 12, unit: "fluid ounces" }), food([], "ml")),
-    { amount: 354.8, portionLabel: "≈ 12 fl oz · 355 ml" }
+    { amount: 354.9, portionLabel: "≈ 12 fl oz · 355 ml", unit: "floz", count: 12 }
   );
   // Without portions or a weight, 100 g per unit is the last resort and stays within limits.
   assert.equal(ai.resolveAmount(seen("mystery", { quantity: 80 }), food([])).amount, 2000);
@@ -553,6 +564,27 @@ test("amounts come from catalog portions, checked against the model's weight", (
   assert.deepEqual(ai.resolveAmount(seen("salmon nigiri", { quantity: 10, grams: 1100 }), salmon), {
     amount: 750,
     portionLabel: "≈ 10 pieces · 750 g",
+    unit: "g",
+    count: 750,
+  });
+  // An ounce is an ounce, whatever a cooked food's dry ounce yields; a cup of the cooked food
+  // is its own cup, not what a cup of the dry one makes.
+  const couscous = food([
+    { label: "1 cup, dry, yields", amount: 528 },
+    { label: "1 cup, cooked", amount: 157 },
+    { label: "1 oz, dry, yields", amount: 86 },
+  ]);
+  assert.deepEqual(ai.resolveAmount(seen("couscous", { quantity: 4, unit: "oz" }), couscous), {
+    amount: 113.4,
+    portionLabel: "≈ 4 oz · 113 g",
+    unit: "oz",
+    count: 4,
+  });
+  assert.deepEqual(ai.resolveAmount(seen("couscous", { unit: "cup" }), couscous), {
+    amount: 157,
+    portionLabel: "≈ 1 cup, cooked · 157 g",
+    unit: "portion:1",
+    count: 1,
   });
   // A portion that is only a weight names no unit.
   const patties = food([{ label: "1 151.0g", amount: 151 }]);
@@ -581,7 +613,19 @@ test("a volume of a weighed food goes through the food's own density", async () 
     const { amount: value } = amount(quantity, unit);
     assert.ok(Math.abs(value - grams) / grams < 0.05, `${quantity} ${unit}: ${value} g`);
   }
-  assert.equal(amount(250, "ml").portionLabel, "≈ 250 ml · 258 g");
+  // The draft counts what was seen, labeled as Log again will label it.
+  assert.deepEqual(amount(250, "ml"), {
+    amount: 257.8,
+    portionLabel: "≈ 250 ml · 258 g",
+    unit: "ml",
+    count: 250,
+  });
+  assert.deepEqual(amount(0.75, "cup"), {
+    amount: 183,
+    portionLabel: "≈ ¾ cup · 183 g",
+    unit: "cup",
+    count: 0.75,
+  });
   // A food without a volume portion keeps the model's weight, else water's density.
   const plain = { ...milk, portions: [{ label: "1 serving", amount: 200 }] };
   assert.equal(ai.resolveAmount(seen("x", { quantity: 330, unit: "ml" }), plain).amount, 330);
@@ -612,7 +656,7 @@ test("a weight of a per-serving food is converted to servings, never counted as 
   // No serving weight is known, so a weight is one serving, marked as a guess.
   assert.deepEqual(
     ai.resolveAmount(seen("protein powder", { quantity: 30, unit: "g", grams: 30 }), powder),
-    { amount: 1, portionLabel: "≈ 1 serving (1 scoop)" }
+    { amount: 1, portionLabel: "≈ 1 serving (1 scoop)", unit: "serving", count: 1 }
   );
   const { drafts } = await draft(
     [
@@ -634,7 +678,7 @@ test("a weight of a per-serving food is converted to servings, never counted as 
       seen("protein powder", { quantity: 45, unit: "grams" }),
       perServing("p", "Powder", 120, "1 serving (30 g)")
     ),
-    { amount: 1.5, portionLabel: "≈ 45 g · 1.5 servings" }
+    { amount: 1.5, portionLabel: "≈ 45 g · 1½ servings", unit: "g", count: 45 }
   );
   const oats = perServing("oats", "Oats", 300, "1 serving (1/2 cup)");
   assert.equal(ai.resolveAmount(seen("oats", { unit: "cup" }), oats).amount, 2);

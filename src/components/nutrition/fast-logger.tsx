@@ -7,23 +7,32 @@ import {
   SystemLabel,
   SystemText as Text,
 } from "@/components/system";
-import { Choices, DateInput, Editor, ErrorText, Field, SearchInput } from "@/components/ui";
+import { Choices, DateInput, Editor, ErrorText, SearchInput } from "@/components/ui";
+import { entriesForDay, targetsForDay, toggleFavorite } from "@/lib/diary";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { logBatch, loggingChoices, type LogChoice, type LogReceipt } from "@/lib/fast-log";
 import { searchFoods } from "@/lib/food-catalog";
 import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import {
+  countText,
+  formatCount,
   meals,
-  scaleNutrients,
+  parseAmount,
+  portionItem,
+  portionOf,
+  portionUnits,
+  scaleItem,
   shiftDay,
   totalNutrients,
   type Food,
   type Meal,
   type MealItem,
+  type PortionUnit,
 } from "@/lib/nutrition";
-import { localDay, parseNumber } from "@/lib/metrics";
-import { useNutrition } from "@/lib/nutrition-store";
+import { localDay } from "@/lib/metrics";
+import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import { AmountPicker, DayRing, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
 import { PhotoLogger } from "./photo-logger";
 import { QuickAdd } from "./quick-add";
@@ -33,47 +42,43 @@ const isMeal = (choice: LogChoice) => choice.key.startsWith("meal:");
 /** Tells apart catalog foods with the same name: "Chicken Breast · Tyson". */
 const source = (food: Food) =>
   food.brand || (food.source === "usda" ? "USDA" : food.source === "off" ? "Open Food Facts" : "");
-const startAmount = (choice: LogChoice) => String(isMeal(choice) ? 1 : choice.items[0].amount);
+const mealUnits: PortionUnit[] = [{ key: "meal", label: "×", perUnit: 1, kind: "count" }];
+const unitsFor = (choice: LogChoice) =>
+  isMeal(choice) ? mealUnits : portionUnits(choice.items[0].food);
+/** A saved meal starts at 1×; a food at the unit and count it was chosen in. */
+function startAmount(choice: LogChoice): AmountDraft {
+  if (isMeal(choice)) return { unit: "meal", text: "1", fresh: true };
+  const item = choice.items[0];
+  const { unit, count } = portionOf(item);
+  return { unit, text: countText(item.food, unit, count), fresh: true };
+}
 
-/** A typed quantity for one food, or a multiplier for every food in a saved meal. */
-function portioned(choice: LogChoice, input: string): LogChoice {
-  const value = parseNumber(input);
-  if (!Number.isFinite(value) || value <= 0 || value > (isMeal(choice) ? 100 : 100000))
-    throw new Error("Enter a valid quantity.");
-  if (isMeal(choice))
+/** A typed amount of one food, or a multiplier for every food in a saved meal. */
+function portioned(choice: LogChoice, amount: AmountDraft): LogChoice {
+  const value = parseAmount(amount.text);
+  if (isMeal(choice)) {
+    if (!Number.isFinite(value) || value <= 0 || value > 100)
+      throw new Error("Enter a valid quantity.");
     return {
       ...choice,
-      detail: `${value} × saved meal`,
-      items: choice.items.map((item) => ({
-        ...item,
-        amount: item.amount * value,
-        portionLabel: `${Number((item.amount * value).toFixed(4))} ${item.food.basis}`,
-        nutrients: Object.fromEntries(
-          Object.entries(item.nutrients).map(([key, n]) => [key, n === null ? null : n * value])
-        ) as MealItem["nutrients"],
-      })),
+      detail: `${formatCount(value, mealUnits[0])} × saved meal`,
+      items: choice.items.map((item) => scaleItem(item, value)),
     };
-  const item = choice.items[0];
-  return {
-    ...choice,
-    detail: `${value} ${item.food.basis}`,
-    items: [
-      {
-        ...item,
-        amount: value,
-        portionLabel: `${value} ${item.food.basis}`,
-        nutrients: scaleNutrients(item.food, value),
-      },
-    ],
-  };
+  }
+  const item = portionItem(choice.items[0].food, amount.unit, value, {
+    previous: choice.items[0],
+  });
+  return { ...choice, detail: item.portionLabel, items: [item] };
 }
-function tryPortioned(choice: LogChoice, input: string) {
+function tryPortioned(choice: LogChoice, amount: AmountDraft) {
   try {
-    return portioned(choice, input);
+    return portioned(choice, amount);
   } catch {
     return null;
   }
 }
+const calories = (items: MealItem[]) =>
+  totalNutrients(items.map((item) => item.nutrients)).calories;
 
 export function FastLogger({
   initialDay,
@@ -108,7 +113,7 @@ export function FastLogger({
     [error, setError] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [editing, setEditing] = useState<LogChoice | null>(null),
-    [amount, setAmount] = useState("");
+    [amount, setAmount] = useState<AmountDraft>({ unit: "", text: "", fresh: true });
   const [picker, setPicker] = useState<"barcode" | "custom" | "quick" | "photo" | null>(
     start === "barcode" ? "barcode" : null
   );
@@ -125,6 +130,14 @@ export function FastLogger({
     const today = localDay();
     return { ...loggingChoices(time), today, yesterday: shiftDay(today, -1) };
   }, [revision, time]);
+  // The day's calories and targets, which the header ring and target rings add the selection to.
+  const dayTotals = useNutritionQuery(
+    () => ({
+      eaten: calories(entriesForDay(day)),
+      targets: targetsForDay(day),
+    }),
+    [day]
+  );
   const trimmed = query.trim().toLowerCase();
   const known = data.known;
   useEffect(() => {
@@ -335,13 +348,7 @@ export function FastLogger({
           else setPicker(null);
           keepOpen.current = false;
         }}
-        onPick={(food, value, keepScanning) => {
-          const item: MealItem = {
-            food,
-            amount: value,
-            portionLabel: `${value} ${food.basis === "serving" ? "serving(s)" : food.basis}`,
-            nutrients: scaleNutrients(food, value),
-          };
+        onPick={(food, _, item, keepScanning) => {
           // With nothing else selected today, a scan or new food is logged in one step.
           if (oneStep && !keepScanning) commit([item]);
           else {
@@ -350,107 +357,13 @@ export function FastLogger({
             add({
               key: `food:${food.id}`,
               title: food.name,
-              detail: `${value} ${food.basis}`,
+              detail: item.portionLabel,
               items: [item],
             });
           }
         }}
       />
     );
-  if (editing) {
-    const preview = tryPortioned(editing, amount);
-    const basis = editing.items[0].food.basis;
-    const value = parseNumber(amount);
-    const unit = isMeal(editing)
-      ? "×"
-      : basis === "serving"
-        ? value === 1
-          ? " serving"
-          : " servings"
-        : ` ${basis}`;
-    // The only item: logging it now saves a trip back through the list.
-    const solo = !cart.some((row) => row.key !== editing.key);
-    const subtitle = isMeal(editing)
-      ? editing.items.map((item) => item.food.name).join(", ")
-      : source(editing.items[0].food);
-    const addToMeal = () =>
-      attempt(() => {
-        add(portioned(editing, amount));
-        setEditing(null);
-        setDirect(false);
-        if (trimmed) clearQuery();
-      });
-    return (
-      <Editor
-        title={direct ? "Log food" : "Portion"}
-        open
-        close={back}
-        compact
-        footer={
-          <View className="gap-2">
-            <ErrorText message={error} />
-            {solo ? (
-              <>
-                <SystemButton
-                  onPress={() => attempt(() => commit(portioned(editing, amount).items))}
-                >
-                  {preview
-                    ? `Log ${value}${unit} · ${number(totalNutrients(preview.items.map((item) => item.nutrients)).calories, 0)} kcal`
-                    : "Log food"}
-                </SystemButton>
-                <SystemButton variant="secondary" onPress={addToMeal}>
-                  Add to meal
-                </SystemButton>
-              </>
-            ) : (
-              <SystemButton onPress={addToMeal}>Add to meal</SystemButton>
-            )}
-          </View>
-        }
-      >
-        <Text accessibilityRole="header" numberOfLines={2} className="text-xl font-semibold">
-          {editing.title}
-        </Text>
-        {!!subtitle && (
-          <Text numberOfLines={2} className="-mt-2 text-sm text-muted">
-            {subtitle}
-          </Text>
-        )}
-        <Field
-          label={isMeal(editing) ? "Multiply selected portions" : `Quantity (${basis})`}
-          numeric
-          autoFocus
-          selectTextOnFocus
-          value={amount}
-          onChange={(next) => {
-            setAmount(next);
-            setError("");
-          }}
-        />
-        {preview && (
-          <Text className="text-sm font-semibold tabular-nums">{summary(preview.items)}</Text>
-        )}
-        {!isMeal(editing) && !!editing.items[0].food.portions.length && (
-          <View className="flex-row flex-wrap gap-2">
-            {editing.items[0].food.portions.slice(0, 6).map((portion, i) => (
-              <SystemButton
-                key={i}
-                variant="secondary"
-                className={`px-3 ${value === portion.amount ? "bg-accent-soft" : ""}`}
-                accessibilityState={{ selected: value === portion.amount }}
-                onPress={() => {
-                  setAmount(String(portion.amount));
-                  setError("");
-                }}
-              >
-                {`${portion.label} · ${portion.amount} ${basis}`}
-              </SystemButton>
-            ))}
-          </View>
-        )}
-      </Editor>
-    );
-  }
   const dayLabel =
     day === data.today
       ? "Today"
@@ -461,6 +374,97 @@ export function FastLogger({
             month: "short",
             day: "numeric",
           });
+  const whenLabel = `${dayLabel} · ${validFoodTime(time) ? formatClock(time) : time}${diaryLayout === "meals" ? ` · ${meal}` : ""}`;
+  if (editing) {
+    const preview = tryPortioned(editing, amount);
+    const food = isMeal(editing) ? null : editing.items[0].food;
+    const subtitle = isMeal(editing)
+      ? editing.items.map((item) => item.food.name).join(", ")
+      : source(editing.items[0].food);
+    const others = cart.filter((row) => row.key !== editing.key).flatMap((row) => row.items);
+    const sum = preview ? totalNutrients(preview.items.map((item) => item.nutrients)) : null;
+    const favorite = !!food && data.saved.some((choice) => choice.key === `food:${food.id}`);
+    const addToMeal = () =>
+      attempt(() => {
+        add(portioned(editing, amount));
+        setEditing(null);
+        setDirect(false);
+        if (trimmed) clearQuery();
+      });
+    // Logs everything selected, with this food at the amount on screen.
+    const logNow = () =>
+      attempt(() => {
+        const next = portioned(editing, amount);
+        commit(
+          (cart.some((row) => row.key === next.key)
+            ? cart.map((row) => (row.key === next.key ? next : row))
+            : [...cart, next]
+          ).flatMap((row) => row.items)
+        );
+      });
+    return (
+      <Editor
+        title={direct ? "Log food" : "Portion"}
+        open
+        close={back}
+        compact
+        footer={
+          <View className="gap-2">
+            <ErrorText message={error} />
+            <AmountPicker
+              units={unitsFor(editing)}
+              value={amount}
+              onChange={(next) => {
+                setAmount(next);
+                setError("");
+              }}
+              actions={[
+                { label: "Log", onPress: logNow },
+                { label: "Add", onPress: addToMeal },
+              ]}
+            />
+          </View>
+        }
+      >
+        <View className="flex-row items-center justify-between gap-2">
+          <Text numberOfLines={1} className="shrink text-sm text-muted">
+            {whenLabel}
+          </Text>
+          <DayRing
+            calories={dayTotals.eaten + calories(others) + (sum?.calories ?? 0)}
+            target={dayTotals.targets?.calories ?? null}
+          />
+        </View>
+        <View className="flex-row items-start gap-1">
+          <View className="flex-1 gap-1">
+            <Text accessibilityRole="header" numberOfLines={2} className="text-xl font-semibold">
+              {editing.title}
+            </Text>
+            {!!subtitle && (
+              <Text numberOfLines={2} className="text-sm text-muted">
+                {subtitle}
+              </Text>
+            )}
+          </View>
+          {food && (
+            <SystemIconButton
+              icon={favorite ? "heart" : "heart-outline"}
+              color={favorite ? "accent-soft-foreground" : "foreground"}
+              accessibilityLabel={favorite ? "Remove from saved foods" : "Save food"}
+              accessibilityState={{ selected: favorite }}
+              onPress={() =>
+                attempt(() => {
+                  toggleFavorite(food);
+                  refresh();
+                })
+              }
+            />
+          )}
+        </View>
+        <PortionPreview nutrients={sum} targets={dayTotals.targets} />
+      </Editor>
+    );
+  }
   return (
     <Editor
       title="Log food"
@@ -481,16 +485,22 @@ export function FastLogger({
         </View>
       }
     >
-      <SystemButton
-        variant="ghost"
-        icon="time-outline"
-        className="self-start px-2"
-        accessibilityHint="Changes the day and time for this meal"
-        accessibilityState={{ expanded: when }}
-        onPress={() => setWhen((open) => !open)}
-      >
-        {`${dayLabel} · ${validFoodTime(time) ? formatClock(time) : time}${diaryLayout === "meals" ? ` · ${meal}` : ""}`}
-      </SystemButton>
+      <View className="flex-row items-center justify-between gap-2">
+        <SystemButton
+          variant="ghost"
+          icon="time-outline"
+          className="shrink px-2"
+          accessibilityHint="Changes the day and time for this meal"
+          accessibilityState={{ expanded: when }}
+          onPress={() => setWhen((open) => !open)}
+        >
+          {whenLabel}
+        </SystemButton>
+        <DayRing
+          calories={dayTotals.eaten + calories(items)}
+          target={dayTotals.targets?.calories ?? null}
+        />
+      </View>
       {when && (
         <>
           <DateInput label="Log date" value={day} onChange={setDay} />

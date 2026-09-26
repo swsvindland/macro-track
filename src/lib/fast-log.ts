@@ -18,28 +18,40 @@ import {
   validFoodTime,
 } from "./food-time";
 import { localDay, validDay } from "./metrics";
-import { scaleNutrients, validateFood, type Food, type Meal, type MealItem } from "./nutrition";
+import {
+  defaultPortion,
+  portionItem,
+  portionOf,
+  scaleNutrients,
+  validateFood,
+  type Food,
+  type Meal,
+  type MealItem,
+} from "./nutrition";
 
 export type LogChoice = { key: string; title: string; detail: string; items: MealItem[] };
 /** A batch log's receipt; `entries` are its new rows, all on `day`. */
 export type LogReceipt = DiaryReceipt & { day: string; entries: FoodEntry[] };
+/**
+ * A food's portion for "Log again": the unit and count it was last logged in, while the food
+ * still has that unit, else its usual portion.
+ */
 export function portionFor(food: Food, recent?: FoodEntry): MealItem {
   const reuse =
     recent?.food.basis === food.basis &&
     (food.source !== "recipe" || recent.food.sourceVersion === food.sourceVersion);
-  const amount = reuse
-    ? recent!.amount
-    : (food.portions[0]?.amount ?? (food.basis === "serving" ? 1 : 100));
-  return {
-    food,
-    amount,
-    portionLabel: reuse
-      ? recent!.portionLabel
-      : food.portions[0]?.label
-        ? `${food.portions[0].label} · ${amount} ${food.basis}`
-        : `${amount} ${food.basis === "serving" ? "serving" : food.basis}`,
-    nutrients: scaleNutrients(food, amount),
-  };
+  if (!reuse) {
+    const { unit, count } = defaultPortion(food);
+    return portionItem(food, unit, count);
+  }
+  // An entry from before units reopens in the unit its label names ("2 medium · 88 g").
+  const { unit, count } = portionOf({ ...recent!, food });
+  const item = portionItem(food, unit, count, { estimate: recent!.portionLabel.startsWith("≈") });
+  // One whose label names none of the food's units keeps its wording, and no unit, so the
+  // wording carries forward; "2 serving(s)" is relabeled.
+  return recent!.portionUnit || unit !== food.basis || /serving\(s\)/.test(recent!.portionLabel)
+    ? item
+    : { ...item, portionLabel: recent!.portionLabel, portionUnit: null, portionCount: null };
 }
 const dayMs = 86_400_000;
 

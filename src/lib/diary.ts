@@ -22,6 +22,7 @@ import {
   meals,
   barcodeCandidates,
   normalizeBarcode,
+  scaleItem,
   scaleNutrients,
   validateFood,
   type DayState,
@@ -115,6 +116,8 @@ export function saveEntry({
   food,
   amount,
   portionLabel,
+  portionUnit = null,
+  portionCount = null,
   loggedTime,
 }: {
   id?: number;
@@ -123,6 +126,8 @@ export function saveEntry({
   food: Food;
   amount: number;
   portionLabel: string;
+  portionUnit?: string | null;
+  portionCount?: number | null;
   loggedTime?: string | null;
 }): DiaryReceipt {
   if (!validDay(day)) throw new Error("Choose today or an earlier date.");
@@ -138,7 +143,17 @@ export function saveEntry({
       loggedTime === undefined ? (existing ? existing.loggedTime : currentFoodTime()) : loggedTime;
     if (time !== null && !validFoodTime(time))
       throw new Error("Enter a time such as 9:30 or 21:30.");
-    const data = { day, meal, food, amount, portionLabel, nutrients, loggedTime: time };
+    const data = {
+      day,
+      meal,
+      food,
+      amount,
+      portionLabel,
+      portionUnit,
+      portionCount,
+      nutrients,
+      loggedTime: time,
+    };
     if (!existing) {
       const row = tx
         .insert(foodEntries)
@@ -410,10 +425,12 @@ function mealItems(day: string, meal: Meal, group?: string, ids?: number[]): Mea
     ids ? ids.includes(entry.id) : inFoodGroup(entry, meal, group)
   );
   if (!items.length) throw new Error("Add food to this meal first.");
-  return items.map(({ food, amount, portionLabel, nutrients }) => ({
+  return items.map(({ food, amount, portionLabel, portionUnit, portionCount, nutrients }) => ({
     food,
     amount,
     portionLabel,
+    portionUnit,
+    portionCount,
     nutrients,
   }));
 }
@@ -450,26 +467,19 @@ function addMealItems(
   // snapshots, even when the catalog or personal food has since changed.
   const entries = items.map((item) => {
     validateFood(item.food);
-    const amount = item.amount * multiplier;
-    scaleNutrients(item.food, amount);
-    const nutrients = Object.fromEntries(
-      Object.entries(item.nutrients).map(([key, value]) => [
-        key,
-        value === null ? null : value * multiplier,
-      ])
-    ) as MealItem["nutrients"];
+    scaleNutrients(item.food, item.amount * multiplier);
+    const scaled = scaleItem(item, multiplier);
     return {
       food: item.food,
-      amount,
-      nutrients,
+      amount: scaled.amount,
+      nutrients: scaled.nutrients,
       day,
       meal,
       createdAt: Date.now(),
       loggedTime,
-      portionLabel:
-        multiplier === 1
-          ? item.portionLabel
-          : `${Number(amount.toFixed(4))} ${item.food.basis === "serving" ? "serving(s)" : item.food.basis}`,
+      portionLabel: scaled.portionLabel,
+      portionUnit: scaled.portionUnit ?? null,
+      portionCount: scaled.portionCount ?? null,
     };
   });
   return db.transaction((tx) => {

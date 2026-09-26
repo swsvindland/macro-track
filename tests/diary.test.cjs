@@ -1,6 +1,18 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync, readdirSync } = require("node:fs");
+const {
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} = require("node:fs");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
@@ -103,22 +115,79 @@ function diaryDatabase() {
   return { sqlite, db, diary, fastLog };
 }
 
-// The production catalog module over the bundled databases, read-only.
+/**
+ * The production catalog module on a phone in a temporary folder: expo-file-system works on its
+ * folders, and expo-sqlite installs the bundled databases there as the native module does, then
+ * opens them with real SQLite. `close` closes what is open and deletes the folder.
+ */
 function bundledCatalog() {
-  const manifest = JSON.parse(readFileSync("assets/food/manifest.json", "utf8"));
-  const files = {
-    [`${manifest.usda.version}.db`]: "assets/food/usda.db",
-    [`${manifest.off.version}.db`]: "assets/food/off.db",
-  };
+  const root = mkdtempSync(path.join(tmpdir(), "macro-track-diary-"));
+  const local = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
+  class Directory {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    get exists() {
+      return existsSync(local(this.uri));
+    }
+    create({ intermediates = false, idempotent = false } = {}) {
+      if (!(idempotent && this.exists)) mkdirSync(local(this.uri), { recursive: intermediates });
+    }
+    list() {
+      return readdirSync(local(this.uri), { withFileTypes: true }).map((entry) =>
+        entry.isDirectory() ? new Directory(this, entry.name) : new File(this, entry.name)
+      );
+    }
+  }
+  class File {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    get name() {
+      return path.basename(this.uri);
+    }
+    get exists() {
+      return existsSync(local(this.uri));
+    }
+    get size() {
+      return this.exists ? statSync(local(this.uri)).size : 0;
+    }
+    delete() {
+      rmSync(local(this.uri));
+    }
+    moveSync(destination, { overwrite = false } = {}) {
+      if (!overwrite && destination.exists) throw new Error("Destination already exists");
+      renameSync(local(this.uri), local(destination.uri));
+      this.uri = destination.uri;
+    }
+  }
+  const home = { uri: `file://${root}` };
+  const assets = { 1: "assets/food/usda.db", 2: "assets/food/off.db" };
   const opened = [];
   const catalog = load("src/lib/food-catalog.ts", {
-    "../../assets/food/usda.db": "usda.db",
-    "../../assets/food/off.db": "off.db",
+    "../../assets/food/usda.db": 1,
+    "../../assets/food/off.db": 2,
     "./nutrition": nutrition,
+    "expo-file-system": {
+      Directory,
+      File,
+      Paths: {
+        document: new Directory(home, "Documents"),
+        cache: new Directory(home, "Caches"),
+        availableDiskSpace: Infinity,
+      },
+    },
+    "react-native": { Platform: { OS: "ios" } },
     "expo-sqlite": {
-      importDatabaseFromAssetAsync: async () => {},
-      async openDatabaseAsync(filename) {
-        const database = new DatabaseSync(files[filename], { readOnly: true });
+      async importDatabaseFromAssetAsync(name, { assetId, forceOverwrite }, directory) {
+        const target = path.join(directory, name);
+        if (existsSync(target) && !forceOverwrite) return;
+        mkdirSync(directory, { recursive: true });
+        copyFileSync(assets[assetId], target, constants.COPYFILE_FICLONE);
+      },
+      // Like the native module, opening a missing file creates an empty database.
+      async openDatabaseAsync(name, options, directory) {
+        const database = new DatabaseSync(path.join(directory, name));
         opened.push(database);
         return {
           getFirstAsync: async (sql, ...params) => database.prepare(sql).get(...params) ?? null,
@@ -129,7 +198,13 @@ function bundledCatalog() {
       },
     },
   });
-  return { catalog, close: () => opened.forEach((database) => database.close()) };
+  return {
+    catalog,
+    close() {
+      opened.filter((database) => database.isOpen).forEach((database) => database.close());
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 // Runs the compiler output with persistent hook slots; native views are plain element types.
@@ -168,6 +243,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
   };
   const jsx = (type, props) => ({ type, props });
+  let keypad, picker;
   const dependencies = {
     react,
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
@@ -181,12 +257,15 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "react-native": {
       View: "View",
+      Pressable: "Pressable",
+      ScrollView: "ScrollView",
       ActivityIndicator: "ActivityIndicator",
       AppState: {},
       Platform: { OS: "ios" },
       AccessibilityInfo: { announceForAccessibility: () => {} },
       Alert: { alert: (...args) => alerts.push(args) },
       Linking: { openSettings: async () => {} },
+      Keyboard: { addListener: () => ({ remove: () => {} }) },
     },
     "heroui-native": {
       TextField: "TextField",
@@ -194,7 +273,9 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       Label: "Label",
       Description: "Description",
       FieldError: "FieldError",
+      useThemeColor: () => "#000000",
     },
+    "react-native-svg": { __esModule: true, default: "Svg", Circle: "Circle" },
     "@/components/system": {
       SystemButton: "Button",
       SystemIconButton: "IconButton",
@@ -253,6 +334,12 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
     "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },
     "./meal-editor": { MealEditor: "MealEditor" },
+    // The real, compiled amount picker, loaded when a screen imports it. React keeps a child's
+    // hooks apart from its parent's, so it runs in a harness of its own; see pad().
+    get "./amount-picker"() {
+      keypad ??= screenHarness(diary, storeOverrides);
+      return (picker ??= keypad.load("src/components/nutrition/amount-picker.tsx"));
+    },
     "expo-camera": {
       CameraView: "CameraView",
       useCameraPermissions: () => [{ granted: true }, async () => {}],
@@ -271,6 +358,12 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       cursor = 0;
       effects.length = 0;
       return Component(props);
+    },
+    /** Renders the amount picker a screen's `tree` shows, for its keys, unit chips and actions. */
+    pad(tree) {
+      const { AmountPicker } = dependencies["./amount-picker"];
+      const { props } = tree.find((node) => node.type === AmountPicker);
+      return nodes(keypad.render(AmountPicker, props));
     },
     /** Runs the latest render's effects whose deps changed, as React would after a commit. */
     runEffects() {
@@ -302,6 +395,18 @@ function nodes(tree) {
 }
 const button = (tree, label) =>
   tree.find((node) => node.type === "Button" && node.props.children === label);
+/** Presses keys on the amount picker of the screen `render` shows, rendering it for each. */
+function press(harness, render, ...keys) {
+  for (const key of keys)
+    harness
+      .pad(render())
+      .find((node) => node.props.value === key && node.props.onPress)
+      .props.onPress();
+}
+/** What the amount field of the screen in `tree` reads: "355 g", "1 bar". */
+const amountText = (harness, tree) =>
+  harness.pad(tree).find((node) => node.props.accessibilityLabel === "Amount").props
+    .accessibilityValue.text;
 
 test("typed times read as HH:mm in 24-hour, compact and am/pm forms", () => {
   const cases = {
@@ -461,24 +566,30 @@ test("compiled entry edit keeps the portion label unless the amount changes", ()
     const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
     let closed = 0;
     const props = { entry: diary.entriesForDay(day)[0], close: () => closed++ };
-    change(nodes(harness.render(FoodEditor, props)));
-    button(nodes(harness.render(FoodEditor, props)), "Save changes").props.onPress();
+    const render = () => nodes(harness.render(FoodEditor, props));
+    change(render, harness);
+    button(harness.pad(render()), "Save changes").props.onPress();
     assert.equal(closed, 1);
     return diary.entriesForDay(day)[0];
   };
-  let saved = edit((tree) =>
-    tree.find((node) => node.type === "TimeField").props.onChange("12:45")
+  let saved = edit((render) =>
+    render()
+      .find((node) => node.type === "TimeField")
+      .props.onChange("12:45")
   );
   assert.equal(saved.loggedTime, "12:45");
   assert.equal(saved.portionLabel, "≈ 1 cup · 240 g");
-  saved = edit((tree) => tree.find((node) => node.type === "Choices").props.onChange("Lunch"));
+  saved = edit((render) =>
+    render()
+      .find((node) => node.type === "Choices")
+      .props.onChange("Lunch")
+  );
   assert.equal(saved.meal, "Lunch");
   assert.equal(saved.portionLabel, "≈ 1 cup · 240 g");
-  saved = edit((tree) =>
-    tree
-      .find((node) => node.type === "Field" && node.props.label === "Quantity (g)")
-      .props.onChange("120")
-  );
+  saved = edit((render, harness) => {
+    assert.equal(amountText(harness, render()), "240 g");
+    press(harness, render, "1", "2", "0");
+  });
   assert.equal(saved.amount, 120);
   assert.equal(saved.portionLabel, "120 g");
   sqlite.close();
@@ -855,7 +966,7 @@ test("compiled entry delete needs no confirmation and hands Home an undoable rec
   nodes(edit.render(Editor, editProps))
     .find((node) => node.type === "TimeField")
     .props.onChange("09:15");
-  button(nodes(edit.render(Editor, editProps)), "Save changes").props.onPress();
+  button(edit.pad(nodes(edit.render(Editor, editProps))), "Save changes").props.onPress();
   const [receipt, change] = changes.at(-1);
   assert.equal(change, "saved");
   assert.equal(receipt.moved[0].after.loggedTime, "09:15");
@@ -1752,13 +1863,21 @@ function scanner(diary, props, dependencies) {
     "src/components/nutrition/food-editor.tsx"
   );
   const render = () => nodes(harness.render(FoodEditor, props));
-  const quantity = () =>
-    render().find((node) => node.type === "Field" && /^Quantity/.test(node.props.label));
   const scan = (code) =>
     render()
       .find((node) => node.type === BarcodeCamera)
       .props.onScan(code);
-  return { harness, render, quantity, scan, FoodRow, BarcodeCamera };
+  return {
+    harness,
+    render,
+    quantity: () => amountText(harness, render()),
+    press: (...keys) => press(harness, render, ...keys),
+    chip: (label) => harness.pad(render()).find((node) => node.props.unit?.label === label),
+    action: (label) => button(harness.pad(render()), label),
+    scan,
+    FoodRow,
+    BarcodeCamera,
+  };
 }
 
 test("compiled scans, searches and Library reuse the quantity last logged", async () => {
@@ -1774,25 +1893,22 @@ test("compiled scans, searches and Library reuse the quantity last logged", asyn
   });
   let editor = scanner(diary, { initialMode: "barcode", close: () => {} });
   await editor.scan("04963406");
-  assert.equal(editor.quantity().props.value, "355");
+  assert.equal(editor.quantity(), "355 g");
   editor = scanner(diary, { initialMode: "barcode", close: () => {} });
   await editor.scan("0036000291452");
-  assert.equal(
-    editor.quantity().props.value,
-    "40",
-    "a food never logged starts at its first portion"
-  );
+  // The bar's first portion is "1 bar", 40 g.
+  assert.equal(editor.quantity(), "1 bar", "a food never logged starts at its first portion");
 
   editor = scanner(diary, { close: () => {} });
   editor
     .render()
     .find((node) => node.type === editor.FoodRow && node.props.food.id === can.id)
     .props.onPress();
-  assert.equal(editor.quantity().props.value, "355");
-  assert.equal(scanner(diary, { initialFood: can, close: () => {} }).quantity().props.value, "355");
+  assert.equal(editor.quantity(), "355 g");
+  assert.equal(scanner(diary, { initialFood: can, close: () => {} }).quantity(), "355 g");
   assert.equal(
-    scanner(diary, { initialFood: can, initialAmount: 2, close: () => {} }).quantity().props.value,
-    "2"
+    scanner(diary, { initialFood: can, initialAmount: 2, close: () => {} }).quantity(),
+    "2 g"
   );
   // A food whose basis changed since starts over at its own portion.
   diary.saveCustomFood({ ...can, basis: "serving", portions: [] });
@@ -1800,8 +1916,8 @@ test("compiled scans, searches and Library reuse the quantity last logged", asyn
     scanner(diary, {
       initialFood: { ...can, basis: "serving", portions: [] },
       close: () => {},
-    }).quantity().props.value,
-    "1"
+    }).quantity(),
+    "1 serving"
   );
   sqlite.close();
 });
@@ -1822,7 +1938,7 @@ test("compiled scan, search and Library open a catalog food whose first portion 
   };
   let editor = scanner(diary, { initialMode: "barcode", close: () => {} }, catalog);
   await editor.scan("038000256974");
-  assert.equal(editor.quantity().props.value, "100");
+  assert.equal(editor.quantity(), "100 g");
   assert.equal(editor.render().find((node) => node.type === "Error").props.message, "");
 
   t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -1839,11 +1955,11 @@ test("compiled scan, search and Library open a catalog food whose first portion 
     .render()
     .find((node) => node.type === editor.FoodRow && node.props.food.id === loops.id)
     .props.onPress();
-  assert.equal(editor.quantity().props.value, "100");
+  assert.equal(editor.quantity(), "100 g");
 
   assert.equal(
-    scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity().props.value,
-    "100"
+    scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity(),
+    "100 g"
   );
   diary.saveEntry({
     day: "2024-01-01",
@@ -1852,10 +1968,7 @@ test("compiled scan, search and Library open a catalog food whose first portion 
     amount: 39,
     portionLabel: "39 g",
   });
-  assert.equal(
-    scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity().props.value,
-    "39"
-  );
+  assert.equal(scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity(), "39 g");
   sqlite.close();
 });
 
@@ -1871,17 +1984,22 @@ test("compiled Add & scan another hands the food over and reopens the camera pas
     pickerTitle: "Log food",
     pickLabel: "Log",
     close: () => closed++,
-    onPick: (food, amount, keepScanning) => picks.push([food.name, amount, keepScanning]),
+    onPick: (food, amount, item, keepScanning) =>
+      picks.push([food.name, amount, item.portionLabel, keepScanning]),
   };
   const editor = scanner(diary, props);
   await editor.scan("04963406");
-  editor.quantity().props.onChange("2O");
-  button(editor.render(), "Add & scan another").props.onPress();
+  assert.equal(editor.quantity(), "1 serving");
+  editor.chip("g").props.onPress();
+  // "2/" is a fraction cut short.
+  editor.press("2", "/");
+  editor.action("Add & scan another").props.onPress();
   assert.deepEqual(picks, [], "an invalid quantity stays on the portion");
   assert.ok(editor.render().find((node) => node.type === "Error").props.message);
-  editor.quantity().props.onChange("20");
-  button(editor.render(), "Add & scan another").props.onPress();
-  assert.deepEqual(picks, [["Can", 20, true]]);
+  editor.press("⌫", "0");
+  assert.equal(editor.quantity(), "20 g");
+  editor.action("Add & scan another").props.onPress();
+  assert.deepEqual(picks, [["Can", 20, "20 g", true]]);
   assert.equal(closed, 0);
   const tree = editor.render();
   const camera = tree.find((node) => node.type === editor.BarcodeCamera);
@@ -1893,20 +2011,21 @@ test("compiled Add & scan another hands the food over and reopens the camera pas
   assert.equal(tree.find((node) => node.type === "Error").props.message, "");
 
   await editor.scan("0036000291452");
-  button(editor.render(), "Log").props.onPress();
+  editor.action("Log").props.onPress();
   assert.deepEqual(picks, [
-    ["Can", 20, true],
-    ["Bar", 40, false],
+    ["Can", 20, "20 g", true],
+    ["Bar", 40, "1 bar · 40 g", false],
   ]);
   assert.equal(closed, 1);
 
   // Only a scanning picker offers it.
   const plain = scanner(diary, { ...props, scanAnother: false });
   await plain.scan("04963406");
-  assert.equal(button(plain.render(), "Add & scan another"), undefined);
+  assert.ok(plain.action("Log"));
+  assert.equal(plain.action("Add & scan another"), undefined);
   const logging = scanner(diary, { initialMode: "barcode", close: () => {} });
   await logging.scan("04963406");
-  assert.equal(button(logging.render(), "Add & scan another"), undefined);
+  assert.equal(logging.action("Add & scan another"), undefined);
 
   // The reopened camera passes over the code just added until another one shows.
   const harness = screenHarness({});
@@ -1943,23 +2062,28 @@ test("compiled Scan from Home: Scan another builds a selection instead of loggin
       })
     );
   let picker = render().find((node) => node.type === "FoodEditor");
+  // FoodEditor hands over each food with its amount and the item it makes.
+  const pick = (food, unit, count, keepScanning) => {
+    const item = nutrition.portionItem(food, unit, count);
+    picker.props.onPick(food, item.amount, item, keepScanning);
+  };
   assert.equal(picker.props.scanAnother, true);
   assert.equal(picker.props.pickLabel, "Log");
-  picker.props.onPick(can, 20, true);
+  pick(can, "g", 20, true);
   assert.equal(diary.entriesForDay(day).length, 0, "the first scan waits for the next");
   picker = render().find((node) => node.type === "FoodEditor");
   assert.ok(picker, "the camera stays open");
   assert.equal(picker.props.pickLabel, undefined);
   assert.equal(picker.props.pickerTitle, "Add to meal");
-  picker.props.onPick(bar, 40, false);
+  pick(bar, "portion:0", 1, false);
   picker.props.close();
   assert.equal(closed, 0, "closing the picker returns to the selection, not Home");
   button(render(), "Log 2 foods").props.onPress();
   assert.deepEqual(
-    diary.entriesForDay(day).map((row) => [row.food.name, row.amount]),
+    diary.entriesForDay(day).map((row) => [row.food.name, row.amount, row.portionLabel]),
     [
-      ["Can", 20],
-      ["Bar", 40],
+      ["Can", 20, "20 g"],
+      ["Bar", 40, "1 bar · 40 g"],
     ]
   );
   assert.equal(logged.length, 1);
