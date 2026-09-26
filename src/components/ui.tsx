@@ -391,6 +391,7 @@ export function Editor({
   busy = false,
   footer,
   compact = false,
+  scrollRef,
 }: {
   title: string;
   open: boolean;
@@ -399,6 +400,7 @@ export function Editor({
   busy?: boolean;
   footer?: ReactNode;
   compact?: boolean;
+  scrollRef?: Ref<ScrollView>;
 }) {
   const { t } = useStore();
   const insets = useSafeAreaInsets();
@@ -433,6 +435,7 @@ export function Editor({
                 </View>
               )}
               <ScrollView
+                ref={scrollRef}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 contentContainerStyle={{
@@ -566,12 +569,14 @@ export function SearchInput({
   placeholder,
   accessibilityLabel,
   autoFocus = false,
+  onFocus,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   accessibilityLabel: string;
   autoFocus?: boolean;
+  onFocus?: () => void;
 }) {
   return (
     <SearchField value={value} onChange={onChange}>
@@ -579,6 +584,7 @@ export function SearchInput({
         <SearchField.SearchIcon />
         <SearchField.Input
           autoFocus={autoFocus}
+          onFocus={onFocus}
           placeholder={placeholder}
           accessibilityLabel={accessibilityLabel}
           returnKeyType="search"

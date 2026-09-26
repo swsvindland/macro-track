@@ -6,6 +6,7 @@ import {
   SystemIconButton,
   SystemLabel,
   SystemText as Text,
+  type IconName,
 } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, SearchInput } from "@/components/ui";
 import { entriesForDay, targetsForDay, toggleFavorite } from "@/lib/diary";
@@ -79,6 +80,18 @@ function tryPortioned(choice: LogChoice, amount: AmountDraft) {
 }
 const calories = (items: MealItem[]) =>
   totalNutrients(items.map((item) => item.nutrients)).calories;
+const actions: {
+  key: "barcode" | "photo" | "quick" | "custom";
+  icon: IconName;
+  label: string;
+  spoken: string;
+}[] = [
+  { key: "barcode", icon: "barcode-outline", label: "Scan", spoken: "Scan barcode" },
+  { key: "photo", icon: "sparkles-outline", label: "Photo", spoken: "Photo or description" },
+  { key: "quick", icon: "flash-outline", label: "Quick add", spoken: "Quick add" },
+  // Not a plus: as an icon it sits above the results' round + buttons, which add a food.
+  { key: "custom", icon: "create-outline", label: "New food", spoken: "New food" },
+];
 
 export function FastLogger({
   initialDay,
@@ -106,6 +119,10 @@ export function FastLogger({
   const [meal, setMeal] = useState<Meal>(() => initialMeal ?? mealAtTime(time));
   const [when, setWhen] = useState(false);
   const [query, setQuery] = useState("");
+  // Once the search is used, the shortcuts shrink to icons so results get the screen; they stay
+  // that way when the keyboard hides, so the list doesn't jump under the finger.
+  const [searched, setSearched] = useState(false);
+  const list = useRef<ScrollView>(null);
   const [results, setResults] = useState<{ query: string; foods: Food[]; error: string } | null>(
     null
   );
@@ -140,6 +157,10 @@ export function FastLogger({
   );
   const trimmed = query.trim().toLowerCase();
   const known = data.known;
+  // A new search starts at its first result, and clearing one brings the field back into view.
+  useEffect(() => {
+    list.current?.scrollTo({ y: 0, animated: false });
+  }, [trimmed]);
   useEffect(() => {
     if (!trimmed) return;
     let active = true;
@@ -203,9 +224,18 @@ export function FastLogger({
     const sum = totalNutrients(value.map((item) => item.nutrients));
     return `${number(sum.calories, 0)} kcal ${number(sum.protein, 0)}P ${number(sum.fat, 0)}F ${number(sum.carbs, 0)}C`;
   };
+  // Searching folds the day and time panel back into its label, so the list's top is the
+  // field and the results, never the panel with the field under the keyboard.
+  function openSearch() {
+    setSearched(true);
+    if (!when) return;
+    setWhen(false);
+    list.current?.scrollTo({ y: 0, animated: false });
+  }
   function clearQuery() {
     setQuery("");
     setResults(null);
+    setWhen(false);
   }
   function add(choice: LogChoice) {
     setCart((previous) => [...previous.filter((row) => row.key !== choice.key), choice]);
@@ -465,24 +495,49 @@ export function FastLogger({
       </Editor>
     );
   }
+  const offered = actions.filter((action) => photoLogging || action.key !== "photo");
+  const showSaved = !trimmed && !!data.saved.length;
+  // While searching, the shortcuts sit as icons beside the first heading instead of above it.
+  const heading = (label: string, tools: boolean) => (
+    <View className="flex-row items-center gap-1">
+      <SystemLabel accessibilityRole="header" className={`flex-1 px-1 ${tools ? "" : "pt-1"}`}>
+        {label}
+      </SystemLabel>
+      {tools &&
+        offered.map((action) => (
+          <SystemIconButton
+            key={action.key}
+            icon={action.icon}
+            color="accent-soft-foreground"
+            accessibilityLabel={action.spoken}
+            onPress={() => setPicker(action.key)}
+          />
+        ))}
+    </View>
+  );
   return (
     <Editor
       title="Log food"
       open
       close={cancel}
       compact
+      scrollRef={list}
       footer={
-        <View className="gap-2">
-          <ErrorText message={error} />
-          {!!items.length && (
-            <Text className="text-sm font-semibold tabular-nums">{summary(items)}</Text>
-          )}
-          <SystemButton isDisabled={!items.length} onPress={() => attempt(() => commit(items))}>
-            {items.length
-              ? `Log ${items.length} ${items.length === 1 ? "food" : "foods"}`
-              : "Choose foods to log"}
-          </SystemButton>
-        </View>
+        items.length || error ? (
+          <View className="gap-2">
+            <ErrorText message={error} />
+            {!!items.length && (
+              <View className="flex-row items-center gap-3">
+                <Text numberOfLines={1} className="flex-1 text-sm font-semibold tabular-nums">
+                  {summary(items)}
+                </Text>
+                <SystemButton onPress={() => attempt(() => commit(items))}>
+                  {`Log ${items.length} ${items.length === 1 ? "food" : "foods"}`}
+                </SystemButton>
+              </View>
+            )}
+          </View>
+        ) : undefined
       }
     >
       <View className="flex-row items-center justify-between gap-2">
@@ -513,47 +568,29 @@ export function FastLogger({
         onChange={(next) => {
           setQuery(next);
           setResults(null);
+          openSearch();
         }}
         placeholder="Search foods and meals"
         accessibilityLabel="Search foods and meals"
+        onFocus={openSearch}
       />
-      <View className="flex-row flex-wrap gap-2">
-        <SystemButton
-          variant="secondary"
-          icon="barcode-outline"
-          className="px-3"
-          onPress={() => setPicker("barcode")}
-        >
-          Scan
-        </SystemButton>
-        {photoLogging && (
-          <SystemButton
-            variant="secondary"
-            icon="sparkles-outline"
-            className="px-3"
-            onPress={() => setPicker("photo")}
-          >
-            Photo
-          </SystemButton>
-        )}
-        <SystemButton
-          variant="secondary"
-          icon="flash-outline"
-          className="px-3"
-          onPress={() => setPicker("quick")}
-        >
-          Quick add
-        </SystemButton>
-        <SystemButton
-          variant="secondary"
-          icon="add-circle-outline"
-          className="px-3"
-          onPress={() => setPicker("custom")}
-        >
-          New food
-        </SystemButton>
-      </View>
-      {!!cart.length && (
+      {!searched && (
+        <View className="flex-row flex-wrap gap-2">
+          {offered.map((action) => (
+            <SystemButton
+              key={action.key}
+              variant="secondary"
+              icon={action.icon}
+              className="px-3"
+              accessibilityLabel={action.spoken}
+              onPress={() => setPicker(action.key)}
+            >
+              {action.label}
+            </SystemButton>
+          ))}
+        </View>
+      )}
+      {!!cart.length && !trimmed && (
         <View className="gap-1">
           <SystemButton
             variant="ghost"
@@ -586,11 +623,9 @@ export function FastLogger({
             ))}
         </View>
       )}
-      {!trimmed && !!data.saved.length && (
+      {showSaved && (
         <>
-          <SystemLabel accessibilityRole="header" className="px-1 pt-1">
-            Saved foods
-          </SystemLabel>
+          {heading("Saved foods", searched)}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -635,13 +670,14 @@ export function FastLogger({
           </ScrollView>
         </>
       )}
-      <SystemLabel accessibilityRole="header" className="px-1 pt-1">
-        {trimmed
+      {heading(
+        trimmed
           ? results?.query === trimmed
             ? `${choices.length} ${choices.length === 1 ? "match" : "matches"}`
             : "Searching…"
-          : "Log again"}
-      </SystemLabel>
+          : "Log again",
+        searched && !showSaved
+      )}
       {choices.map((choice) => {
         const selected = inCart.get(choice.key);
         const shown = selected ?? choice;

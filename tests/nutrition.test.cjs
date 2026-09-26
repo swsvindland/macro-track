@@ -2307,7 +2307,7 @@ test("compiled fast logger logs a whole meal once, remembers quantities, and clo
   const submit = render().find(
     (node) => node.type === "Button" && node.props.children === "Log 2 foods"
   );
-  assert.equal(submit.props.isDisabled, false);
+  assert.ok(!submit.props.isDisabled);
   submit.props.onPress();
   submit.props.onPress();
   const entries = diary.entriesForDay(day);
