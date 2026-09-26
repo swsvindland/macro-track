@@ -177,4 +177,9 @@
     font-weight: 600;
     letter-spacing: 0.48px;
   }
+  /* The time trigger sits under date inputs, so it takes their field border. */
+  .time-picker__trigger {
+    border-width: var(--field-border-width);
+    border-color: var(--field-border);
+  }
 }

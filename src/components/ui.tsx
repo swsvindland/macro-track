@@ -47,6 +47,9 @@ const SafeAreaView = withUniwind(NativeSafeAreaView);
 
 const EditorPortalContext = createContext<string | undefined>(undefined);
 
+/** Where a field's picker portals to, so it opens above the Editor sheet it sits in. */
+export const useEditorPortalHost = () => useContext(EditorPortalContext);
+
 /** The footer for Screens inside that pass none, e.g. a tab's quick-log bar. */
 export const ScreenFooter = createContext<ReactNode>(null);
 

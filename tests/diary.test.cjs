@@ -436,30 +436,45 @@ test("typed times read as HH:mm in 24-hour, compact and am/pm forms", () => {
     assert.equal(foodTime.normalizeFoodTime(input), null, input);
 });
 
-test("compiled time field keeps typing, stores the normalized time and flags an unreadable one", () => {
-  const harness = screenHarness({});
+/** The time field with the Pro picker as plain parts: TimePicker is the root, TimePicker.X a part. */
+function timeFieldHarness(storeOverrides = {}, uses24hourClock = false) {
+  const TimePicker = new Proxy({}, { get: (_, part) => `TimePicker.${String(part)}` });
+  const harness = screenHarness({}, storeOverrides, {
+    "heroui-native-pro": { TimePicker },
+    "expo-localization": { useCalendars: () => [{ uses24hourClock }] },
+    "@/components/ui": { useEditorPortalHost: () => "editor-host" },
+  });
   const { TimeField } = harness.load("src/components/nutrition/time-field.tsx");
+  const render = (props) => nodes(harness.render(TimeField, props));
+  return { TimePicker, render };
+}
+
+test("compiled time field picks a time on a wheel and keeps it as HH:mm", () => {
+  const { TimePicker, render } = timeFieldHarness({ language: "en-US" });
   let value = "08:00";
-  const render = () => nodes(harness.render(TimeField, { value, onChange: (v) => (value = v) }));
-  const input = () => render().find((node) => node.type === "Input");
-  const invalid = () => render().find((node) => node.type === "TextField").props.isInvalid;
-  assert.equal(input().props.keyboardType, "numbers-and-punctuation");
-  input().props.onChangeText("930");
-  assert.equal(value, "09:30");
-  assert.equal(input().props.value, "930", "the typed text stays while editing");
-  input().props.onBlur();
-  assert.equal(input().props.value, "09:30");
-  input().props.onChangeText("9:3");
-  assert.equal(value, "9:3");
-  assert.equal(invalid(), false, "no error while typing");
-  input().props.onBlur();
-  assert.equal(invalid(), true);
-  input().props.onChangeText("9:30 pm");
+  const picker = () =>
+    render({ value, onChange: (v) => (value = v) }).find((node) => node.type === TimePicker);
+  assert.deepEqual(picker().props.value, {
+    value: "08:00:00",
+    label: foodTime.formatClock("08:00", "en-US"),
+  });
+  assert.equal(picker().props.hourFormat, 12);
+  picker().props.onValueChange({ value: "21:30:00", label: "9:30 PM" });
   assert.equal(value, "21:30");
-  assert.equal(invalid(), false);
-  button(render(), "Now").props.onPress();
-  assert.equal(value, foodTime.currentFoodTime());
-  assert.equal(input().props.value, value, "a time set outside the field replaces the draft");
+  assert.equal(
+    picker().props.formatTime({ toString: () => "21:30:00" }),
+    foodTime.formatClock("21:30", "en-US"),
+    "the trigger reads the time as Home shows it"
+  );
+  value = "9:3";
+  assert.equal(picker().props.value, undefined, "an unreadable time shows as unset");
+  const portal = render({ value, onChange() {} }).find((node) => node.type === "TimePicker.Portal");
+  assert.equal(portal.props.hostName, "editor-host", "opens above the sheet it sits in");
+  const clock24 = timeFieldHarness({ language: "en-GB" }, true);
+  const root = clock24
+    .render({ value: "21:30", onChange() {} })
+    .find((node) => node.type === clock24.TimePicker);
+  assert.equal(root.props.hourFormat, 24, "the wheel follows the device clock");
 });
 
 test("logger ranking reads typed times and uses the current hour for an unreadable one", () => {
@@ -911,13 +926,10 @@ test("chosen foods save as a meal on their own", () => {
   sqlite.close();
 });
 
-test("compiled time field sets the time from a chip and previews it as Home shows it", (t) => {
+test("compiled time field sets the time from a chip", (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 12, 10) });
-  const render = (language, value, onChange = () => {}) => {
-    const harness = screenHarness({}, { language });
-    const { TimeField } = harness.load("src/components/nutrition/time-field.tsx");
-    return nodes(harness.render(TimeField, { value, onChange }));
-  };
+  const render = (language, value, onChange = () => {}) =>
+    timeFieldHarness({ language }).render({ value, onChange });
   let value = "08:00";
   const chips = render("en-US", value, (next) => (value = next)).filter(
     (node) => node.type === "Button" && node.props.accessibilityLabel
@@ -937,12 +949,6 @@ test("compiled time field sets the time from a chip and previews it as Home show
       .map((node) => !!node.props.isDisabled),
     [false, false, true, true]
   );
-  const preview = (language, time) =>
-    render(language, time).find((node) => node.type === "Description")?.props.children;
-  assert.equal(preview("en-US", "21:30"), foodTime.formatClock("21:30", "en-US"));
-  assert.match(preview("en-US", "21:30"), /9:30/);
-  assert.equal(preview("en-GB", "21:30"), undefined, "no preview when the field already reads so");
-  assert.equal(preview("en-US", "9:3"), undefined);
 });
 
 test("compiled entry delete needs no confirmation and hands Home an undoable receipt", () => {

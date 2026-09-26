@@ -1,13 +1,15 @@
-import { useState } from "react";
 import { View } from "react-native";
-import { Description, FieldError, Input, Label, TextField } from "heroui-native";
+import { useCalendars } from "expo-localization";
+import { Label } from "heroui-native";
+import { TimePicker } from "heroui-native-pro";
 import { SystemButton, SystemText as Text } from "@/components/system";
+import { useEditorPortalHost } from "@/components/ui";
 import {
   clockMinutes,
   clockPlus,
   currentFoodTime,
   formatClock,
-  normalizeFoodTime,
+  validFoodTime,
 } from "@/lib/food-time";
 import { useStore } from "@/lib/store";
 
@@ -29,41 +31,36 @@ export function TimeField({
   allowEmpty?: boolean;
 }) {
   const { language } = useStore();
-  // What was typed, shown until blur while it still reads as the current value.
-  const [draft, setDraft] = useState<string | null>(null);
-  const text = draft !== null && (normalizeFoodTime(draft) ?? draft) === value ? draft : value;
-  const invalid = draft === null && !!value && !normalizeFoodTime(value);
-  const time = normalizeFoodTime(value);
-  // The clock as Home shows it, when that differs from what is in the field.
-  const clock = time && formatClock(time, language === "zh" ? "zh-CN" : language);
+  const [calendar] = useCalendars();
+  const locale = language === "zh" ? "zh-CN" : language;
+  const hostName = useEditorPortalHost();
+  // The picker holds "HH:mm:ss"; the diary keeps "HH:mm". Anything else shows as unset.
+  const time = validFoodTime(value) ? value : null;
   // The chips keep the day, so one that would reach back past midnight is off, not 00:00.
   const now = clockMinutes(currentFoodTime());
-  function set(next: string) {
-    setDraft(null);
-    onChange(next);
-  }
   return (
     <View className="gap-2">
-      <TextField isInvalid={invalid}>
+      <TimePicker
+        value={time ? { value: `${time}:00`, label: formatClock(time, locale) } : undefined}
+        onValueChange={(option) => option && onChange(option.value.slice(0, 5))}
+        hourFormat={calendar?.uses24hourClock ? 24 : 12}
+        locale={locale}
+        formatTime={(picked) => formatClock(picked.toString().slice(0, 5), locale)}
+      >
         <Label>Time</Label>
-        <Input
-          accessibilityLabel="Time"
-          variant="primary"
-          className="font-mono focus:border-focus"
-          value={text}
-          onChangeText={(input) => {
-            setDraft(input);
-            onChange(normalizeFoodTime(input) ?? input);
-          }}
-          onBlur={() => setDraft(null)}
-          keyboardType="numbers-and-punctuation"
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="14:30"
-        />
-        {!!clock && clock !== text && <Description hideOnInvalid>{clock}</Description>}
-        <FieldError>Enter a time such as 930, 9:30 or 9:30 pm.</FieldError>
-      </TextField>
+        <TimePicker.Select presentation="dialog">
+          <TimePicker.Trigger accessibilityLabel="Time">
+            <TimePicker.Value placeholder="Choose a time" />
+            <TimePicker.TriggerIndicator />
+          </TimePicker.Trigger>
+          <TimePicker.Portal hostName={hostName} disableFullWindowOverlay>
+            <TimePicker.Overlay />
+            <TimePicker.Content presentation="dialog">
+              <TimePicker.Wheel />
+            </TimePicker.Content>
+          </TimePicker.Portal>
+        </TimePicker.Select>
+      </TimePicker>
       <View className="flex-row flex-wrap gap-2">
         {chips.map(([label, minutes, spoken]) => (
           <SystemButton
@@ -73,7 +70,7 @@ export function TimeField({
             hitSlop={{ top: 4, bottom: 4 }}
             accessibilityLabel={spoken}
             isDisabled={minutes > now}
-            onPress={() => set(clockPlus(currentFoodTime(), -minutes))}
+            onPress={() => onChange(clockPlus(currentFoodTime(), -minutes))}
           >
             {label}
           </SystemButton>
@@ -83,7 +80,7 @@ export function TimeField({
             variant="ghost"
             className="min-h-9 px-3 py-1.5"
             hitSlop={{ top: 4, bottom: 4 }}
-            onPress={() => set("")}
+            onPress={() => onChange("")}
           >
             Leave time unset
           </SystemButton>
