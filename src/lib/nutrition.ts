@@ -70,18 +70,6 @@ export function normalizeBarcode(input: string): string | null {
   return barcodeCandidates(input)[0] ?? null;
 }
 
-export function searchExpression(input: string): string {
-  return (
-    input
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .match(/[\p{L}\p{N}]+/gu) ?? []
-  )
-    .slice(0, 8)
-    .map((token) => `"${token}"*`)
-    .join(" AND ");
-}
-
 export function scaleNutrients(food: Food, amount: number): Nutrients {
   if (!Number.isFinite(amount) || amount <= 0 || amount > 100000)
     throw new Error("Enter a valid quantity.");

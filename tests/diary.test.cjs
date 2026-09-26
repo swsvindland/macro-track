@@ -8,6 +8,8 @@ const { drizzle } = require(
   path.join(path.dirname(require.resolve("drizzle-orm/expo-sqlite")), "driver.cjs")
 );
 
+// Search ranking is pure and shared by the logging modules, so every harness gets the real one.
+let rank;
 function load(file, dependencies = {}, compile = false) {
   let source = readFileSync(file, "utf8");
   if (compile) {
@@ -30,7 +32,12 @@ function load(file, dependencies = {}, compile = false) {
   const module = { exports: {} };
   const localRequire = require("node:module").createRequire(path.resolve(file));
   new Function("require", "module", "exports", output)(
-    (name) => (name in dependencies ? dependencies[name] : localRequire(name)),
+    (name) =>
+      name in dependencies
+        ? dependencies[name]
+        : name === "@/lib/food-rank" || name === "./food-rank"
+          ? (rank ??= load("src/lib/food-rank.ts"))
+          : localRequire(name),
     module,
     module.exports
   );
@@ -215,7 +222,11 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./metrics": metrics,
     "@/lib/nutrition": nutrition,
     "@/lib/food-time": foodTime,
-    "@/lib/food-catalog": { lookupBarcode: async () => null, searchCatalog: async () => [] },
+    "@/lib/food-catalog": {
+      lookupBarcode: async () => null,
+      searchCatalog: async () => [],
+      searchFoods: async () => [],
+    },
     "@/lib/local-ai": { textRecognitionAvailable: () => false, recognizeText: async () => [] },
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },

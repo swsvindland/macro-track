@@ -20,7 +20,8 @@ function load(file, dependencies = {}) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const modelJson = load("src/lib/model-json.ts");
-const ai = load("src/lib/meal-ai.ts", { "./nutrition": nutrition });
+const rank = load("src/lib/food-rank.ts");
+const ai = load("src/lib/meal-ai.ts", { "./nutrition": nutrition, "./food-rank": rank });
 
 // The app's catalog search: generic foods first, with a deeper generic limit.
 const catalogs = ["usda", "off"].map(
@@ -100,9 +101,10 @@ test("a chain's pizza or burger keeps its toppings; drinks and sides stay separa
       { brand: "", name: "Garlic bread", quantity: 2, unit: "piece", grams: 60 },
     ],
   });
+  // A cup of rice weighs more than a topping, so it is a side.
   assert.deepEqual(
     foods.map((food) => food.name),
-    ["Pepperoni pizza", "Cola", "Garlic bread"]
+    ["Pepperoni pizza", "White rice", "Cola", "Garlic bread"]
   );
   // Without a brand, a burger is split into its components as seen.
   const burger = ai.readSeenFoods({
@@ -164,7 +166,15 @@ test("a chain written into the name or only in the description still keeps the d
 });
 
 test("a chain item the model split into parts is logged whole", () => {
-  const parts = ["Hamburger bun", "Beef patties", "Cheese slice", "Shredded lettuce", "Pickles"];
+  const parts = [
+    "Hamburger bun",
+    "Beef patties",
+    "Cheese slice",
+    "Shredded lettuce",
+    "Pickles",
+    "Special sauce",
+    "Onions",
+  ];
   const reply = {
     items: [
       ...parts.map((name) => ({
@@ -185,7 +195,185 @@ test("a chain item the model split into parts is logged whole", () => {
     ]
   );
   // Without a dish in the description the parts are all we know, so they stay.
-  assert.equal(ai.readSeenFoods(reply).length, 6);
+  assert.equal(ai.readSeenFoods(reply).length, 8);
+});
+
+test("collapsing a split chain item absorbs its muffin, egg and sauce", async () => {
+  const reply = {
+    items: [
+      { brand: "", name: "English muffin", quantity: 1, unit: "piece", grams: 55 },
+      { brand: "", name: "Sausage patty", quantity: 1, unit: "patty", grams: 45 },
+      { brand: "", name: "Egg", quantity: 1, unit: "piece", grams: 50 },
+      { brand: "", name: "American cheese", quantity: 1, unit: "slice", grams: 20 },
+      { brand: "", name: "Hash brown", quantity: 1, unit: "piece", grams: 55 },
+    ],
+  };
+  const description = "mcdonalds sausage mcmuffin with egg";
+  assert.deepEqual(
+    ai.readSeenFoods(reply, description).map((food) => [food.brand, food.name]),
+    [
+      ["McDonald's", "sausage mcmuffin with egg"],
+      ["", "Hash brown"],
+    ]
+  );
+  const { drafts } = await draft(reply.items, { description });
+  assert.equal(drafts.length, 2);
+  assert.match(drafts[0].item.food.name, /^McDONALD'S, Sausage McMUFFIN with Egg/);
+  // A chain dish already listed is not rebuilt from the other foods.
+  const latte = ai.readSeenFoods(
+    {
+      items: [
+        { brand: "Starbucks", name: "Latte", quantity: 1, unit: "cup", grams: 470 },
+        { brand: "", name: "Scrambled eggs", quantity: 2, unit: "piece", grams: 100 },
+        { brand: "", name: "English muffin", quantity: 1, unit: "piece", grams: 55 },
+      ],
+    },
+    "starbucks latte, scrambled eggs and an english muffin"
+  );
+  assert.deepEqual(
+    latte.map((food) => food.name),
+    ["Latte", "Scrambled eggs", "English muffin"]
+  );
+});
+
+test("a chain dish is never rebuilt from foods ordered on their own", async () => {
+  const item = (name, quantity, unit, grams, brand = "") => ({
+    brand,
+    name,
+    quantity,
+    unit,
+    grams,
+  });
+  const read = (description, items) =>
+    ai.readSeenFoods({ items }, description).map((food) => [food.brand, food.name, food.quantity]);
+  // The chain names the latte, so eggs and a muffin said on their own stay.
+  const breakfast = [
+    item("Scrambled eggs", 2, "piece", 100),
+    item("English muffin", 1, "piece", 55),
+    item("Latte", 1, "cup", 470, "Starbucks"),
+  ];
+  const description = "scrambled eggs, an english muffin and a starbucks latte";
+  assert.deepEqual(read(description, breakfast), [
+    ["", "Scrambled eggs", 2],
+    ["", "English muffin", 1],
+    ["Starbucks", "Latte", 1],
+  ]);
+  const { drafts } = await draft(breakfast, { description });
+  assert.match(drafts[0].item.food.name, /^Egg/);
+  assert.ok(drafts[0].item.nutrients.calories > 100);
+  assert.deepEqual(
+    read("bacon and eggs with a dunkin coffee", [
+      item("Bacon", 3, "strip", 30),
+      item("Eggs", 2, "piece", 100),
+      item("Coffee", 1, "cup", 350, "Dunkin'"),
+    ]),
+    [
+      ["", "Bacon", 3],
+      ["", "Eggs", 2],
+      ["Dunkin'", "Coffee", 1],
+    ]
+  );
+  // The chain's own item is already listed.
+  assert.deepEqual(
+    read("starbucks blueberry muffin and a banana", [
+      item("Blueberry muffin", 1, "piece", 110, "Starbucks"),
+      item("Banana", 1, "piece", 118),
+    ]),
+    [
+      ["Starbucks", "Blueberry muffin", 1],
+      ["", "Banana", 1],
+    ]
+  );
+  assert.deepEqual(
+    read("starbucks egg bites and a blueberry muffin", [
+      item("Egg bites", 2, "piece", 130, "Starbucks"),
+      item("Blueberry muffin", 1, "piece", 110),
+    ]),
+    [
+      ["Starbucks", "Egg bites", 2],
+      ["", "Blueberry muffin", 1],
+    ]
+  );
+  assert.deepEqual(
+    read("mcdonalds sausage biscuit and scrambled eggs", [
+      item("Sausage biscuit", 1, "piece", 120, "McDonald's"),
+      item("Scrambled eggs", 2, "piece", 100),
+    ]),
+    [
+      ["McDonald's", "Sausage biscuit", 1],
+      ["", "Scrambled eggs", 2],
+    ]
+  );
+  // Sauces the person named are theirs, and the nuggets are the McNuggets.
+  const nuggets = [
+    item("Chicken nuggets", 10, "piece", 160),
+    item("BBQ sauce", 1, "packet", 28),
+    item("Sweet and sour sauce", 1, "packet", 28),
+  ];
+  for (const said of [
+    "mcdonalds 10 piece mcnuggets with bbq and sweet and sour sauce",
+    "mcdonalds 10 piece mcnuggets",
+  ])
+    assert.deepEqual(
+      read(said, nuggets).map((row) => row[1]),
+      ["Chicken nuggets", "BBQ sauce", "Sweet and sour sauce"],
+      said
+    );
+  // "From mcdonalds" covers the whole order; the dish is still the first thing named.
+  const mcmuffin = [
+    item("English muffin", 1, "piece", 55),
+    item("Sausage patty", 1, "patty", 45),
+    item("Egg", 1, "piece", 50),
+    item("American cheese", 1, "slice", 20),
+  ];
+  assert.deepEqual(
+    read("sausage mcmuffin with egg and a hash brown from mcdonalds", [
+      ...mcmuffin,
+      item("Hash brown", 1, "piece", 55),
+    ]),
+    [
+      ["McDonald's", "sausage mcmuffin with egg", 1],
+      ["", "Hash brown", 1],
+    ]
+  );
+  assert.deepEqual(read("mcdonalds, sausage mcmuffin with egg", mcmuffin), [
+    ["McDonald's", "sausage mcmuffin with egg", 1],
+  ]);
+});
+
+test("a chain dish drops small toppings but keeps real sides", () => {
+  const starbucks = ai.readSeenFoods(
+    {
+      items: [
+        { brand: "", name: "Bacon gouda sandwich", quantity: 1, unit: "sandwich", grams: 150 },
+        { brand: "", name: "Banana", quantity: 1, unit: "piece", grams: 118 },
+        { brand: "", name: "Tomato", quantity: 2, unit: "slices", grams: 60 },
+        { brand: "", name: "Bacon", quantity: 2, unit: "strip", grams: null },
+      ],
+    },
+    "starbucks bacon gouda sandwich and a banana"
+  );
+  assert.deepEqual(
+    starbucks.map((food) => [food.brand, food.name]),
+    [
+      ["Starbucks", "Bacon gouda sandwich"],
+      ["", "Banana"],
+    ]
+  );
+  const popeyes = ai.readSeenFoods(
+    {
+      items: [
+        { brand: "Popeyes", name: "Chicken sandwich", quantity: 1, unit: "sandwich", grams: 200 },
+        { brand: "", name: "Red beans and rice", quantity: 1, unit: "cup", grams: 240 },
+        { brand: "", name: "Pickles", quantity: 3, unit: "piece", grams: 15 },
+      ],
+    },
+    "popeyes chicken sandwich and red beans and rice"
+  );
+  assert.deepEqual(
+    popeyes.map((food) => food.name),
+    ["Chicken sandwich", "Red beans and rice"]
+  );
 });
 
 test("catalog queries are safe FTS expressions from specific to broad", () => {
@@ -339,6 +527,21 @@ test("amounts come from catalog portions, checked against the model's weight", (
     amount: 2,
     portionLabel: "≈ 2 bars",
   });
+  // Short plurals and fluid ounces are units too, even without the model's weight.
+  for (const [unit, key] of [
+    ["lbs", "lb"],
+    ["kgs", "kg"],
+    ["fluid ounces", "floz"],
+    ["fl. oz.", "floz"],
+    ["Fluid Ounce", "floz"],
+    ["tbs", "tbsp"],
+  ])
+    assert.equal(ai.unitKey(unit), key, unit);
+  assert.equal(ai.resolveAmount(seen("steak", { unit: "lbs" }), food([])).amount, 453.6);
+  assert.deepEqual(
+    ai.resolveAmount(seen("cola", { quantity: 12, unit: "fluid ounces" }), food([], "ml")),
+    { amount: 354.8, portionLabel: "≈ 12 fl oz · 355 ml" }
+  );
   // Without portions or a weight, 100 g per unit is the last resort and stays within limits.
   assert.equal(ai.resolveAmount(seen("mystery", { quantity: 80 }), food([])).amount, 2000);
   // Ten nigiri are small pieces, even when the fish's only unit is a 396 g fillet and the
@@ -357,6 +560,113 @@ test("amounts come from catalog portions, checked against the model's weight", (
     ai.resolveAmount(seen("beef patty", { quantity: 2, grams: 220 }), patties).amount,
     220
   );
+});
+
+test("a volume of a weighed food goes through the food's own density", async () => {
+  const [milk] = (await search('"milk"* AND "whole"*')).filter((food) =>
+    /^Milk, whole, 3.25%/.test(food.name)
+  );
+  const amount = (quantity, unit, grams) => {
+    const [row] = ai.readSeenFoods({ items: [{ name: "Whole milk", quantity, unit, grams }] });
+    return ai.resolveAmount(row, milk);
+  };
+  // 1 fl oz of whole milk is 30.5 g, so 250 ml is 258 g, not 250 fl oz.
+  for (const [quantity, unit, grams] of [
+    [250, "ml", 250],
+    [1, "l", 1000],
+    [1, "liter", 1000],
+    [0.5, "l", 500],
+    [1, "pint", 473],
+  ]) {
+    const { amount: value } = amount(quantity, unit);
+    assert.ok(Math.abs(value - grams) / grams < 0.05, `${quantity} ${unit}: ${value} g`);
+  }
+  assert.equal(amount(250, "ml").portionLabel, "≈ 250 ml · 258 g");
+  // A food without a volume portion keeps the model's weight, else water's density.
+  const plain = { ...milk, portions: [{ label: "1 serving", amount: 200 }] };
+  assert.equal(ai.resolveAmount(seen("x", { quantity: 330, unit: "ml" }), plain).amount, 330);
+  assert.equal(
+    ai.resolveAmount(seen("x", { quantity: 330, unit: "ml", grams: 340 }), plain).amount,
+    340
+  );
+  const drink = { ...milk, basis: "ml", portions: [] };
+  assert.equal(ai.resolveAmount(seen("x", { quantity: 12, unit: "oz" }), drink).amount, 340.2);
+  // A quart is a measure, not a glass: the model's weight is kept.
+  assert.equal(amount(1, "glass", 250).amount, 250);
+});
+
+test("a weight of a per-serving food is converted to servings, never counted as them", async () => {
+  const perServing = (id, name, calories, label) => ({
+    id: `custom:${id}`,
+    name,
+    brand: "",
+    barcode: null,
+    basis: "serving",
+    source: "custom",
+    sourceVersion: "1",
+    nutrients: { calories, protein: 20, carbs: 3, fat: 1, fiber: null, sodium: null },
+    portions: label ? [{ label, amount: 1 }] : [],
+  });
+  const powder = perServing("powder", "Protein powder", 120, "1 serving (1 scoop)");
+  const steak = perServing("steak", "Steak", 300);
+  // No serving weight is known, so a weight is one serving, marked as a guess.
+  assert.deepEqual(
+    ai.resolveAmount(seen("protein powder", { quantity: 30, unit: "g", grams: 30 }), powder),
+    { amount: 1, portionLabel: "≈ 1 serving (1 scoop)" }
+  );
+  const { drafts } = await draft(
+    [
+      { brand: "", name: "protein powder", quantity: 30, unit: "g", grams: 30 },
+      { brand: "", name: "steak", quantity: 8, unit: "oz", grams: 227 },
+    ],
+    { description: "30g protein powder and 8 oz steak", known: [powder, steak] }
+  );
+  assert.deepEqual(
+    drafts.map((row) => [row.item.food.id, row.item.amount, row.item.nutrients.calories]),
+    [
+      ["custom:powder", 1, 120],
+      ["custom:steak", 1, 300],
+    ]
+  );
+  // A serving weight or volume in the label converts.
+  assert.deepEqual(
+    ai.resolveAmount(
+      seen("protein powder", { quantity: 45, unit: "grams" }),
+      perServing("p", "Powder", 120, "1 serving (30 g)")
+    ),
+    { amount: 1.5, portionLabel: "≈ 45 g · 1.5 servings" }
+  );
+  const oats = perServing("oats", "Oats", 300, "1 serving (1/2 cup)");
+  assert.equal(ai.resolveAmount(seen("oats", { unit: "cup" }), oats).amount, 2);
+  assert.equal(ai.resolveAmount(seen("oats", { quantity: 3, unit: "oz" }), oats).amount, 1);
+  // Mixed numbers, leading dots and spelled-out fluid ounces; a label with both a volume and a
+  // weight converts either.
+  for (const [label, quantity, unit, servings] of [
+    ["1 serving (1 1/2 cups)", 1.5, "cup", 1],
+    ["1 serving (.5 cup)", 1, "cup", 2],
+    ["1 serving (12 fluid ounces)", 24, "fl oz", 2],
+    ["1 serving (2 tbsp (32g))", 64, "g", 2],
+    ["1 serving (2 tbsp (32g))", 4, "tbsp", 2],
+  ])
+    assert.equal(
+      ai.resolveAmount(seen("x", { quantity, unit }), perServing("x", "X", 100, label)).amount,
+      servings,
+      `${quantity} ${unit} of ${label}`
+    );
+  // Counted units still count servings.
+  assert.equal(
+    ai.resolveAmount(seen("protein powder", { quantity: 2, unit: "scoops" }), powder).amount,
+    2
+  );
+  // Weights above the count limit are ordinary; counts above it are a generation loop.
+  const [rice, nigiri] = ai.readSeenFoods({
+    items: [
+      { brand: "", name: "Rice", quantity: 200, unit: "g", grams: 200 },
+      { brand: "", name: "Nigiri", quantity: 200, unit: "piece", grams: 300 },
+    ],
+  });
+  assert.equal(rice.quantity, 200);
+  assert.equal(nigiri.quantity, 1);
 });
 
 test("the second pass settles near-ties only, and bad answers are ignored", async () => {
@@ -434,4 +744,23 @@ test("JSON helpers describe a schema for models without constrained decoding", (
   assert.deepEqual(modelJson.extractJson('Sure!\n```json\n{"items": []}\n```'), { items: [] });
   assert.throws(() => modelJson.extractJson("I can't help with that."), /did not return JSON/);
   assert.throws(() => modelJson.extractJson("{not json}"));
+});
+
+test("JSON extraction ignores chatter braces and salvages a cut-off reply", () => {
+  const read = modelJson.extractJson;
+  assert.deepEqual(read('{"items":[]}\nNote: I assumed {1} serving.'), { items: [] });
+  assert.deepEqual(read('Here it is {as asked}: {"items":[1]} {done}'), { items: [1] });
+  // Brackets and escaped quotes inside strings are text.
+  assert.deepEqual(read('{"items":[{"name":"14\\" pizza } ]","unit":"{slice"}]} ok}'), {
+    items: [{ name: '14" pizza } ]', unit: "{slice" }],
+  });
+  // A reply cut off at the token limit keeps the items it finished.
+  assert.deepEqual(
+    read('```json\n{"items":[{"name":"Egg","tags":["a"]},{"name":"Toast"},{"name":"Ba'),
+    { items: [{ name: "Egg", tags: ["a"] }, { name: "Toast" }] }
+  );
+  assert.deepEqual(read('{"picks":[{"food":1,"entry":2},]}'), {
+    picks: [{ food: 1, entry: 2 }],
+  });
+  assert.throws(() => read('{"items":[{"name":"Eg'), /did not return JSON/);
 });

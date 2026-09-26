@@ -196,6 +196,7 @@ export function Field({
   autoFocus = false,
   selectTextOnFocus = false,
   multiline = false,
+  onSubmit,
 }: {
   label: string;
   value: string;
@@ -209,6 +210,8 @@ export function Field({
   selectTextOnFocus?: boolean;
   /** A few lines of free text, such as a meal description. */
   multiline?: boolean;
+  /** Return runs this instead of starting a new line. */
+  onSubmit?: () => void;
 }) {
   return (
     <TextField isDisabled={disabled}>
@@ -231,6 +234,9 @@ export function Field({
         placeholder={placeholder}
         multiline={multiline}
         textAlignVertical={multiline ? "top" : undefined}
+        returnKeyType={onSubmit ? "go" : undefined}
+        submitBehavior={onSubmit ? "blurAndSubmit" : undefined}
+        onSubmitEditing={onSubmit}
       />
     </TextField>
   );

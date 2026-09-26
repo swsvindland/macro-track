@@ -38,6 +38,7 @@ function load(file, dependencies = {}, compile = false) {
   return module.exports;
 }
 const nutrition = load("src/lib/nutrition.ts");
+const rank = load("src/lib/food-rank.ts");
 const metrics = load("src/lib/metrics.ts");
 const foodTime = load("src/lib/food-time.ts", { "./nutrition": nutrition });
 const schema = load("src/db/schema.ts");
@@ -156,6 +157,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "@/lib/local-ai": {
       modelStatus: async () => ({ state: "unavailable", engine: "none", vision: false }),
+      prewarmModel: () => {},
       textRecognitionAvailable: () => false,
       recognizeText: async () => [],
     },
@@ -168,6 +170,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/food-catalog": {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
+    "@/lib/food-rank": rank,
   };
   Object.assign(dependencies, extraDependencies);
   const store = {
@@ -420,7 +423,7 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       manifest[source].version
     );
     for (const query of ["chicken breast", '" OR - NEAR ( *', "crème", "rice"]) {
-      const expression = nutrition.searchExpression(query);
+      const expression = rank.searchExpression(query);
       if (expression)
         assert.doesNotThrow(() =>
           database
@@ -432,7 +435,7 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       assert.ok(
         database
           .prepare("SELECT name FROM food_search WHERE food_search MATCH ? LIMIT 5")
-          .all(nutrition.searchExpression("chicken breast")).length
+          .all(rank.searchExpression("chicken breast")).length
       );
     else {
       const row = database
@@ -1352,6 +1355,274 @@ test("remembered portions follow current food definitions and logger choices fav
   sqlite.close();
 });
 
+/** Writes diary history straight to SQLite, dated `daysAgo` and created when it was eaten. */
+function historyWriter(sqlite) {
+  const insert = sqlite.prepare(
+    "INSERT INTO food_entries (day, meal, logged_time, food, amount, portion_label, nutrients, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  return (item, daysAgo, time, amount = 100) => {
+    const day = nutrition.shiftDay(metrics.localDay(), -daysAgo);
+    insert.run(
+      day,
+      "Breakfast",
+      time,
+      JSON.stringify(item),
+      amount,
+      `${amount} g`,
+      JSON.stringify(nutrition.scaleNutrients(item, amount)),
+      new Date(`${day}T${foodTime.validFoodTime(time ?? "") ? time : "12:00"}:00`).getTime()
+    );
+  };
+}
+const named = (name) => ({ ...food, id: `custom:${name.toLowerCase()}`, name, barcode: null });
+
+test("log again ranks foods by how often, how recently and how near this time they are eaten", () => {
+  const { sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  const oats = named("Oats"),
+    once = named("Once"),
+    weekly = named("Weekly"),
+    stale = named("Stale");
+  for (let day = 1; day <= 30; day++) eat(oats, day, "08:00");
+  eat(once, 1, "08:05");
+  // Eaten every week until eight weeks ago.
+  for (let day = 56; day <= 175; day += 7) eat(weekly, day, "12:00", 55);
+  eat(stale, 70, "12:00");
+  const titles = (time) => fastLog.loggingChoices(time).choices.map((choice) => choice.title);
+  assert.deepEqual(titles("08:00").slice(0, 2), ["Oats", "Once"], "a daily food beats a one-off");
+  const noon = fastLog.loggingChoices("12:00");
+  const order = noon.choices.map((choice) => choice.title);
+  assert.ok(order.indexOf("Weekly") >= 0 && order.indexOf("Weekly") < order.indexOf("Stale"));
+  assert.ok(noon.known.get(weekly.id) > noon.known.get(stale.id));
+  assert.equal(noon.latest.get(weekly.id).amount, 55);
+  assert.equal(noon.choices.find((choice) => choice.title === "Weekly").items[0].amount, 55);
+  sqlite.close();
+});
+
+test("log again ranking survives invalid times without NaN", () => {
+  const { sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  const often = named("Often"),
+    rare = named("Rare");
+  for (let day = 1; day <= 10; day++) eat(often, day, "13:00");
+  eat(rare, 2, "07:00");
+  // A time saved by an older version, and an entry without one.
+  eat(rare, 3, "7:5");
+  eat(rare, 4, null);
+  for (const time of ["25:99", "", "8:0", "noon"]) {
+    const { choices, known } = fastLog.loggingChoices(time);
+    assert.ok([...known.values()].every(Number.isFinite), time);
+    assert.deepEqual(
+      choices.map((choice) => choice.title),
+      ["Often", "Rare"],
+      time
+    );
+  }
+  sqlite.close();
+});
+
+test("saved foods stay visible above a long history and add in one tap", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  for (let i = 0; i < 40; i++) eat(named(`Food ${i}`), 1 + (i % 5), "12:00");
+  const never = named("Never eaten");
+  const old = named("Old favorite");
+  eat(old, 150, "20:00", 42);
+  eat(named("Food 0"), 1, "12:05");
+  diary.toggleFavorite(never);
+  diary.toggleFavorite(old);
+  diary.toggleFavorite(named("Food 0"));
+  const choices = fastLog.loggingChoices("12:00");
+  assert.deepEqual(choices.saved.map((choice) => choice.title).sort(), [
+    "Food 0",
+    "Never eaten",
+    "Old favorite",
+  ]);
+  assert.equal(
+    choices.saved.find((choice) => choice.title === "Old favorite").items[0].amount,
+    42,
+    "a favorite outside the top foods keeps its portion"
+  );
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "12:00",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  let tree = render();
+  const rows = tree
+    .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+    .map((node) => node.props.accessibilityLabel.slice(7));
+  assert.equal(rows.length, 14);
+  assert.ok(!rows.includes("Food 0"), "a saved food is listed once, in its row");
+  const tile = tree.find((node) => node.props.accessibilityLabel === "Add Never eaten");
+  assert.ok(tile, "a never-eaten saved food is visible");
+  assert.ok(tree.some((node) => node.props.children === "Saved foods"));
+  tile.props.onPress();
+  tree = render();
+  assert.ok(tree.some((node) => node.props.accessibilityLabel === "Remove Never eaten"));
+  assert.ok(tree.some((node) => node.props.children === "Log 1 food"));
+  tree.find((node) => node.props.accessibilityLabel === "Add Old favorite").props.onLongPress();
+  assert.equal(render().find((node) => node.type === "Field").props.value, "42");
+  sqlite.close();
+});
+
+test("log again rows show calories and macros before the portion", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  historyWriter(sqlite)(food, 1, "08:00", 50);
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const texts = nodes(
+    harness.render(FastLogger, {
+      initialDay: metrics.localDay(),
+      initialTime: "08:00",
+      close: () => {},
+      onLogged: () => {},
+    })
+  )
+    .filter((node) => node.type === "Text")
+    .map((node) => node.props.children);
+  assert.ok(texts.includes("90 kcal 5P 3F 10C · "));
+  assert.ok(texts.includes("50 g"));
+  sqlite.close();
+});
+
+test("search finds foods eaten beyond the top 40 with their last portion at any time", async () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  for (let i = 0; i < 45; i++)
+    for (let day = 1; day <= 3; day++) eat(named(`Food ${i}`), day, "08:00");
+  const catalog = (id, name, brand, source) => ({
+    ...food,
+    id,
+    name,
+    brand,
+    source,
+    barcode: null,
+  });
+  const yogurt = catalog("off:5200", "Greek Yogurt Plain", "Fage", "off");
+  const salmon = catalog("usda:175168", "Salmon, cooked", "", "usda");
+  const strawberry = catalog("off:5300", "Strawberry Yogurt", "Chobani", "off");
+  eat(yogurt, 2, "15:00", 170);
+  eat(salmon, 1, "19:00", 200);
+  const yogurtMatch = (named) => rank.matchesQuery("yogurt", named);
+  for (const time of ["08:00", "15:00"]) {
+    const data = fastLog.loggingChoices(time);
+    const recalled = [
+      ...data.choices.filter((choice) => yogurtMatch(choice.items[0].food)),
+      ...data.recall(yogurtMatch),
+    ];
+    assert.deepEqual(
+      recalled.map((choice) => [choice.title, choice.items[0].amount]),
+      [["Greek Yogurt Plain", 170]],
+      time
+    );
+    assert.deepEqual(
+      data.choose([salmon, strawberry]).map((choice) => choice.items[0].amount),
+      [200, 30],
+      `${time}: a catalog result reuses the last portion of a food eaten beyond the top ones`
+    );
+  }
+  assert.ok(
+    !fastLog.loggingChoices("08:00").choices.some((choice) => choice.title === yogurt.name)
+  );
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": { searchFoods: async () => [strawberry, yogurt] },
+    }
+  );
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "08:00",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  const titles = (tree) =>
+    tree
+      .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+      .map((node) => node.props.accessibilityLabel.slice(7));
+  render()
+    .find((node) => node.type === "SearchInput")
+    .props.onChange("yogurt");
+  let tree = render();
+  assert.deepEqual(titles(tree), [yogurt.name], "the eaten yogurt is listed before the catalog");
+  harness.effects.forEach((effect) => effect());
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  tree = render();
+  assert.deepEqual(titles(tree), [yogurt.name, strawberry.name], "listed once, first");
+  const texts = tree.filter((node) => node.type === "Text").map((node) => node.props.children);
+  assert.ok(texts.includes("Fage · 170 g"));
+  assert.ok(texts.includes("Chobani · 1 serving · 30 g"));
+  sqlite.close();
+});
+
+test("log again ranks 13k diary entries quickly from a light indexed read", () => {
+  const { sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  const foods = Array.from({ length: 400 }, (_, i) => named(`Food ${i}`));
+  // Three years of logging about 12 foods a day.
+  sqlite.exec("BEGIN");
+  for (let i = 0; i < 13000; i++)
+    eat(
+      foods[(i * 7919) % foods.length],
+      i % 1095,
+      `${String(i % 24).padStart(2, "0")}:${String((i * 13) % 60).padStart(2, "0")}`
+    );
+  sqlite.exec("COMMIT");
+  const statements = [];
+  const prepare = sqlite.prepare.bind(sqlite);
+  sqlite.prepare = (sql) => {
+    statements.push(sql);
+    return prepare(sql);
+  };
+  fastLog.loggingChoices("08:00");
+  const times = [];
+  for (let run = 0; run < 5; run++) {
+    const start = performance.now();
+    const { choices } = fastLog.loggingChoices("12:30");
+    times.push(performance.now() - start);
+    assert.ok(choices.length >= 40);
+  }
+  // A search reads the other foods' names, then full rows for the ones it matches.
+  const data = fastLog.loggingChoices("12:30");
+  const start = performance.now();
+  const recalled = data.recall((named) => named.name.endsWith("7"));
+  const recall = performance.now() - start;
+  assert.ok(recall < 20, `search recall took ${recall.toFixed(1)} ms`);
+  assert.ok(recalled.length && recalled.every((choice) => choice.title.endsWith("7")));
+  assert.equal(
+    recalled.length + data.choices.filter((choice) => choice.title.endsWith("7")).length,
+    40
+  );
+  sqlite.prepare = prepare;
+  const median = times.sort((a, b) => a - b)[2];
+  assert.ok(median < 20, `ranking took ${median.toFixed(1)} ms`);
+  const light = statements.find((sql) => sql.includes("json_extract"));
+  const plan = sqlite
+    .prepare(`EXPLAIN QUERY PLAN ${light}`)
+    .all(...Array(light.split("?").length - 1).fill(0));
+  assert.ok(plan.some((row) => row.detail.includes("food_entries_recent_idx")));
+  assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
+  // Full rows are read only for the top foods and search matches, by id.
+  const full = statements.filter(
+    (sql) => sql.includes('from "food_entries"') && sql.includes('"nutrients"')
+  );
+  assert.ok(full.length && full.every((sql) => /"id" in \(/.test(sql)), full.join("\n"));
+  sqlite.close();
+});
+
 test("compiled fast logger logs a whole meal once, remembers quantities, and closes immediately", () => {
   const { diary, sqlite, fastLog } = diaryDatabase();
   const day = metrics.localDay();
@@ -1981,6 +2252,131 @@ test("compiled fast logger merges saved meals into usual foods and search, and c
   sqlite.close();
 });
 
+test("compiled fast logger search finds eaten foods by word and names each brand", async () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const egg = {
+    ...food,
+    id: "usda:173424",
+    name: "Egg, whole, cooked, hard-boiled",
+    source: "usda",
+    barcode: null,
+  };
+  const branded = {
+    ...egg,
+    id: "off:1",
+    name: "Large eggs",
+    brand: "Eggland's Best",
+    source: "off",
+  };
+  diary.saveEntry({
+    day: nutrition.shiftDay(metrics.localDay(), -1),
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    food: egg,
+    amount: 50,
+    portionLabel: "1 large · 50 g",
+  });
+  const searches = [];
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": {
+        searchFoods: async (query, known) => {
+          searches.push({ query, known });
+          return [egg, branded];
+        },
+      },
+    }
+  );
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "08:10",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  const titles = (tree) =>
+    tree
+      .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+      .map((node) => node.props.accessibilityLabel.slice(7));
+  const texts = (tree) =>
+    tree.filter((node) => node.type === "Text").map((node) => node.props.children);
+  let tree = render();
+  assert.ok(
+    texts(tree).includes("1 large · 50 g"),
+    "a familiar food without a brand shows its portion"
+  );
+  tree.find((node) => node.type === "SearchInput").props.onChange("eggs");
+  tree = render();
+  // A plural finds the food before the catalog answers; a substring match missed it.
+  assert.deepEqual(titles(tree), [egg.name]);
+  harness.effects.forEach((effect) => effect());
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(searches.length, 1);
+  assert.equal(searches[0].query, "eggs");
+  assert.ok(
+    searches[0].known.get(egg.id) > 0.9,
+    "search boosts foods eaten recently around this time"
+  );
+  tree = render();
+  assert.deepEqual(titles(tree), [egg.name, branded.name], "the eaten food is listed once, first");
+  assert.ok(texts(tree).includes("USDA · 1 large · 50 g"));
+  assert.ok(texts(tree).includes("Eggland's Best · 1 serving · 30 g"));
+  tree.find((node) => node.props.accessibilityLabel === `Adjust ${branded.name}`).props.onPress();
+  assert.ok(texts(render()).includes("Eggland's Best"), "the portion screen names the brand");
+  sqlite.close();
+});
+
+test("compiled food search lists the person's matching foods first, then the catalog", async () => {
+  const { diary, sqlite } = diaryDatabase();
+  const egg = {
+    ...food,
+    id: "usda:173424",
+    name: "Egg, whole, cooked, hard-boiled",
+    source: "usda",
+  };
+  const branded = {
+    ...egg,
+    id: "off:1",
+    name: "Large eggs",
+    brand: "Eggland's Best",
+    source: "off",
+  };
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food: egg,
+    amount: 50,
+    portionLabel: "50 g",
+  });
+  diary.saveCustomFood(food);
+  diary.saveCustomFood({ ...food, id: "custom:eggnog", name: "Eggnog" });
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/food-catalog": { searchFoods: async () => [branded, egg] },
+    }
+  );
+  const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
+  const render = () => nodes(harness.render(FoodEditor, { close: () => {}, initialQuery: "eggs" }));
+  render();
+  harness.effects.forEach((effect) => effect());
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const rows = render().filter((node) => node.props.food && node.props.onPress);
+  assert.deepEqual(
+    rows.map((node) => node.props.food.name),
+    [egg.name, "Eggnog", branded.name],
+    "own foods by match, the eaten egg before a longer word, then the catalog"
+  );
+  sqlite.close();
+});
+
 test("compiled fast logger quick add logs straight away or joins the selected foods", () => {
   const { sqlite, state, render } = fastLoggerHarness();
   render()
@@ -2090,6 +2486,311 @@ test("compiled fast logger offers photo logging only where it runs, then logs or
   );
   assert.equal(draft.state.closed, 1);
   draft.sqlite.close();
+});
+
+// PhotoLogger against the real meal analysis and diary; each model request waits for the test.
+function photoLoggerHarness(status = {}) {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const produce = (id, name, grams) => ({
+    ...food,
+    id,
+    name,
+    barcode: null,
+    source: "usda",
+    portions: [{ label: "1 medium", amount: grams }],
+  });
+  const banana = produce("usda:banana", "Bananas, raw", 118);
+  const apple = produce("usda:apple", "Apples, raw, with skin", 182);
+  const requests = [];
+  const reply = (name) => ({
+    items: [{ brand: "", name, quantity: 1, unit: "piece", grams: 120 }],
+  });
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "react-native": {
+        View: "View",
+        Image: "Image",
+        ActivityIndicator: "ActivityIndicator",
+        Platform: { OS: "ios" },
+      },
+      "@/lib/local-ai": {
+        modelStatus: async () => ({ state: "available", engine: "apple", vision: true, ...status }),
+        prewarmModel: () => {},
+        downloadModel: async () => {},
+        errorCode: () => "",
+        generateJson: (request) =>
+          new Promise((resolve, reject) =>
+            requests.push({
+              request,
+              answer: (name) => resolve(reply(name)),
+              nothing: () => resolve({ items: [] }),
+              fail: reject,
+            })
+          ),
+      },
+      "@/lib/meal-ai": load("src/lib/meal-ai.ts", {
+        "./nutrition": nutrition,
+        "./food-rank": rank,
+      }),
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": { searchCatalogMatch: async () => [banana, apple] },
+    }
+  );
+  const { PhotoLogger } = harness.load("src/components/nutrition/photo-logger.tsx");
+  const state = { closed: 0 };
+  const render = () =>
+    nodes(
+      harness.render(PhotoLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "12:30",
+        close: () => state.closed++,
+      })
+    );
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const drafted = () =>
+    render()
+      .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+      .map((node) => node.props.accessibilityLabel.slice(7));
+  const field = () => render().find((node) => node.type === "Field");
+  const updateButton = () =>
+    render().find((node) => node.props.children === "Update with description");
+  return { diary, sqlite, harness, requests, render, settle, drafted, field, updateButton, state };
+}
+
+test("compiled photo logger analyzes a photo at once and re-runs it for an edited description", async () => {
+  const photo = photoLoggerHarness();
+  const { requests, harness, render, settle, drafted, field, updateButton } = photo;
+  render();
+  harness.effects.forEach((effect) => effect());
+  await settle();
+  assert.equal(field().props.onSubmit, undefined, "return keeps its meaning next to the camera");
+  render()
+    .find((node) => node.type === "PhotoCapture")
+    .props.onPhoto("file:///cache/meal.jpg");
+  assert.equal(requests.length, 1, "the shutter starts the analysis; there is no Find foods tap");
+  assert.equal(requests[0].request.imageUri, "file:///cache/meal.jpg");
+  for (let i = 0; i < 3; i++) {
+    render();
+    harness.effects.forEach((effect) => effect());
+  }
+  await settle();
+  assert.equal(requests.length, 1, "one photo is one analysis");
+  assert.equal(updateButton(), undefined);
+
+  // The description stays editable while the model looks at the photo.
+  field().props.onChange("banana from the market");
+  updateButton().props.onPress();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].request.imageUri, "file:///cache/meal.jpg");
+  assert.match(requests[1].request.prompt, /banana from the market/);
+  assert.equal(updateButton(), undefined, "the running analysis has this description");
+  // The superseded run answers first and is dropped; the screen waits for the newer one.
+  requests[0].answer("Apple");
+  await settle();
+  assert.deepEqual(drafted(), []);
+  assert.ok(render().some((node) => node.props.children === "Cancel"));
+  requests[1].answer("Banana");
+  await settle();
+  assert.deepEqual(drafted(), ["Bananas, raw"]);
+  assert.equal(requests.length, 2, "a clear match needs no second request");
+
+  // After the draft, an edited description re-runs the analysis from the review.
+  field().props.onChange("an apple, not a banana");
+  updateButton().props.onPress();
+  assert.equal(requests.length, 3);
+  requests[2].answer("Apple");
+  await settle();
+  assert.deepEqual(drafted(), ["Apples, raw, with skin"]);
+  assert.equal(updateButton(), undefined);
+  render()
+    .find((node) => node.props.children === "Log 1 food")
+    .props.onPress();
+  assert.deepEqual(
+    photo.diary.entriesForDay(metrics.localDay()).map((entry) => entry.food.name),
+    ["Apples, raw, with skin"]
+  );
+  assert.equal(photo.state.closed, 1);
+  photo.sqlite.close();
+});
+
+test("compiled describe-only logger finds foods on return and re-runs an edited description", async () => {
+  const photo = photoLoggerHarness({ vision: false });
+  const { requests, harness, render, settle, drafted, field, updateButton } = photo;
+  render();
+  harness.effects.forEach((effect) => effect());
+  await settle();
+  assert.equal(field().props.label, "What did you eat?");
+  field().props.onSubmit();
+  assert.equal(requests.length, 0, "return on an empty description does nothing");
+  field().props.onChange("a banana");
+  field().props.onSubmit();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].request.imageUri, undefined);
+  requests[0].answer("Banana");
+  await settle();
+  assert.deepEqual(drafted(), ["Bananas, raw"]);
+  field().props.onSubmit();
+  assert.equal(requests.length, 1, "an unchanged description is not analyzed again");
+  field().props.onChange("an apple");
+  assert.ok(updateButton());
+  field().props.onSubmit();
+  assert.equal(requests.length, 2);
+  assert.match(requests[1].request.prompt, /an apple/);
+  requests[1].answer("Apple");
+  await settle();
+  assert.deepEqual(drafted(), ["Apples, raw, with skin"]);
+  photo.sqlite.close();
+});
+
+test("compiled photo logger keeps the reviewed draft when a re-run finds nothing, fails or is cancelled", async () => {
+  const photo = photoLoggerHarness();
+  const { requests, harness, render, settle, drafted, field, updateButton } = photo;
+  render();
+  harness.effects.forEach((effect) => effect());
+  await settle();
+  render()
+    .find((node) => node.type === "PhotoCapture")
+    .props.onPhoto("file:///cache/meal.jpg");
+  requests[0].answer("Banana");
+  await settle();
+  assert.deepEqual(drafted(), ["Bananas, raw"]);
+  // The person corrects the amount before noticing the description could say more.
+  render()
+    .find((node) => node.props.accessibilityLabel === "Adjust Bananas, raw")
+    .props.onPress();
+  render()
+    .find((node) => node.type === "Field" && node.props.label.startsWith("Quantity"))
+    .props.onChange("200");
+  render()
+    .find((node) => String(node.props.children).startsWith("Use 200 g"))
+    .props.onPress();
+  const portion = () =>
+    render().some(
+      (node) => typeof node.props.children === "string" && /^200 g · /.test(node.props.children)
+    );
+  const kept = (why) => {
+    assert.deepEqual(drafted(), ["Bananas, raw"], why);
+    assert.ok(portion(), `${why}: the adjusted amount stays`);
+    assert.ok(
+      render().some(
+        (node) => node.type === "Image" && node.props.source.uri === "file:///cache/meal.jpg"
+      )
+    );
+    assert.equal(
+      render().find((node) => node.type === "PhotoCapture"),
+      undefined
+    );
+    assert.ok(updateButton(), `${why}: the edited description can still be tried`);
+  };
+  const error = () => render().find((node) => node.type === "Error")?.props.message ?? "";
+
+  field().props.onChange("and some pie");
+  updateButton().props.onPress();
+  assert.deepEqual(drafted(), [], "the re-run is analyzing");
+  requests[1].nothing();
+  await settle();
+  kept("an empty re-run");
+  assert.equal(error(), "No food found with that description.");
+
+  updateButton().props.onPress();
+  assert.equal(error(), "");
+  requests[2].fail(new Error("The on-device model is busy. Try again."));
+  await settle();
+  kept("a failed re-run");
+  assert.equal(error(), "The on-device model is busy. Try again.");
+
+  updateButton().props.onPress();
+  render()
+    .find((node) => node.props.children === "Cancel")
+    .props.onPress();
+  kept("a cancelled re-run");
+  assert.equal(error(), "");
+  requests[3].answer("Apple");
+  await settle();
+  kept("the cancelled run's late answer");
+  assert.equal(requests.length, 4);
+
+  render()
+    .find((node) => node.props.children === "Log 1 food")
+    .props.onPress();
+  assert.deepEqual(
+    photo.diary.entriesForDay(metrics.localDay()).map((entry) => [entry.food.name, entry.amount]),
+    [["Bananas, raw", 200]]
+  );
+  photo.sqlite.close();
+});
+
+test("compiled Home prewarms the on-device model once available, then at most every 10 minutes", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  let status = { state: "unavailable", engine: "none", vision: false, reason: "disabled" };
+  let prewarms = 0,
+    reads = 0;
+  const listeners = [];
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/food-catalog": { openCatalogs: async () => {} },
+      "@/lib/local-ai": {
+        modelStatus: async () => {
+          reads++;
+          return { ...status };
+        },
+        prewarmModel: () => prewarms++,
+      },
+      "react-native": {
+        View: "View",
+        Platform: { OS: "ios" },
+        AccessibilityInfo: { announceForAccessibility: () => {} },
+        AppState: {
+          addEventListener: (_, listener) => {
+            listeners.push(listener);
+            return { remove: () => {} };
+          },
+        },
+      },
+    }
+  );
+  const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  // The mount effect runs once; the others after every render, as often as React may run them.
+  const render = () => {
+    const tree = nodes(harness.render(TodayScreen));
+    harness.effects.slice(1).forEach((effect) => effect());
+    return tree;
+  };
+  const returnToApp = async () => {
+    listeners.forEach((listener) => listener("active"));
+    await settle();
+    render();
+  };
+  render();
+  const stop = harness.effects[0]();
+  t.mock.timers.tick(300);
+  await settle();
+  render();
+  assert.equal(reads, 1);
+  assert.equal(prewarms, 0, "a model that can't run isn't loaded");
+
+  status = { state: "available", engine: "apple", vision: true };
+  await returnToApp();
+  render();
+  assert.equal(prewarms, 1, "prewarmed once when it became available");
+  t.mock.timers.tick(5 * 60000);
+  await returnToApp();
+  assert.equal(prewarms, 1, "returning soon after doesn't load it again");
+  t.mock.timers.tick(6 * 60000);
+  await returnToApp();
+  assert.equal(prewarms, 2);
+  stop();
+  sqlite.close();
 });
 
 test("compiled quick add hands an estimate to a meal draft without writing the diary", () => {

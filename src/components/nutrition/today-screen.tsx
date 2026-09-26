@@ -35,7 +35,7 @@ import {
   type DiaryReceipt,
 } from "@/lib/diary";
 import { openCatalogs } from "@/lib/food-catalog";
-import { modelStatus, type ModelStatus } from "@/lib/local-ai";
+import { modelStatus, prewarmModel, type ModelStatus } from "@/lib/local-ai";
 import { localDay } from "@/lib/metrics";
 import {
   meals,
@@ -225,6 +225,14 @@ export function TodayScreen() {
       unsubscribe();
     };
   }, []);
+  // The model loads before Photo is tapped; it is released after a while, so coming back
+  // to the app loads it again, at most every 10 minutes.
+  const warmedAt = useRef(0);
+  useEffect(() => {
+    if (ai?.state !== "available" || Date.now() - warmedAt.current < 10 * 60000) return;
+    warmedAt.current = Date.now();
+    prewarmModel();
+  }, [ai]);
   useEffect(() => {
     if (!toast) return;
     if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(toast.message);

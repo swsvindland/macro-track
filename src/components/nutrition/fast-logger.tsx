@@ -1,21 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, ScrollView, View } from "react-native";
 import {
   SystemButton,
+  SystemIcon,
   SystemIconButton,
   SystemLabel,
   SystemText as Text,
 } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, Field, SearchInput } from "@/components/ui";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
-import {
-  logBatch,
-  loggingChoices,
-  portionFor,
-  type LogChoice,
-  type LogReceipt,
-} from "@/lib/fast-log";
-import { searchCatalog } from "@/lib/food-catalog";
+import { logBatch, loggingChoices, type LogChoice, type LogReceipt } from "@/lib/fast-log";
+import { searchFoods } from "@/lib/food-catalog";
+import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import {
   meals,
   scaleNutrients,
@@ -34,6 +30,9 @@ import { QuickAdd } from "./quick-add";
 import { TimeField } from "./time-field";
 
 const isMeal = (choice: LogChoice) => choice.key.startsWith("meal:");
+/** Tells apart catalog foods with the same name: "Chicken Breast · Tyson". */
+const source = (food: Food) =>
+  food.brand || (food.source === "usda" ? "USDA" : food.source === "off" ? "Open Food Facts" : "");
 const startAmount = (choice: LogChoice) => String(isMeal(choice) ? 1 : choice.items[0].amount);
 
 /** A typed quantity for one food, or a multiplier for every food in a saved meal. */
@@ -127,11 +126,12 @@ export function FastLogger({
     return { ...loggingChoices(time), today, yesterday: shiftDay(today, -1) };
   }, [revision, time]);
   const trimmed = query.trim().toLowerCase();
+  const known = data.known;
   useEffect(() => {
     if (!trimmed) return;
     let active = true;
     const timer = setTimeout(() => {
-      void searchCatalog(trimmed)
+      void searchFoods(trimmed, known)
         .then((foods) => {
           if (active) setResults({ query: trimmed, foods, error: "" });
         })
@@ -148,37 +148,47 @@ export function FastLogger({
       active = false;
       clearTimeout(timer);
     };
-  }, [trimmed]);
-  const matches = (name: string) => name.toLowerCase().includes(trimmed);
+  }, [trimmed, known]);
+  // Foods eaten beyond Log again's top ones are read only when a search names them, and catalog
+  // results reuse the last portion of any the person has eaten.
+  const recalled = useMemo(
+    () => (trimmed ? data.recall((food) => matchesQuery(trimmed, food)) : []),
+    [data, trimmed]
+  );
+  const found = useMemo(() => (results ? data.choose(results.foods) : []), [data, results]);
+  // The person's own foods come first, ranked like the catalog below them, so rows already on
+  // screen don't move when the catalog answers.
+  const pool = [...data.choices, ...recalled];
+  const byKey = new Map(pool.map((choice) => [choice.key, choice]));
+  const own = trimmed
+    ? rankSearch(
+        trimmed,
+        pool.map((choice) => choice.items[0].food).filter((food) => matchesQuery(trimmed, food)),
+        known
+      ).map((food) => byKey.get(`food:${food.id}`)!)
+    : [];
+  const listed = new Set(own.map((choice) => choice.key));
+  // Saved foods sit in their own row, so the list below them has room for other foods.
+  const inRow = new Set(data.saved.map((choice) => choice.key));
   const choices: LogChoice[] = !trimmed
-    ? [...data.meals.slice(0, 2), ...data.choices].slice(0, 20)
+    ? [
+        ...data.meals.slice(0, 2),
+        ...data.choices.filter((choice) => !inRow.has(choice.key)).slice(0, 14),
+      ]
     : [
-        ...data.meals.filter((choice) => matches(choice.title)),
-        ...new Map(
-          [
-            ...data.choices.filter((choice) =>
-              matches(`${choice.title} ${choice.items[0].food.brand}`)
-            ),
-            ...(results?.query === trimmed ? results.foods : []).map((food) => {
-              const item = portionFor(
-                food,
-                data.history.find((row) => row.food.id === food.id)
-              );
-              return {
-                key: `food:${food.id}`,
-                title: food.name,
-                detail: item.portionLabel,
-                items: [item],
-              };
-            }),
-          ].map((choice) => [choice.key, choice])
-        ).values(),
+        ...data.meals.filter((choice) => matchesQuery(trimmed, { name: choice.title, brand: "" })),
+        ...own,
+        ...(results?.query === trimmed ? found : []).filter((choice) => !listed.has(choice.key)),
       ].slice(0, 40);
   const inCart = new Map(cart.map((choice) => [choice.key, choice]));
   const items = cart.flatMap((choice) => choice.items);
   const summary = (value: LogChoice["items"]) => {
     const sum = totalNutrients(value.map((item) => item.nutrients));
     return `${number(sum.calories, 0)} kcal · ${number(sum.protein, 0)} g protein`;
+  };
+  const macros = (value: LogChoice["items"]) => {
+    const sum = totalNutrients(value.map((item) => item.nutrients));
+    return `${number(sum.calories, 0)} kcal ${number(sum.protein, 0)}P ${number(sum.fat, 0)}F ${number(sum.carbs, 0)}C`;
   };
   function clearQuery() {
     setQuery("");
@@ -360,6 +370,9 @@ export function FastLogger({
         : ` ${basis}`;
     // The only item: logging it now saves a trip back through the list.
     const solo = !cart.some((row) => row.key !== editing.key);
+    const subtitle = isMeal(editing)
+      ? editing.items.map((item) => item.food.name).join(", ")
+      : source(editing.items[0].food);
     const addToMeal = () =>
       attempt(() => {
         add(portioned(editing, amount));
@@ -398,9 +411,9 @@ export function FastLogger({
         <Text accessibilityRole="header" numberOfLines={2} className="text-xl font-semibold">
           {editing.title}
         </Text>
-        {isMeal(editing) && (
+        {!!subtitle && (
           <Text numberOfLines={2} className="-mt-2 text-sm text-muted">
-            {editing.items.map((item) => item.food.name).join(", ")}
+            {subtitle}
           </Text>
         )}
         <Field
@@ -563,6 +576,55 @@ export function FastLogger({
             ))}
         </View>
       )}
+      {!trimmed && !!data.saved.length && (
+        <>
+          <SystemLabel accessibilityRole="header" className="px-1 pt-1">
+            Saved foods
+          </SystemLabel>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            className="-mx-4"
+            contentContainerClassName="gap-2 px-4"
+          >
+            {data.saved.map((choice) => {
+              const selected = inCart.get(choice.key);
+              const { calories } = totalNutrients(
+                (selected ?? choice).items.map((item) => item.nutrients)
+              );
+              return (
+                <SystemButton
+                  key={choice.key}
+                  variant="secondary"
+                  className={`w-32 items-stretch px-3 py-2.5 ${selected ? "bg-accent-soft" : "bg-surface"}`}
+                  accessibilityLabel={`${selected ? "Remove" : "Add"} ${choice.title}`}
+                  accessibilityHint="Long press to adjust the portion"
+                  accessibilityState={{ selected: !!selected }}
+                  onPress={() => toggle(choice)}
+                  onLongPress={() => edit(choice)}
+                >
+                  <View className="flex-1 gap-1">
+                    <View className="flex-row items-center justify-between gap-1">
+                      <Text className="text-xs text-muted tabular-nums">
+                        {`${number(calories, 0)} kcal`}
+                      </Text>
+                      <SystemIcon
+                        name={selected ? "checkmark-circle" : "add-circle"}
+                        size={22}
+                        color="accent-soft-foreground"
+                      />
+                    </View>
+                    <Text numberOfLines={2} className="text-sm font-medium">
+                      {choice.title}
+                    </Text>
+                  </View>
+                </SystemButton>
+              );
+            })}
+          </ScrollView>
+        </>
+      )}
       <SystemLabel accessibilityRole="header" className="px-1 pt-1">
         {trimmed
           ? results?.query === trimmed
@@ -574,6 +636,9 @@ export function FastLogger({
         const selected = inCart.get(choice.key);
         const shown = selected ?? choice;
         const saved = isMeal(choice);
+        // Search results name their catalog too; familiar foods only need a brand.
+        const food = choice.items[0].food;
+        const brand = saved ? "" : trimmed ? source(food) : food.brand;
         return (
           <View
             key={choice.key}
@@ -596,13 +661,22 @@ export function FastLogger({
                     </View>
                   )}
                 </View>
-                <Text numberOfLines={1} className="text-sm text-muted tabular-nums">
-                  {saved && !selected
-                    ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
-                    : shown.detail}{" "}
-                  · {number(totalNutrients(shown.items.map((item) => item.nutrients)).calories, 0)}{" "}
-                  kcal
-                </Text>
+                {/* A long brand or portion gives way before calories and macros do. */}
+                <View className="flex-row">
+                  <Text className="text-sm text-muted tabular-nums">
+                    {`${macros(shown.items)} · `}
+                  </Text>
+                  <Text numberOfLines={1} className="shrink text-sm text-muted tabular-nums">
+                    {[
+                      brand,
+                      saved && !selected
+                        ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
+                        : shown.detail,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Text>
+                </View>
               </View>
             </SystemButton>
             <SystemIconButton

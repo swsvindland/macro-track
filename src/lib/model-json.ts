@@ -49,10 +49,53 @@ export function describeJson(schema: JsonSchema): string {
   ].join("\n");
 }
 
-/** Reads the first JSON object in a model reply, tolerating code fences and chatter. */
+/**
+ * Reads the first JSON object in a model reply, tolerating code fences and chatter. A reply
+ * cut off at the token limit keeps the array items it finished.
+ */
 export function extractJson(text: string): unknown {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("The model did not return JSON.");
-  return JSON.parse(text.slice(start, end + 1));
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    const value = readObject(text, start);
+    if (value !== undefined) return value;
+  }
+  throw new Error("The model did not return JSON.");
+}
+
+/** Scans to the object's balanced end, skipping brackets inside strings. */
+function readObject(text: string, start: number): unknown {
+  const open: string[] = [];
+  // Just after each complete array item, with the brackets still open there.
+  const cuts: { end: number; open: string[] }[] = [];
+  let quoted = false;
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (quoted) {
+      if (char === "\\") i++;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === "{") open.push("}");
+    else if (char === "[") open.push("]");
+    else if (char === "}" || char === "]") {
+      if (open.pop() !== char) break;
+      if (!open.length) {
+        const value = parse(text.slice(start, i + 1));
+        if (value !== undefined) return value;
+        break;
+      }
+      if (open.at(-1) === "]") cuts.push({ end: i + 1, open: [...open] });
+    }
+  }
+  for (const cut of cuts.reverse()) {
+    const value = parse(text.slice(start, cut.end) + cut.open.reverse().join(""));
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function parse(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
 }
