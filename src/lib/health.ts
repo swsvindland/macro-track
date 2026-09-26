@@ -6,7 +6,7 @@ import type { HealthAdapter, HealthKind, HealthRecord } from "./health-types";
 import { validDay, dayOf, localDay } from "./metrics";
 
 /** Bumped when sync asks for new data types, so Settings can offer to ask again. */
-export const HEALTH_PERMISSIONS = "2";
+export const HEALTH_PERMISSIONS = "3";
 // Untimed entries are written at a representative time for their meal.
 const mealTimes = { Breakfast: "08:00", Lunch: "12:00", Dinner: "18:00", Snacks: "15:00" };
 
