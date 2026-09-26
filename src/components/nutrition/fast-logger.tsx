@@ -211,6 +211,11 @@ export function FastLogger({
     const sum = totalNutrients(value.map((item) => item.nutrients));
     return `${number(sum.calories, 0)} kcal ${number(sum.protein, 0)}P ${number(sum.fat, 0)}F ${number(sum.carbs, 0)}C`;
   };
+  /** The same totals as VoiceOver reads them. */
+  const spokenMacros = (value: LogChoice["items"]) => {
+    const sum = totalNutrients(value.map((item) => item.nutrients));
+    return `${number(sum.calories, 0)} kcal, ${number(sum.protein, 0)} g protein, ${number(sum.fat, 0)} g fat, ${number(sum.carbs, 0)} g carbs`;
+  };
   function clearQuery() {
     setQuery("");
     setResults(null);
@@ -617,6 +622,7 @@ export function FastLogger({
                   variant="secondary"
                   className={`w-32 items-stretch px-3 py-2.5 ${selected ? "bg-accent-soft" : "bg-surface"}`}
                   accessibilityLabel={`${selected ? "Remove" : "Add"} ${choice.title}`}
+                  accessibilityValue={{ text: `${number(calories, 0)} kcal` }}
                   accessibilityHint="Long press to adjust the portion"
                   accessibilityState={{ selected: !!selected }}
                   onPress={() => toggle(choice)}
@@ -657,6 +663,13 @@ export function FastLogger({
         // Search results name their catalog too; familiar foods only need a brand.
         const food = choice.items[0].food;
         const brand = saved ? "" : trimmed ? source(food) : food.brand;
+        const about = [
+          brand,
+          saved && !selected
+            ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
+            : shown.detail,
+        ].filter(Boolean);
+        // The labels name the food; the values carry what tells same-named foods apart.
         return (
           <View
             key={choice.key}
@@ -666,6 +679,7 @@ export function FastLogger({
               variant="ghost"
               className="flex-1 justify-start px-0 py-2"
               accessibilityLabel={`Adjust ${choice.title}`}
+              accessibilityValue={{ text: [...about, spokenMacros(shown.items)].join(", ") }}
               onPress={() => edit(choice)}
             >
               <View className="flex-1 gap-0.5">
@@ -685,14 +699,7 @@ export function FastLogger({
                     {`${macros(shown.items)} · `}
                   </Text>
                   <Text numberOfLines={1} className="shrink text-sm text-muted tabular-nums">
-                    {[
-                      brand,
-                      saved && !selected
-                        ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
-                        : shown.detail,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
+                    {about.join(" · ")}
                   </Text>
                 </View>
               </View>
@@ -702,6 +709,7 @@ export function FastLogger({
               icon={selected ? "checkmark" : "add"}
               color={selected ? undefined : "accent-soft-foreground"}
               accessibilityLabel={`${selected ? "Remove" : "Add"} ${choice.title}`}
+              accessibilityValue={brand ? { text: brand } : undefined}
               accessibilityState={{ selected: !!selected }}
               onPress={() => toggle(choice)}
             />

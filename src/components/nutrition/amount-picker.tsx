@@ -67,7 +67,7 @@ function UnitChip({
     <SystemButton
       variant="ghost"
       className={twMerge(
-        "min-h-10 gap-1 rounded-full border-2 px-3.5 py-1.5",
+        "gap-1 rounded-full border-2 px-3.5 py-1.5",
         selected ? "border-foreground bg-foreground" : "border-border bg-surface-secondary"
       )}
       accessibilityLabel={unit.label}
@@ -151,6 +151,7 @@ export function AmountPicker({
         actions.length === 1 && "flex-[2]"
       )}
       labelClassName="font-semibold"
+      fit
       onPress={action.onPress}
     >
       {action.label}
@@ -327,7 +328,13 @@ export function PortionPreview({
     <View className="gap-4">
       <View className="flex-row items-end gap-2">
         <View className="flex-[1.3]">
-          <Text className="text-4xl font-semibold tabular-nums">
+          <Text
+            className="text-4xl font-semibold tabular-nums"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+            maxFontSizeMultiplier={1.35}
+          >
             {nutrients ? number(nutrients.calories, 0) : "—"}
           </Text>
           <Text className="text-sm text-muted">Calories</Text>
@@ -335,7 +342,7 @@ export function PortionPreview({
         {macros.map(([key, label, kcal]) => (
           <View key={key} className="flex-1 items-center gap-0.5">
             <View className="rounded-full bg-surface-secondary px-2 py-0.5">
-              <Text className="text-xs text-muted tabular-nums">
+              <Text className="text-xs tabular-nums">
                 {nutrients && energy > 0
                   ? `${Math.round((nutrients[key] * kcal * 100) / energy)}%`
                   : "—"}

@@ -681,6 +681,8 @@ export function TodayScreen() {
                 <Text
                   className={`text-xs ${"destructive" in action ? "text-danger" : "text-accent-soft-foreground"}`}
                   numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
                   maxFontSizeMultiplier={1.3}
                 >
                   {action.label}

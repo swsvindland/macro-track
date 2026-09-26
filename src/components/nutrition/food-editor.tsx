@@ -624,9 +624,6 @@ export function FoodEditor({
                 setError("");
               }}
               actions={[
-                ...(scanAnother && onPick
-                  ? [{ label: "Add & scan another", onPress: () => save(true) }]
-                  : []),
                 {
                   label: onPick
                     ? (pickLabel ?? (pickerTitle ? "Add to meal" : "Use ingredient"))
@@ -639,6 +636,12 @@ export function FoodEditor({
                 },
               ]}
             />
+            {/* Full width: a keypad cell is too narrow for its label. */}
+            {scanAnother && onPick && (
+              <SystemButton variant="secondary" icon="barcode-outline" onPress={() => save(true)}>
+                Add & scan another
+              </SystemButton>
+            )}
           </View>
         ) : undefined
       }

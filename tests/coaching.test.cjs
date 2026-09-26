@@ -1308,6 +1308,12 @@ const renderCheckIn = (harness, HomeCheckIn, done = []) =>
   );
 const labelled = (tree, label) => tree.find((node) => node.props.accessibilityLabel === label);
 const adjusterInputs = Object.assign(() => null, { Input: "Input", Suffix: "Suffix" });
+/** iOS, where the adjuster announces each step to VoiceOver into `announced`. */
+const adjusterNative = (announced = []) => ({
+  View: "View",
+  Platform: { OS: "ios" },
+  AccessibilityInfo: { announceForAccessibility: (message) => announced.push(message) },
+});
 
 test("compiled check-in adjusts the proposal from Home and keeps Accept one tap", () => {
   const data = coachingDatabase("2024-02-01");
@@ -1344,9 +1350,11 @@ test("compiled check-in adjusts the proposal from Home and keeps Accept one tap"
 test("compiled adjuster steps 50 kcal, recounts typed grams and saves them", () => {
   const data = coachingDatabase("2024-02-01");
   const InputGroup = adjusterInputs;
+  const announced = [];
   const screen = screenHarness({
     ...checkInDependencies(data),
     "heroui-native": { InputGroup },
+    "react-native": adjusterNative(announced),
   });
   const { CheckInAdjuster } = screen.load("src/components/nutrition/check-in-adjuster.tsx");
   const saved = [];
@@ -1371,6 +1379,8 @@ test("compiled adjuster steps 50 kcal, recounts typed grams and saves them", () 
     ["Protein", "Carbs", "Fat"].map((label) => input(tree, label).props.value),
     ["128", "278", "82"]
   );
+  // The live region only speaks on Android.
+  assert.deepEqual(announced, ["2360 kcal a day: 128 g protein, 278 g carbs, 82 g fat"]);
   input(tree, "Protein").props.onChangeText("150");
   input(render(), "Carbs").props.onChangeText("256");
   tree = render();
@@ -1382,7 +1392,11 @@ test("compiled adjuster steps 50 kcal, recounts typed grams and saves them", () 
   assert.equal(shown(tree, "Button", "Save targets").props.isDisabled, true);
   assert.equal(labelled(tree, "50 kcal more").props.isDisabled, true);
 
-  const low = screenHarness({ ...checkInDependencies(data), "heroui-native": { InputGroup } });
+  const low = screenHarness({
+    ...checkInDependencies(data),
+    "heroui-native": { InputGroup },
+    "react-native": adjusterNative(),
+  });
   const lowTree = nodes(
     low.render(low.load("src/components/nutrition/check-in-adjuster.tsx").CheckInAdjuster, {
       ...props,
@@ -1405,6 +1419,7 @@ test("adjusting a learning week starts from the program at today's trend", () =>
     const screen = screenHarness({
       ...checkInDependencies(database),
       "heroui-native": { InputGroup: adjusterInputs },
+      "react-native": adjusterNative(),
     });
     const { CheckInAdjuster } = screen.load("src/components/nutrition/check-in-adjuster.tsx");
     return (props) => nodes(screen.render(CheckInAdjuster, props));
@@ -2254,6 +2269,24 @@ test("compiled weight trend and expenditure screens chart the range and reach th
     ["Average", "Difference"]
   );
   assert.ok(summary.props.stats[1].value.startsWith("−"));
+  // A scrubbed expenditure readout outgrows a phone at larger text; it shrinks to fit instead.
+  const readout = nodes(
+    chart.RangeSummary({
+      stats: [
+        { label: "Estimate", value: "2,345", unit: "kcal" },
+        { label: "Range", value: "2,100–2,500", unit: "kcal" },
+      ],
+      caption: "Jan 20",
+    })
+  );
+  const stats = readout.filter((node) => node.key === "Estimate" || node.key === "Range");
+  assert.equal(stats.length, 2);
+  for (const stat of stats) {
+    assert.match(stat.props.className, /\bshrink\b/);
+    const value = nodes(stat).find((node) => node.props.className?.includes("text-3xl"));
+    assert.equal(value.props.numberOfLines, 1);
+    assert.equal(value.props.adjustsFontSizeToFit, true);
+  }
   const plot = tree.find((node) => node.type === chart.TrendChart);
   assert.deepEqual(plot.props.goal, { value: 75, label: "Goal 75.0 kg" });
   assert.equal(plot.props.from, "2024-01-10");

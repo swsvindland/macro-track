@@ -192,7 +192,8 @@ export function TrendChart({
       ? shortDay(day, language)
       : new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
           month: "short",
-          ...(span > 400 ? { year: "2-digit" as const } : {}),
+          // "Sep 24" would read as a day.
+          ...(span > 400 ? { year: "numeric" as const } : {}),
         });
   return (
     <View className="gap-1">
@@ -324,6 +325,8 @@ export function TrendChart({
               key={value}
               className="absolute font-mono text-xs text-muted"
               style={{ right: 0, top: y(value) - 8, width: Y_AXIS - 6 }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
               maxFontSizeMultiplier={1.2}
             >
               {format(value)}
@@ -352,6 +355,8 @@ export function TrendChart({
             <Text
               key={day}
               className="absolute font-mono text-xs text-muted"
+              numberOfLines={1}
+              adjustsFontSizeToFit
               maxFontSizeMultiplier={1.2}
               style={
                 i === 0
@@ -460,9 +465,16 @@ export function RangeSummary({
     <View className="gap-1" accessibilityLiveRegion="polite">
       <View className="flex-row gap-6">
         {stats.map((stat) => (
-          <View key={stat.label} className="gap-0.5">
-            <SystemLabel>{stat.label}</SystemLabel>
-            <Text className="text-3xl font-semibold tabular-nums" maxFontSizeMultiplier={1.3}>
+          // Shrinks rather than running off-screen, e.g. a scrubbed range at larger text sizes.
+          <View key={stat.label} className="shrink gap-0.5">
+            <SystemLabel numberOfLines={1}>{stat.label}</SystemLabel>
+            <Text
+              className="text-3xl font-semibold tabular-nums"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              maxFontSizeMultiplier={1.3}
+            >
               {stat.value}
               <Text className="text-base font-medium text-muted"> {stat.unit}</Text>
             </Text>

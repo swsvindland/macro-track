@@ -48,14 +48,23 @@ export function SystemIcon({
   return <Ionicons name={name} size={size} color={String(value)} />;
 }
 
+/** A fixed-size button's label stays on one line, shrinking before it would be cut off. */
+const fitted = {
+  numberOfLines: 1,
+  adjustsFontSizeToFit: true,
+  minimumFontScale: 0.7,
+  maxFontSizeMultiplier: 1.3,
+} as const;
+
 export function SystemButton({
   className,
   variant = "primary",
   icon,
   labelClassName,
+  fit = false,
   children,
   ...props
-}: ComponentProps<typeof Button> & { icon?: IconName; labelClassName?: string }) {
+}: ComponentProps<typeof Button> & { icon?: IconName; labelClassName?: string; fit?: boolean }) {
   const iconColor: ThemeColor =
     variant === "primary"
       ? "accent-foreground"
@@ -74,10 +83,12 @@ export function SystemButton({
         className
       )}
     >
-      {(icon || labelClassName) && typeof children === "string" ? (
+      {(icon || labelClassName || fit) && typeof children === "string" ? (
         <>
           {icon && <SystemIcon name={icon} size={18} color={iconColor} />}
-          <Button.Label className={labelClassName}>{children}</Button.Label>
+          <Button.Label className={labelClassName} {...(fit ? fitted : {})}>
+            {children}
+          </Button.Label>
         </>
       ) : (
         children

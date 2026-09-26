@@ -72,6 +72,9 @@ export function Screen({
 }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  // On iOS the tab bar floats over the screen and is part of its safe area.
+  const footerBottom = (Platform.OS === "ios" ? insets.bottom : 0) + 8;
+  const [footerHeight, setFooterHeight] = useState(0);
   return (
     <SafeAreaView
       className="flex-1 bg-background"
@@ -86,7 +89,8 @@ export function Screen({
         contentContainerStyle={{
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
           paddingTop: header ? 4 : compact ? 12 : 24,
-          paddingBottom: footer ? 160 : 40,
+          // The end of the list scrolls clear of the footer, however many bars it stacks.
+          paddingBottom: footer ? Math.max(160, footerBottom + footerHeight + 16) : 40,
           gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,
@@ -113,10 +117,14 @@ export function Screen({
         <View
           pointerEvents="box-none"
           className="absolute inset-x-0 items-center px-4"
-          // On iOS the tab bar floats over the screen and is part of its safe area.
-          style={{ bottom: (Platform.OS === "ios" ? insets.bottom : 0) + 8 }}
+          style={{ bottom: footerBottom }}
         >
-          <View className="w-full max-w-xl">{footer}</View>
+          <View
+            className="w-full max-w-xl"
+            onLayout={(event) => setFooterHeight(event.nativeEvent.layout.height)}
+          >
+            {footer}
+          </View>
         </View>
       )}
     </SafeAreaView>

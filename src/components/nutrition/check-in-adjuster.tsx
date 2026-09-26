@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View } from "react-native";
+import { AccessibilityInfo, Platform, View } from "react-native";
 import { InputGroup } from "heroui-native";
 import {
   SystemButton,
@@ -62,6 +62,11 @@ export function CheckInAdjuster({
     const next = plan && weight !== undefined ? programTargets(moved, weight, plan) : moved;
     setCalories(next.calories);
     setValues(grams(next));
+    // The live region below only speaks on Android.
+    if (Platform.OS === "ios")
+      AccessibilityInfo.announceForAccessibility(
+        `${number(next.calories, 0)} kcal a day: ${next.protein} g protein, ${next.carbs} g carbs, ${next.fat} g fat`
+      );
   }
   function edit(key: keyof typeof values, value: string) {
     const next = { ...values, [key]: value };

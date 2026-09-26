@@ -1667,6 +1667,45 @@ test("only the newest Home hears a link, and open sheets outside Home close firs
   assert.deepEqual(heard, ["newer", "older"]);
 });
 
+test("compiled Screen scrolls the end of its list clear of however tall its footer grows", () => {
+  const harness = screenHarness(
+    {},
+    {},
+    {
+      "react-native": {
+        View: "View",
+        ScrollView: "ScrollView",
+        Platform: { OS: "ios" },
+        useWindowDimensions: () => ({ width: 393, height: 852 }),
+      },
+      "react-native-safe-area-context": {
+        SafeAreaView: "SafeAreaView",
+        useSafeAreaInsets: () => ({ top: 59, bottom: 83 }),
+      },
+      uniwind: { withUniwind: (component) => component },
+      "heroui-native": {},
+      "heroui-native/portal": {},
+      "heroui-native-pro": {},
+      "react-native-gesture-handler": {},
+      "react-native-gesture-handler/ReanimatedSwipeable": { __esModule: true },
+      "./system": {},
+    }
+  );
+  const { Screen } = harness.load("src/components/ui.tsx");
+  const render = (footer) =>
+    nodes(harness.render(Screen, { title: "Today", footer, children: null }));
+  const padding = (tree) =>
+    tree.find((node) => node.type === "ScrollView").props.contentContainerStyle.paddingBottom;
+  assert.equal(padding(render()), 40);
+  const tree = render("Undo");
+  assert.equal(padding(tree), 160, "an Undo message fits the usual space");
+  // The Undo message stacked on the selection bar.
+  tree
+    .find((node) => node.props.onLayout)
+    .props.onLayout({ nativeEvent: { layout: { height: 192 } } });
+  assert.equal(padding(render("Undo and selection")), 83 + 8 + 192 + 16);
+});
+
 function linkedHome(diary, actions, ai = "available") {
   return homeScreen(
     diary,
@@ -1923,7 +1962,7 @@ function scanner(diary, props, dependencies) {
     quantity: () => amountText(harness, render()),
     press: (...keys) => press(harness, render, ...keys),
     chip: (label) => harness.pad(render()).find((node) => node.props.unit?.label === label),
-    action: (label) => button(harness.pad(render()), label),
+    action: (label) => button(harness.pad(render()), label) ?? button(render(), label),
     scan,
     FoodRow,
     BarcodeCamera,
@@ -2058,6 +2097,11 @@ test("compiled Add & scan another hands the food over and reopens the camera pas
   const editor = scanner(diary, props);
   await editor.scan("04963406");
   assert.equal(editor.quantity(), "1 serving");
+  // Too long for a keypad cell, it keeps a full-width button of its own below the keypad.
+  const keypad = editor.harness.pad(editor.render());
+  assert.equal(button(keypad, "Add & scan another"), undefined);
+  assert.equal(button(editor.render(), "Add & scan another").props.icon, "barcode-outline");
+  assert.equal(button(keypad, "Log").props.fit, true, "keypad actions shrink to one line");
   editor.chip("g").props.onPress();
   // "2/" is a fraction cut short.
   editor.press("2", "/");

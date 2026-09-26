@@ -2123,6 +2123,7 @@ test("saved foods stay visible above a long history and add in one tap", () => {
   assert.ok(!rows.includes("Food 0"), "a saved food is listed once, in its row");
   const tile = tree.find((node) => node.props.accessibilityLabel === "Add Never eaten");
   assert.ok(tile, "a never-eaten saved food is visible");
+  assert.match(tile.props.accessibilityValue.text, /^[\d.]+ kcal$/, "VoiceOver hears its calories");
   assert.ok(tree.some((node) => node.props.children === "Saved foods"));
   tile.props.onPress();
   tree = render();
@@ -3044,6 +3045,19 @@ test("compiled fast logger search finds eaten foods by word and names each brand
   assert.deepEqual(titles(tree), [egg.name, branded.name], "the eaten food is listed once, first");
   assert.ok(texts(tree).includes("USDA · 1 large · 50 g"));
   assert.ok(texts(tree).includes("Eggland's Best · 1 serving · 30 g"));
+  // VoiceOver hears the brand, portion and macros that tell same-named results apart.
+  const labelled = (label) => tree.find((node) => node.props.accessibilityLabel === label);
+  assert.match(
+    labelled(`Adjust ${egg.name}`).props.accessibilityValue.text,
+    /^USDA, 1 large · 50 g, [\d.]+ kcal, [\d.]+ g protein, [\d.]+ g fat, [\d.]+ g carbs$/
+  );
+  assert.match(
+    labelled(`Adjust ${branded.name}`).props.accessibilityValue.text,
+    /^Eggland's Best, 1 serving · 30 g, [\d.]+ kcal, /
+  );
+  assert.deepEqual(labelled(`Add ${branded.name}`).props.accessibilityValue, {
+    text: "Eggland's Best",
+  });
   tree.find((node) => node.props.accessibilityLabel === `Adjust ${branded.name}`).props.onPress();
   assert.ok(texts(render()).includes("Eggland's Best"), "the portion screen names the brand");
   sqlite.close();
