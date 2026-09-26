@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Editor, ErrorText, Field } from "@/components/ui";
+import { useCloseForAppAction } from "@/lib/app-actions";
 import { deleteRecipe, saveRecipe } from "@/lib/diary";
 import { parseNumber } from "@/lib/metrics";
 import { recipeFood, type Recipe, type RecipeIngredient } from "@/lib/nutrition";
@@ -19,6 +20,8 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
   const [picker, setPicker] = useState<{ index?: number } | null>(null);
   const [error, setError] = useState("");
   const locked = useRef(false);
+  // The ingredient picker takes this sheet's place, so a link closes the recipe with it.
+  useCloseForAppAction(!!picker, close);
   const draft = {
     name,
     servings: parseNumber(servings),

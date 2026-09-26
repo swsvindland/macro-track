@@ -45,24 +45,32 @@ const source = (food: Food) =>
 const mealUnits: PortionUnit[] = [{ key: "meal", label: "×", perUnit: 1, kind: "count" }];
 const unitsFor = (choice: LogChoice) =>
   isMeal(choice) ? mealUnits : portionUnits(choice.items[0].food);
-/** A saved meal starts at 1×; a food at the unit and count it was chosen in. */
+/** A saved meal starts at the multiple chosen for it, else 1×; a food at its unit and count. */
 function startAmount(choice: LogChoice): AmountDraft {
-  if (isMeal(choice)) return { unit: "meal", text: "1", fresh: true };
+  if (isMeal(choice))
+    return {
+      unit: "meal",
+      text: formatCount(choice.multiple?.factor ?? 1, mealUnits[0]),
+      fresh: true,
+    };
   const item = choice.items[0];
   const { unit, count } = portionOf(item);
   return { unit, text: countText(item.food, unit, count), fresh: true };
 }
 
-/** A typed amount of one food, or a multiplier for every food in a saved meal. */
+/** A typed amount of one food, or a multiple of every food in a saved meal. */
 function portioned(choice: LogChoice, amount: AmountDraft): LogChoice {
   const value = parseAmount(amount.text);
   if (isMeal(choice)) {
     if (!Number.isFinite(value) || value <= 0 || value > 100)
       throw new Error("Enter a valid quantity.");
+    // Scaled from the meal itself, so reopening a selected meal doesn't multiply it again.
+    const items = choice.multiple?.items ?? choice.items;
     return {
       ...choice,
       detail: `${formatCount(value, mealUnits[0])} × saved meal`,
-      items: choice.items.map((item) => scaleItem(item, value)),
+      items: items.map((item) => scaleItem(item, value)),
+      multiple: { items, factor: value },
     };
   }
   const item = portionItem(choice.items[0].food, amount.unit, value, {

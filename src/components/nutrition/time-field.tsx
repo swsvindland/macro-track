@@ -2,7 +2,13 @@ import { useState } from "react";
 import { View } from "react-native";
 import { Description, FieldError, Input, Label, TextField } from "heroui-native";
 import { SystemButton, SystemText as Text } from "@/components/system";
-import { clockPlus, currentFoodTime, formatClock, normalizeFoodTime } from "@/lib/food-time";
+import {
+  clockMinutes,
+  clockPlus,
+  currentFoodTime,
+  formatClock,
+  normalizeFoodTime,
+} from "@/lib/food-time";
 import { useStore } from "@/lib/store";
 
 // One tap for the usual corrections: eaten just now or a little while ago.
@@ -30,6 +36,8 @@ export function TimeField({
   const time = normalizeFoodTime(value);
   // The clock as Home shows it, when that differs from what is in the field.
   const clock = time && formatClock(time, language === "zh" ? "zh-CN" : language);
+  // The chips keep the day, so one that would reach back past midnight is off, not 00:00.
+  const now = clockMinutes(currentFoodTime());
   function set(next: string) {
     setDraft(null);
     onChange(next);
@@ -64,6 +72,7 @@ export function TimeField({
             className="min-h-9 px-3 py-1.5"
             hitSlop={{ top: 4, bottom: 4 }}
             accessibilityLabel={spoken}
+            isDisabled={minutes > now}
             onPress={() => set(clockPlus(currentFoodTime(), -minutes))}
           >
             {label}

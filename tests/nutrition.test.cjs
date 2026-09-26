@@ -112,7 +112,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       },
     },
     "expo-router": { router: {}, useIsFocused: () => true },
-    "@/lib/app-actions": load("src/lib/app-actions.ts"),
+    "@/lib/app-actions": load("src/lib/app-actions.ts", { react }),
     "@/components/system": {
       SystemButton: "Button",
       SystemIconButton: "IconButton",
@@ -683,6 +683,32 @@ test("compiled recipe form retains draft while picking ingredients and saves onc
   assert.equal(diary.listRecipes().length, 1);
   assert.equal(diary.recipeFoods()[0].nutrients.calories, 90);
   assert.equal(diary.entriesForDay(metrics.localDay()).length, 0);
+  sqlite.close();
+});
+
+test("compiled recipe form closes for a link while its ingredient picker takes its place", () => {
+  const { diary, sqlite } = diaryDatabase();
+  // Outside Home, as in Library, with the app-action hook's effects run by hand.
+  const effects = [];
+  const actions = load("src/lib/app-actions.ts", {
+    react: {
+      createContext: () => ({}),
+      useContext: () => false,
+      useEffect: (effect) => effects.push(effect),
+    },
+  });
+  const harness = screenHarness(diary, {}, { "@/lib/app-actions": actions });
+  const { RecipeEditor } = harness.load("src/components/nutrition/recipe-editor.tsx");
+  let closed = 0;
+  const props = { close: () => closed++ };
+  nodes(harness.render(RecipeEditor, props))
+    .find((node) => node.type === "Button" && node.props.children === "Add ingredient")
+    .props.onPress();
+  effects.length = 0;
+  assert.equal(harness.render(RecipeEditor, props).type, "FoodEditor");
+  effects.forEach((effect) => effect());
+  actions.requestAppAction("log");
+  assert.equal(closed, 1, "the recipe closes with its picker, leaving Home free for the link");
   sqlite.close();
 });
 
@@ -2897,6 +2923,49 @@ test("compiled fast logger merges saved meals into usual foods and search, and c
   tree.find((node) => node.props.children === "Log 1 food").props.onPress();
   assert.equal(diary.entriesForDay(metrics.localDay()).length, 1);
   assert.equal(state.closed, 1);
+  sqlite.close();
+});
+
+test("compiled fast logger reopens a selected saved meal at its multiple and logs what it shows", () => {
+  const { diary, sqlite, render } = fastLoggerHarness();
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    food,
+    amount: 100,
+    portionLabel: "100 g",
+  });
+  diary.saveMeal("Oats", "2024-01-01", "Breakfast");
+  const adjust = () =>
+    render()
+      .find((node) => node.props.accessibilityLabel === "Adjust Oats")
+      .props.onPress();
+  const shown = (tree) =>
+    tree.some((node) => node.type === "Text" && node.props.children === "3 × saved meal");
+  adjust();
+  enterAmount(render(), "2");
+  amountAction(render(), "Add").onPress();
+  adjust();
+  assert.deepEqual(render().find((node) => node.type === "AmountPicker").props.value, {
+    unit: "meal",
+    text: "2",
+    fresh: true,
+  });
+  assert.equal(
+    render().find((node) => node.type === "PortionPreview").props.nutrients.calories,
+    360
+  );
+  enterAmount(render(), "3");
+  amountAction(render(), "Add").onPress();
+  assert.ok(shown(render()));
+  render()
+    .find((node) => node.props.children === "Log 1 food")
+    .props.onPress();
+  assert.deepEqual(
+    diary.entriesForDay(metrics.localDay()).map((row) => [row.amount, row.nutrients.calories]),
+    [[300, 540]]
+  );
   sqlite.close();
 });
 

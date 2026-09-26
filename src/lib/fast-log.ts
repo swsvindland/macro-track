@@ -29,7 +29,14 @@ import {
   type MealItem,
 } from "./nutrition";
 
-export type LogChoice = { key: string; title: string; detail: string; items: MealItem[] };
+export type LogChoice = {
+  key: string;
+  title: string;
+  detail: string;
+  items: MealItem[];
+  /** A resized saved meal: the meal's own items, and the factor `items` scales them by. */
+  multiple?: { items: MealItem[]; factor: number };
+};
 /** A batch log's receipt; `entries` are its new rows, all on `day`. */
 export type LogReceipt = DiaryReceipt & { day: string; entries: FoodEntry[] };
 /**
@@ -37,6 +44,14 @@ export type LogReceipt = DiaryReceipt & { day: string; entries: FoodEntry[] };
  * still has that unit, else its usual portion.
  */
 export function portionFor(food: Food, recent?: FoodEntry): MealItem {
+  try {
+    return lastPortion(food, recent);
+  } catch {
+    // A catalog portion out of range starts at the basis default, ready to correct.
+    return portionItem(food, food.basis, food.basis === "serving" ? 1 : 100);
+  }
+}
+function lastPortion(food: Food, recent?: FoodEntry): MealItem {
   const reuse =
     recent?.food.basis === food.basis &&
     (food.source !== "recipe" || recent.food.sourceVersion === food.sourceVersion);

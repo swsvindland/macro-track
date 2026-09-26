@@ -923,6 +923,15 @@ test("compiled time field sets the time from a chip and previews it as Home show
   );
   const times = chips.map((chip) => (chip.props.onPress(), value));
   assert.deepEqual(times, ["12:10", "11:55", "11:40", "11:10"]);
+  assert.ok(chips.every((chip) => !chip.props.isDisabled));
+  // Just after midnight, a chip that would reach back into yesterday is off, not 00:00.
+  t.mock.timers.setTime(new Date(2024, 0, 10, 0, 20).getTime());
+  assert.deepEqual(
+    render("en-US", value)
+      .filter((node) => node.type === "Button" && node.props.accessibilityLabel)
+      .map((node) => !!node.props.isDisabled),
+    [false, false, true, true]
+  );
   const preview = (language, time) =>
     render(language, time).find((node) => node.type === "Description")?.props.children;
   assert.equal(preview("en-US", "21:30"), foodTime.formatClock("21:30", "en-US"));
@@ -1963,8 +1972,8 @@ test("compiled scans, searches and Library reuse the quantity last logged", asyn
   sqlite.close();
 });
 
-test("compiled scan, search and Library open a catalog food whose first portion is out of range", async (t) => {
-  const { diary, sqlite } = diaryDatabase();
+test("compiled scan, search, Library and Log food open a catalog food whose first portion is out of range", async (t) => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
   const bundled = bundledCatalog();
   // The bundled Froot Loops record lists its first portion as 5.46e31 g.
   const loops = await bundled.catalog.lookupBarcode("00038000256974");
@@ -2002,6 +2011,24 @@ test("compiled scan, search and Library open a catalog food whose first portion 
     scanner(diary, { initialFood: loops, close: () => {} }, catalog).quantity(),
     "100 g"
   );
+
+  // Saved, or found in Log food's search, it lists at 100 g instead of failing the list.
+  diary.toggleFavorite(loops);
+  const choices = fastLog.loggingChoices("08:00");
+  assert.equal(choices.saved[0].detail, "100 g");
+  assert.equal(choices.choose([loops])[0].detail, "100 g");
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog, ...catalog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const logger = nodes(
+    harness.render(FastLogger, {
+      initialDay: metrics.localDay(),
+      initialTime: "08:00",
+      close: () => {},
+      onLogged: () => {},
+    })
+  );
+  assert.ok(logger.some((node) => node.props.accessibilityLabel === `Add ${loops.name}`));
+
   diary.saveEntry({
     day: "2024-01-01",
     meal: "Breakfast",
