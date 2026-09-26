@@ -21,7 +21,7 @@ import {
   type DiaryReceipt,
 } from "@/lib/diary";
 import { portionFor } from "@/lib/fast-log";
-import { lookupBarcode, searchFoods } from "@/lib/food-catalog";
+import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
 import { foodIcon } from "@/lib/food-icons";
 import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
@@ -34,13 +34,16 @@ import {
   defaultPortion,
   meals,
   normalizeBarcode,
+  nutrientInfo,
   parseAmount,
   portionItem,
   portionOf,
   portionUnits,
+  unitLabel,
   type Food,
   type Meal,
   type MealItem,
+  type Micro,
 } from "@/lib/nutrition";
 import { dayLabel, localDay, parseNumber } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
@@ -153,6 +156,22 @@ const macroFields = [
   ["fiber", "Fiber (g, optional)"],
   ["sodium", "Sodium (mg, optional)"],
 ] as const;
+// The rest of a US Nutrition Facts panel, in its order.
+const labelMicros = [
+  "saturatedFat",
+  "transFat",
+  "cholesterol",
+  "sugar",
+  "addedSugar",
+  "vitaminD",
+  "calcium",
+  "iron",
+  "potassium",
+] as const satisfies readonly Micro[];
+const noMicros = Object.fromEntries(labelMicros.map((key) => [key, ""])) as Record<
+  (typeof labelMicros)[number],
+  string
+>;
 type LabelNote = { lines: string[]; warn: boolean };
 
 /** Photographs a Nutrition Facts panel and reads it with on-device text recognition. */
@@ -236,6 +255,8 @@ function CustomFoodForm({
     fiber: "",
     sodium: "",
   });
+  const [micros, setMicros] = useState(noMicros);
+  const [more, setMore] = useState(false);
   const [serving, setServing] = useState({ label: "", amount: "", unit: "g" as "g" | "ml" });
   const [scanning, setScanning] = useState(scanFirst && textRecognitionAvailable());
   const [note, setNote] = useState<LabelNote | null>(null);
@@ -250,6 +271,10 @@ function CustomFoodForm({
       fiber: shown(label.fiber),
       sodium: shown(label.sodium),
     });
+    setMicros(
+      Object.fromEntries(labelMicros.map((key) => [key, shown(label[key])])) as typeof micros
+    );
+    if (labelMicros.some((key) => label[key] !== null)) setMore(true);
     setServing({
       label: label.servingLabel,
       amount: label.servingAmount === null ? "" : String(label.servingAmount),
@@ -293,6 +318,11 @@ function CustomFoodForm({
           fat: parseNumber(values.fat),
           fiber: optional(values.fiber),
           sodium: optional(values.sodium),
+          ...Object.fromEntries(
+            labelMicros.flatMap((key) =>
+              micros[key].trim() ? [[key, parseNumber(micros[key])]] : []
+            )
+          ),
         },
         serving:
           basis === "serving"
@@ -374,8 +404,27 @@ function CustomFoodForm({
           </View>
         ))}
       </View>
+      {more ? (
+        <View className="flex-row flex-wrap gap-4">
+          {labelMicros.map((key) => (
+            <View key={key} style={{ flexBasis: "44%", flexGrow: 1 }}>
+              <Field
+                label={`${nutrientInfo[key].label} (${unitLabel(nutrientInfo[key].unit)})`}
+                value={micros[key]}
+                numeric
+                onChange={(value) => setMicros((old) => ({ ...old, [key]: value }))}
+              />
+            </View>
+          ))}
+        </View>
+      ) : (
+        <SystemButton variant="ghost" className="self-start" onPress={() => setMore(true)}>
+          More nutrients from the label
+        </SystemButton>
+      )}
       <Text className="text-sm text-muted">
-        Use the label values. Enter 0 for a macro only when the food contains none.
+        Use the label values. Enter 0 for a macro only when the food contains none; leave a nutrient
+        blank when the label doesn&apos;t list it.
       </Text>
       <Field label="Barcode (optional)" value={code} onChange={setCode} />
       <ErrorText message={error} />
@@ -488,10 +537,18 @@ export function FoodEditor({
         mine.filter((item) => matchesQuery(query, item)),
         known
       );
-      const shown = new Set(own.map((item) => item.id));
-      searchFoods(query, known)
-        .then((foods) => {
-          if (active) setResults([...own, ...foods.filter((food) => !shown.has(food.id))]);
+      searchCatalog(query, known)
+        .then(({ foods, fixes }) => {
+          if (!active) return;
+          // A typo the catalog corrected ("chiken") finds the person's own foods too.
+          const matched = rankSearch(
+            query,
+            mine.filter((item) => matchesQuery(query, item, fixes)),
+            known,
+            { fixes }
+          );
+          const shown = new Set(matched.map((item) => item.id));
+          setResults([...matched, ...foods.filter((food) => !shown.has(food.id))]);
         })
         .catch(() => {
           if (active) {

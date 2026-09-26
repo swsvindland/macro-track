@@ -3,12 +3,15 @@ import { importDatabaseFromAssetAsync, openDatabaseAsync, type SQLiteDatabase } 
 import { Platform } from "react-native";
 import manifest from "../../assets/food/manifest.json";
 import {
+  allowedTypos,
   countWords,
+  misread,
   rankSearch,
   readQuery,
   searchForms,
   searchTerm,
   stem,
+  type Fixes,
   type Known,
 } from "./food-rank";
 import { normalizeBarcode, type Food } from "./nutrition";
@@ -171,7 +174,7 @@ async function openAll(complete = false) {
   if (databases.includes(undefined) && (complete || !databases.some(Boolean)))
     databases = await Promise.all(current.map(({ done }) => done));
   const opened = databases.flatMap((database, i) =>
-    database ? [{ kind: bundled[i].kind, database }] : []
+    database ? [{ kind: bundled[i].kind, version: bundled[i].source.version, database }] : []
   );
   return { opened, failed: opened.length < bundled.length };
 }
@@ -186,74 +189,242 @@ export async function openCatalogs() {
   return opened;
 }
 
+type Catalog = Awaited<ReturnType<typeof openCatalogs>>[number];
+type Row = { id: string; name: string; brand: string; barcode: string | null; data: string };
+type Ranked = Row & { popularity: number };
+const columns = "foods.id, foods.name, foods.brand, foods.barcode, foods.data";
+
+/** A catalog row as a food: its columns, plus the basis, nutrients and portions kept as JSON. */
+function catalogFood({ kind, version }: Catalog, row: Row): Food {
+  const { basis, nutrients, portions } = JSON.parse(row.data) as Pick<
+    Food,
+    "basis" | "nutrients" | "portions"
+  >;
+  return {
+    id: row.id,
+    name: row.name,
+    brand: row.brand,
+    barcode: row.barcode,
+    basis,
+    nutrients,
+    portions,
+    source: kind === "generic" ? "usda" : "off",
+    sourceVersion: version,
+  };
+}
+
+/** What a typed word probably meant, when the catalogs barely know it as typed. */
+const spellings = new Map<string, string[]>();
 /**
- * A typed search, best match first. Each word is a stemmed prefix; a search that finds nothing
- * falls back to the word that names the food. The person's own foods in `known` rank higher.
+ * A word in fewer foods than `rare` is also searched as a word a typo away in ten times as many.
+ * A longer one in fewer than `uncommon` is too, when that word is in 75 times as many: "protien"
+ * is on 35 labels. Short words have too many real neighbors: "coke" is not cake.
  */
-export async function searchFoods(query: string, known: Known = new Set()): Promise<Food[]> {
+const rare = 20;
+const uncommon = 200;
+
+async function count(catalogs: Catalog[], sql: string, ...params: (string | number)[]) {
+  const found = new Map<string, number>();
+  for (const { database } of catalogs)
+    for (const row of await database.getAllAsync<{ term: string; foods: number }>(sql, ...params))
+      found.set(row.term, (found.get(row.term) ?? 0) + row.foods);
+  return found;
+}
+
+/**
+ * What a typed word probably meant when the catalogs barely know it: the far more common catalog
+ * words it is a typo or two from ("chiken" is chicken, "chikc" the start of chicken), else the two
+ * words it joins ("peanutbutter"). Remembered for the launch, since each keystroke asks again.
+ */
+async function spell(word: string, catalogs: Catalog[]): Promise<string[]> {
+  const remembered = spellings.get(word);
+  if (remembered) return remembered;
+  const form = stem(word);
+  const limit = allowedTypos(word);
+  const range = "SELECT term, foods FROM terms WHERE term >= ? AND term < ?";
+  let known = uncommon;
+  if (limit && !/\d/.test(word))
+    known = [...(await count(catalogs, range, form, `${form}\uffff`)).values()].reduce(
+      (sum, n) => sum + n,
+      0
+    );
+  const fixes: string[] = [];
+  if (known < rare || (known < uncommon && word.length >= 6)) {
+    const least = (known < rare ? 10 : 75) * (known + 1);
+    // A half-typed word is the start of a catalog word; typos rarely touch both of the first two
+    // letters, so words starting with either are read. A whole word may have a typo anywhere.
+    const terms = new Map<string, number>();
+    for (const start of new Set([word[0], word[1]]))
+      for (const [term, foods] of await count(
+        catalogs,
+        `${range} AND length(term) >= ?`,
+        start,
+        `${start}\uffff`,
+        word.length - limit
+      ))
+        terms.set(term, foods);
+    for (const [term, foods] of await count(
+      catalogs,
+      "SELECT term, foods FROM terms WHERE length(term) BETWEEN ? AND ? AND foods >= ?",
+      word.length - limit,
+      word.length + limit,
+      Math.ceil(least / 2)
+    ))
+      terms.set(term, foods);
+    const meant = new Map<string, { edits: number; foods: number }>();
+    for (const [term, foods] of terms) {
+      const found = misread(word, term);
+      if (!found || found.edits === 0) continue;
+      const key = stem(found.meant);
+      const last = meant.get(key);
+      if (!last || found.edits < last.edits) meant.set(key, { edits: found.edits, foods });
+      else if (found.edits === last.edits) last.foods += foods;
+    }
+    const common = [...meant].filter(([, { foods }]) => foods >= least);
+    const fewest = Math.min(...common.map(([, { edits }]) => edits));
+    const likely = common
+      .filter(([, { edits }]) => edits === fewest)
+      .sort((a, b) => b[1].foods - a[1].foods);
+    fixes.push(
+      ...likely
+        // A second reading only when it is nearly as likely: "brest" is breast or best.
+        .filter(([, { foods }], i) => i < 2 && foods >= likely[0][1].foods / 10)
+        .map(([key]) => key)
+        // "tortil" already searches for tortilla.
+        .filter((key, _, all) => !all.some((other) => other !== key && key.startsWith(other)))
+    );
+    if (!fixes.length && known < rare && word.length >= 6) {
+      // Two words typed without the space between them.
+      const splits = Array.from({ length: word.length - 5 }, (_, i) => [
+        word.slice(0, i + 3),
+        word.slice(i + 3),
+      ]);
+      const parts = [...new Set(splits.flat())];
+      const found = await count(
+        catalogs,
+        `SELECT term, foods FROM terms WHERE term IN (${parts.map(() => "?").join(",")})`,
+        ...parts
+      );
+      const best = splits
+        .map(([left, right]) => ({
+          left,
+          right,
+          foods: Math.min(found.get(left) ?? 0, found.get(right) ?? 0),
+        }))
+        .sort((a, b) => b.foods - a.foods)[0];
+      if (best && best.foods >= least) fixes.push(`${best.left} ${stem(best.right)}`);
+    }
+  }
+  if (spellings.size > 500) spellings.clear();
+  spellings.set(word, fixes);
+  return fixes;
+}
+
+/**
+ * A typed search, best match first, with the corrections it searched for. Each word is a
+ * stemmed prefix, a word the catalogs barely know is also searched as what it probably meant, and
+ * a search that finds nothing falls back to the word that names the food. The person's own foods
+ * in `known` rank higher, and packaged foods people scan more rank higher among themselves.
+ */
+export async function searchCatalog(
+  query: string,
+  known: Known = new Set()
+): Promise<{ foods: Food[]; fixes: Fixes }> {
   const { words, counts } = readQuery(query);
   // A single letter matches most of the catalog, so the search waits for a second one.
   const last = words.at(-1) ?? "";
   const searched = last.length < 2 && !/^\d$/.test(last) ? words.slice(0, -1) : words;
   const foods = searched.filter((word) => !/^\d+$/.test(word));
-  if (!foods.length) return [];
+  if (!foods.length) return { foods: [], fixes: {} };
+  const catalogs = await openCatalogs();
+  const fixes: Record<string, string[]> = {};
+  for (const word of new Set(foods)) {
+    const meant = await spell(word, catalogs);
+    if (meant.length) fixes[word] = meant;
+  }
   const limits = { generic: 150, branded: 60 };
-  const expression = searched.map(searchTerm).join(" AND ");
+  const expression = searched.map((word) => searchTerm(word, fixes)).join(" AND ");
   // USDA names lead with the food ("Chicken, broilers or fryers, breast…"), so those come first.
-  const lead = searchForms(foods[0])[0];
+  const leadOf = (word: string) => fixes[word]?.[0] ?? searchForms(word)[0];
   // The words alone rank 12-grain bread too low to reach it for "12 grain bread".
   const phrases = counts.map(([count, next]) => `"${count} ${stem(next)}"*`);
   let pool = (
     await Promise.all([
-      phrases.length ? searchCatalogMatch([...phrases, expression].join(" AND ")) : [],
-      searchCatalogMatch(expression, limits, lead),
+      phrases.length ? match(catalogs, [...phrases, expression].join(" AND ")) : [],
+      match(catalogs, expression, limits, leadOf(foods[0])),
     ])
   ).flat();
   if (!pool.length && searched.length > 1) {
     // "Pizza slice" names pizza.
     const head = foods.findLast((word) => !countWords.test(word)) ?? foods.at(-1)!;
-    pool = await searchCatalogMatch(searchTerm(head), limits, searchForms(head)[0]);
+    pool = await match(catalogs, searchTerm(head, fixes), limits, leadOf(head));
   }
-  return rankSearch(query, pool, known);
+  const popularity = new Map(pool.map(({ food, popularity }) => [food.id, popularity]));
+  const ranked = rankSearch(
+    query,
+    pool.map(({ food }) => food),
+    known,
+    { fixes, popularity }
+  );
+  return { foods: ranked, fixes };
+}
+
+/** A typed search, best match first; see searchCatalog. */
+export async function searchFoods(query: string, known: Known = new Set()): Promise<Food[]> {
+  return (await searchCatalog(query, known)).foods;
 }
 
 /**
  * Runs a prepared FTS5 expression against every catalog, generic foods first. The generic
  * catalog is small, so a deeper limit there reaches plain foods that rank below variations.
- * Names starting with `lead` come before the full-text ranking.
+ * Names starting with `lead` come before the full-text ranking, and among packaged foods the
+ * ones scanned more often come sooner.
  */
-export async function searchCatalogMatch(
+async function match(
+  catalogs: Catalog[],
   expression: string,
   limits: { generic: number; branded: number } = { generic: 30, branded: 30 },
   lead = ""
-): Promise<Food[]> {
-  const catalogs = await openCatalogs();
+) {
   const results = await Promise.all(
-    catalogs.map(({ kind, database }) =>
-      database.getAllAsync<{ data: string }>(
-        `SELECT foods.data FROM food_search JOIN foods ON foods.rowid = food_search.rowid
-     WHERE food_search MATCH ? ORDER BY foods.name LIKE ? DESC, bm25(food_search, 3.0, 1.0)
-     LIMIT ?`,
-        expression,
-        lead ? `${lead}%` : "",
-        limits[kind]
-      )
+    catalogs.map(async (catalog) =>
+      (
+        await catalog.database.getAllAsync<Ranked>(
+          `SELECT ${columns}, foods.popularity FROM food_search
+           JOIN foods ON foods.rowid = food_search.rowid
+           WHERE food_search MATCH ?
+           ORDER BY foods.name LIKE ? DESC, bm25(food_search, 3.0, 1.0) - 0.5 * foods.popularity
+           LIMIT ?`,
+          expression,
+          lead ? `${lead}%` : "",
+          limits[catalog.kind]
+        )
+      ).map((row) => ({ food: catalogFood(catalog, row), popularity: row.popularity }))
     )
   );
   // Each catalog ranks within its own corpus; keep generic foods first for ingredient searches.
-  return results.flat().map((row) => JSON.parse(row.data) as Food);
+  return results.flat();
+}
+
+/** Runs a prepared FTS5 expression against every catalog; see match. */
+export async function searchCatalogMatch(
+  expression: string,
+  limits?: { generic: number; branded: number },
+  lead = ""
+): Promise<Food[]> {
+  return (await match(await openCatalogs(), expression, limits, lead)).map(({ food }) => food);
 }
 
 export async function lookupBarcode(input: string): Promise<Food | null> {
   const barcode = normalizeBarcode(input);
   if (!barcode) return null;
   const { opened, failed } = await openAll(true);
-  for (const { database } of opened) {
-    const row = await database.getFirstAsync<{ data: string }>(
-      "SELECT data FROM foods WHERE barcode = ? LIMIT 1",
+  for (const catalog of opened) {
+    const row = await catalog.database.getFirstAsync<Row>(
+      `SELECT ${columns} FROM foods WHERE barcode = ? LIMIT 1`,
       barcode
     );
-    if (row) return JSON.parse(row.data) as Food;
+    if (row) return catalogFood(catalog, row);
   }
   // Without every catalog, "not found" would be a guess.
   if (failed) throw unavailable();

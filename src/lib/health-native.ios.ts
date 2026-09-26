@@ -18,6 +18,34 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
     ["fat", "HKQuantityTypeIdentifierDietaryFatTotal", "g"],
     ["fiber", "HKQuantityTypeIdentifierDietaryFiber", "g"],
     ["sodium", "HKQuantityTypeIdentifierDietarySodium", "mg"],
+    // Health has no added sugar, trans fat, omega-3/-6 or choline types.
+    ["sugar", "HKQuantityTypeIdentifierDietarySugar", "g"],
+    ["saturatedFat", "HKQuantityTypeIdentifierDietaryFatSaturated", "g"],
+    ["monounsaturatedFat", "HKQuantityTypeIdentifierDietaryFatMonounsaturated", "g"],
+    ["polyunsaturatedFat", "HKQuantityTypeIdentifierDietaryFatPolyunsaturated", "g"],
+    ["cholesterol", "HKQuantityTypeIdentifierDietaryCholesterol", "mg"],
+    ["potassium", "HKQuantityTypeIdentifierDietaryPotassium", "mg"],
+    ["calcium", "HKQuantityTypeIdentifierDietaryCalcium", "mg"],
+    ["iron", "HKQuantityTypeIdentifierDietaryIron", "mg"],
+    ["magnesium", "HKQuantityTypeIdentifierDietaryMagnesium", "mg"],
+    ["phosphorus", "HKQuantityTypeIdentifierDietaryPhosphorus", "mg"],
+    ["zinc", "HKQuantityTypeIdentifierDietaryZinc", "mg"],
+    ["copper", "HKQuantityTypeIdentifierDietaryCopper", "mg"],
+    ["manganese", "HKQuantityTypeIdentifierDietaryManganese", "mg"],
+    ["selenium", "HKQuantityTypeIdentifierDietarySelenium", "mcg"],
+    ["vitaminA", "HKQuantityTypeIdentifierDietaryVitaminA", "mcg"],
+    ["vitaminC", "HKQuantityTypeIdentifierDietaryVitaminC", "mg"],
+    ["vitaminD", "HKQuantityTypeIdentifierDietaryVitaminD", "mcg"],
+    ["vitaminE", "HKQuantityTypeIdentifierDietaryVitaminE", "mg"],
+    ["vitaminK", "HKQuantityTypeIdentifierDietaryVitaminK", "mcg"],
+    ["thiamin", "HKQuantityTypeIdentifierDietaryThiamin", "mg"],
+    ["riboflavin", "HKQuantityTypeIdentifierDietaryRiboflavin", "mg"],
+    ["niacin", "HKQuantityTypeIdentifierDietaryNiacin", "mg"],
+    ["pantothenicAcid", "HKQuantityTypeIdentifierDietaryPantothenicAcid", "mg"],
+    ["vitaminB6", "HKQuantityTypeIdentifierDietaryVitaminB6", "mg"],
+    ["folate", "HKQuantityTypeIdentifierDietaryFolate", "mcg"],
+    ["vitaminB12", "HKQuantityTypeIdentifierDietaryVitaminB12", "mcg"],
+    ["caffeine", "HKQuantityTypeIdentifierDietaryCaffeine", "mg"],
   ] as const satisfies readonly (readonly [keyof Nutrients, string, string])[];
   const identifier = (kind: HealthKind) => identifiers[kind];
   const readTypes = [
@@ -117,7 +145,7 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
         if (!foodTypes.has(id)) continue;
         const syncId = `${food.clientId}:${key}`;
         const value = food.nutrients[key];
-        if (value === null || !(value > 0)) {
+        if (value == null || !(value > 0)) {
           if (food.replacing) await removeNutrient(id, syncId);
           continue;
         }

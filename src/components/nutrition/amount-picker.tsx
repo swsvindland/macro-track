@@ -21,6 +21,7 @@ import {
   type Targets,
 } from "@/lib/nutrition";
 import { useStore } from "@/lib/store";
+import { FoodNutrients } from "./nutrient-list";
 
 /** The amount field: text in one of the food's units. `fresh` text is replaced by the next key. */
 export type AmountDraft = { unit: string; text: string; fresh: boolean };
@@ -318,21 +319,7 @@ export function PortionPreview({
           </View>
         </View>
       )}
-      <View>
-        {(
-          [
-            ["Fiber", nutrients?.fiber, "g"],
-            ["Sodium", nutrients?.sodium, "mg"],
-          ] as const
-        ).map(([label, amount, unit]) => (
-          <View key={label} className="flex-row justify-between border-b border-separator py-1.5">
-            <Text className="text-sm text-muted">{label}</Text>
-            <Text className="text-sm tabular-nums">
-              {amount == null ? "—" : `${number(amount, unit === "mg" ? 0 : 1)} ${unit}`}
-            </Text>
-          </View>
-        ))}
-      </View>
+      <FoodNutrients nutrients={nutrients} />
     </View>
   );
 }

@@ -148,8 +148,17 @@ export function LibraryScreen() {
               </Text>
             )}
             <Text className="text-sm text-muted">
-              USDA FoodData Central · SR Legacy 2018 · CC0. Packaged foods from Open Food Facts ·
-              ODbL 1.0. Check package labels; database records may be incomplete or outdated.
+              Generic foods from USDA FoodData Central (SR Legacy 2018), in the public domain under
+              CC0.
+            </Text>
+            <Text className="text-sm text-muted">
+              Contains information from Open Food Facts, which is made available here under the Open
+              Database License (ODbL). Individual contents are under the Database Contents License.
+              The packaged-food database in this app, and the recipe that builds it, are free to
+              download under the same license.
+            </Text>
+            <Text className="text-sm text-muted">
+              Check package labels; database records may be incomplete or outdated.
             </Text>
             <SystemButton
               variant="ghost"
@@ -173,7 +182,23 @@ export function LibraryScreen() {
                 void openSource("https://opendatacommons.org/licenses/odbl/1-0/");
               }}
             >
-              Database license
+              Database license (ODbL)
+            </SystemButton>
+            <SystemButton
+              variant="ghost"
+              onPress={() => {
+                void openSource("https://opendatacommons.org/licenses/dbcl/1-0/");
+              }}
+            >
+              Contents license (DbCL)
+            </SystemButton>
+            <SystemButton
+              variant="ghost"
+              onPress={() => {
+                void openSource("https://github.com/swsvindland/macro-track/tree/main/assets/food");
+              }}
+            >
+              Download the food database
             </SystemButton>
             {!!sourceError && (
               <Text accessibilityRole="alert" className="text-sm text-muted">

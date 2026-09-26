@@ -134,8 +134,8 @@ export function SettingsScreen() {
             <View className="gap-2">
               <Text className="text-sm">
                 Food you log can now be written to{" "}
-                {Platform.OS === "ios" ? "Apple Health" : "Health Connect"} as nutrition. Allow it
-                to start.
+                {Platform.OS === "ios" ? "Apple Health" : "Health Connect"} as nutrition, with its
+                vitamins and minerals. Allow it to start.
               </Text>
               <SystemButton
                 variant="secondary"

@@ -307,11 +307,12 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/food-time": foodTime,
     "@/lib/food-catalog": {
       lookupBarcode: async () => null,
-      searchCatalog: async () => [],
-      searchFoods: async () => [],
+      searchCatalog: async () => ({ foods: [], fixes: {} }),
     },
     "@/lib/food-icons": load("src/lib/food-icons.ts"),
     "./food-icon": { FoodIcon: "FoodIcon" },
+    "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
+    "./ai-mark": { AiMark: "AiMark" },
     "@/lib/local-ai": { textRecognitionAvailable: () => false, recognizeText: async () => [] },
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
@@ -2055,8 +2056,7 @@ test("compiled scan, search, Library and Log food open a catalog food whose firs
   const catalog = {
     "@/lib/food-catalog": {
       lookupBarcode: async () => loops,
-      searchCatalog: async () => [loops],
-      searchFoods: async () => [loops],
+      searchCatalog: async () => ({ foods: [loops], fixes: {} }),
     },
   };
   let editor = scanner(diary, { initialMode: "barcode", close: () => {} }, catalog);

@@ -503,7 +503,10 @@ test("backups and the targets CSV carry the shift, and older backups restore wit
   assert.deepEqual(store.currentGoal().program.shift, { days: [1, 3, 4], size: 49, unit: "kcal" });
   assert.equal(diary.targetsForDay("2024-01-29").calories, 2249);
 
-  const ownership = load("src/lib/data-ownership.ts", { "@/db": { db, ...schema } });
+  const ownership = load("src/lib/data-ownership.ts", {
+    "@/db": { db, ...schema },
+    "./nutrition": load("src/lib/nutrition.ts"),
+  });
   const rows = ownership
     .exportTargetsCsv()
     .replace(/^﻿/, "")

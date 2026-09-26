@@ -56,6 +56,15 @@ test("the 2016 label layout, with calories and serving size split from their val
     protein: 3,
     fiber: 4,
     sodium: 160,
+    saturatedFat: 1,
+    transFat: 0,
+    cholesterol: 0,
+    sugar: 12,
+    addedSugar: 10,
+    vitaminD: null,
+    calcium: null,
+    iron: null,
+    potassium: null,
     servingLabel: "2/3 cup",
     servingAmount: 55,
     servingUnit: "g",
@@ -63,6 +72,39 @@ test("the 2016 label layout, with calories and serving size split from their val
     warnings: [],
   });
   assert.ok(label.labelFound(reading));
+});
+
+test("the vitamins and minerals a US label lists, but not % Daily Value alone", () => {
+  const read = (rows) => label.readNutritionLabel(boxes(rows));
+  const reading = read([
+    ["Calories 230", 0.03, 0.2],
+    ["Total Fat 8g", 0.03, 0.3],
+    ["Total Carbohydrate 37g", 0.03, 0.4],
+    ["Total Sugars 1g", 0.09, 0.45],
+    ["Sugar Alcohol 9g", 0.09, 0.47],
+    ["Protein 3g", 0.03, 0.5],
+    ["Vitamin D 2mcg 10%", 0.03, 0.6],
+    ["Calcium 260mg 20%", 0.03, 0.64],
+    ["Iron 8mg 45%", 0.03, 0.68],
+    ["Potassium 235mg 6%", 0.03, 0.72],
+  ]);
+  assert.deepEqual(
+    [reading.sugar, reading.vitaminD, reading.calcium, reading.iron, reading.potassium],
+    [1, 2, 260, 8, 235]
+  );
+  // Older labels give only a share of the Daily Value, which isn't an amount.
+  const old = read([
+    ["Calories 110", 0.03, 0.2],
+    ["Total Fat 1g", 0.03, 0.3],
+    ["Protein 2g", 0.03, 0.5],
+    ["Vitamin D 19%", 0.03, 0.6],
+    ["Iron 10%", 0.03, 0.64],
+    ["Sat. Fat 3g", 0.03, 0.7],
+  ]);
+  assert.equal(old.vitaminD, null);
+  assert.equal(old.iron, null);
+  assert.equal(old.saturatedFat, 3);
+  assert.match(old.warnings.join(" "), /more than its total/);
 });
 
 test("a two-column can label merges neighbors and states traps that are not amounts", () => {

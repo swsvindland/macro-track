@@ -36,6 +36,7 @@ import {
 } from "@/lib/nutrition";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import { AiMark } from "./ai-mark";
 import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
 import { discardPhoto, PhotoCapture } from "./photo-capture";
@@ -430,7 +431,11 @@ export function PhotoLogger({
     />
   );
   const rerun = changed && (
-    <SystemButton variant="secondary" icon="sparkles-outline" onPress={() => void analyze()}>
+    <SystemButton
+      variant="secondary"
+      icon={<AiMark size={18} color="accent-soft-foreground" />}
+      onPress={() => void analyze()}
+    >
       Update with description
     </SystemButton>
   );
@@ -581,7 +586,7 @@ export function PhotoLogger({
           <View className="gap-2">
             <ErrorText message={error} />
             <SystemButton
-              icon="sparkles-outline"
+              icon={<AiMark size={18} color="accent-foreground" />}
               isDisabled={!photo && !description.trim()}
               onPress={() => void analyze()}
             >

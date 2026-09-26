@@ -9,6 +9,13 @@ import type { Food } from "./nutrition";
 export type Named = { name: string; brand: string };
 /** The person's own foods by id, with how often they eat them when that is known. */
 export type Known = ReadonlySet<string> | ReadonlyMap<string, number>;
+/**
+ * Catalog words a typed word probably meant, when the catalog barely knows it as typed:
+ * "chiken" → ["chicken"], "peanutbutter" → ["peanut butter"]. Forms are stemmed like the word's.
+ */
+export type Fixes = Readonly<Record<string, readonly string[]>>;
+/** What a typed search knows beyond its words: corrections and how often foods are scanned. */
+export type SearchHints = { fixes?: Fixes; popularity?: ReadonlyMap<string, number> };
 
 const stop = new Set("a an and the of with in on or s to for style".split(" "));
 /** Catalog wording differs from everyday names: USDA files burger buns under "Rolls, hamburger". */
@@ -137,6 +144,53 @@ export function stem(word: string): string {
   return word;
 }
 
+/** Typos a word may have and still be recognized: none under four letters, one to six, then two. */
+export const allowedTypos = (word: string) => (word.length < 4 ? 0 : word.length < 7 ? 1 : 2);
+
+/**
+ * Edits between two words, counting a swapped pair of letters as one ("protien"), or `limit + 1`
+ * once they are further apart than `limit`.
+ */
+export function typos(a: string, b: string, limit: number): number {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let before: number[] = [];
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let value = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+        value = Math.min(value, before[j - 2] + 1);
+      current.push(value);
+      best = Math.min(best, value);
+    }
+    if (best > limit) return limit + 1;
+    before = previous;
+    previous = current;
+  }
+  return Math.min(previous[b.length], limit + 1);
+}
+
+/**
+ * How a typed word, which may still be half typed, reads a catalog word: the start of it that is
+ * fewest edits away ("chikc" is one from "chick" in chicken), or null past the word's allowance.
+ */
+export function misread(typed: string, word: string): { edits: number; meant: string } | null {
+  const limit = allowedTypos(typed);
+  if (!limit || word.length < typed.length - limit) return null;
+  let found: { edits: number; meant: string } | null = null;
+  const lengths = new Set([word.length, typed.length - 1, typed.length, typed.length + 1]);
+  // The whole word first, so "brocoli" means broccoli rather than its start "brocco".
+  for (const length of [...lengths].filter((n) => n >= 3 && n <= word.length)) {
+    const meant = word.slice(0, length);
+    const edits = typos(typed, meant, limit);
+    if (edits <= limit && (!found || edits < found.edits)) found = { edits, meant };
+  }
+  return found;
+}
+
 export const forms = (word: string) => alternatives[word] ?? [stem(word)];
 const either = (options: string[]) =>
   options.length === 1 ? options[0] : `(${options.join(" OR ")})`;
@@ -150,14 +204,20 @@ const typedAlternatives = new Set("bun buns ketchup soda oatmeal".split(" "));
 export const searchForms = (word: string) => [
   ...new Set([stem(word), ...(typedAlternatives.has(word) ? forms(word) : [])]),
 ];
-/** A typed word in the catalog's full-text syntax; a number matches only itself. */
-export function searchTerm(word: string) {
-  return number(word) ? `"${word}"` : either(searchForms(word).map((form) => `"${form}"*`));
+/**
+ * A typed word in the catalog's full-text syntax; a number matches only itself. Its fixes are
+ * searched too, as prefixes or, for a word typed without its space, as a phrase.
+ */
+export function searchTerm(word: string, fixes: Fixes = {}) {
+  if (number(word)) return `"${word}"`;
+  return either([...new Set([...searchForms(word), ...(fixes[word] ?? [])])].map((f) => `"${f}"*`));
 }
 
 /** The catalog's full-text expression for a search: each word as a stemmed prefix. */
 export function searchExpression(query: string): string {
-  return queryWords(query).map(searchTerm).join(" AND ");
+  return queryWords(query)
+    .map((word) => searchTerm(word))
+    .join(" AND ");
 }
 
 /** Restaurant and packaged foods, which suit a seen food only when its brand is known. */
@@ -252,7 +312,13 @@ export const same = (word: string, form: string) =>
  * How well a food's name covers the words that were said. In a search the words may be half
  * typed, so a longer word also counts ("chic" finds chicken), below the word itself.
  */
-export function coverage(seen: Named, food: Named, target = nameWords(seen), prefix = false) {
+export function coverage(
+  seen: Named,
+  food: Named,
+  target = nameWords(seen),
+  prefix = false,
+  fixes: Fixes = {}
+) {
   // "Dry heat" is how USDA says cooked.
   const name = food.name.replace(/\b(?:dry|moist) heat\b/gi, "cooked");
   const found = words(`${name} ${food.brand}`).map(stem);
@@ -271,13 +337,29 @@ export function coverage(seen: Named, food: Named, target = nameWords(seen), pre
   const exact = (w: string, form: string) => (prefix || number(form) ? w === form : same(w, form));
   const options = prefix ? searchForms : forms;
   const whole = (word: string) => options(word).some((form) => found.some((w) => exact(w, form)));
-  const has = (word: string) =>
+  const literal = (word: string) =>
     whole(word) || (prefix && options(word).some((form) => found.some((w) => fits(w, form))));
+  // A fix is a word's start ("chick") or, for a word typed without its space, a phrase.
+  const fixed = (word: string) =>
+    (fixes[word] ?? []).some((fix) => {
+      const parts = fix.split(" ");
+      return parts.every((part, i) =>
+        found.some((w) => (i === parts.length - 1 ? w.startsWith(part) : same(w, part)))
+      );
+    });
+  const has = (word: string) => literal(word) || fixed(word);
   // The last word names the food ("coffee" in "black coffee"); earlier words describe it.
   const weight = (i: number) => (i === target.length - 1 ? 2 : 1);
   const total = target.reduce((sum, _, i) => sum + weight(i), 0);
   const hits = target.reduce((sum, word, i) => sum + (has(word) ? weight(i) : 0), 0);
-  const mentioned = [...new Set(target.flatMap(options))];
+  const mentioned = [
+    ...new Set(
+      target.flatMap((word) => [
+        ...options(word),
+        ...(fixes[word] ?? []).flatMap((fix) => fix.split(" ")),
+      ])
+    ),
+  ];
   const level = target.some(number);
   const extra = said.filter(
     (w) => !number(w) && !(level && fatWords.has(w)) && !mentioned.some((form) => fits(w, form))
@@ -287,11 +369,14 @@ export function coverage(seen: Named, food: Named, target = nameWords(seen), pre
   const lead = words(group.test(first.trim()) && second ? second : first)
     .filter((w) => !number(w))
     .map(stem);
-  const asked = words(seen.name);
+  // A corrected word asks for the same everyday variety as the word it corrects.
+  const asked = [...words(seen.name), ...Object.values(fixes).flat()];
   const usualFor = asked.map((word) => usual[stem(word)]).find(Boolean);
   return {
     name: total ? hits / total : 0,
-    partial: target.filter((word) => !whole(word) && has(word)).length,
+    partial: target.filter((word) => !whole(word) && literal(word)).length,
+    // Words found only as corrected: "chiken" in "Chicken breast".
+    fixed: target.filter((word) => !literal(word) && fixed(word)).length,
     usual:
       !!usualFor &&
       !asked.some((word) => usualFor.others.includes(word)) &&
@@ -332,11 +417,19 @@ function boost(known: Known, id: string) {
  * has no brand of its own; a food whose brand it names ("oreo", "mcdonalds big mac") is not
  * marked down as branded.
  */
-export function scoreFoods(seen: Named, foods: Food[], known: Known = new Set(), search = false) {
+export function scoreFoods(
+  seen: Named,
+  foods: Food[],
+  known: Known = new Set(),
+  search = false,
+  { fixes = {}, popularity }: SearchHints = {}
+) {
   const read = search ? readQuery(seen.name) : null;
   const target = read ? read.words : nameWords(seen);
   const cooked =
-    search && !target.includes("raw") && target.some((word) => eatenCooked.has(stem(word)));
+    search &&
+    !target.includes("raw") &&
+    [...target, ...Object.values(fixes).flat()].some((word) => eatenCooked.has(stem(word)));
   // Catalogs repeat products; the person's own foods are each kept.
   const unique = new Map<string, Food>();
   for (const food of foods) {
@@ -346,7 +439,7 @@ export function scoreFoods(seen: Named, foods: Food[], known: Known = new Set(),
   }
   return [...unique.values()]
     .map((food, index) => {
-      const match = coverage(seen, food, target, search);
+      const match = coverage(seen, food, target, search, fixes);
       let score =
         3 * match.name +
         (match.leads ? (search ? 0.75 : 0.5) : 0) +
@@ -354,6 +447,7 @@ export function scoreFoods(seen: Named, foods: Food[], known: Known = new Set(),
         (match.usual ? 0.6 : 0) +
         (match.typical ? 0.3 : 0) -
         0.5 * match.partial -
+        0.4 * match.fixed -
         0.8 * match.variations -
         0.25 * match.others -
         0.05 * match.notes;
@@ -366,6 +460,8 @@ export function scoreFoods(seen: Named, foods: Food[], known: Known = new Set(),
         score += 2 * read.counts.filter((count) => counted(food, count)).length;
       }
       score += boost(known, food.id);
+      // Among packaged foods, the ones people scan most: Coca-Cola before a store's cola.
+      score += 0.12 * (popularity?.get(food.id) ?? 0);
       return { food, score, index, name: match.name };
     })
     .filter((row) => row.name > 0)
@@ -377,18 +473,23 @@ export function rankFoods(seen: Named, foods: Food[], known: Known = new Set()) 
 }
 
 /** Orders foods for a typed search; foods that don't match it are left out. */
-export function rankSearch(query: string, foods: Food[], known: Known = new Set()) {
-  return scoreFoods({ name: query, brand: "" }, foods, known, true).map((row) => row.food);
+export function rankSearch(
+  query: string,
+  foods: Food[],
+  known: Known = new Set(),
+  hints: SearchHints = {}
+) {
+  return scoreFoods({ name: query, brand: "" }, foods, known, true, hints).map((row) => row.food);
 }
 
 /** Whether a food or saved meal answers a typed search, for the person's own lists. */
-export function matchesQuery(query: string, food: Named) {
+export function matchesQuery(query: string, food: Named, fixes: Fixes = {}) {
   const target = queryWords(query);
   // A number in the search is the variety asked for: "2% milk" is not whole milk.
   const found = tokens(`${food.name} ${food.brand}`);
   return (
     target.length > 0 &&
     target.filter(number).every((word) => found.includes(word)) &&
-    coverage({ name: query, brand: "" }, food, target, true).name >= 0.5
+    coverage({ name: query, brand: "" }, food, target, true, fixes).name >= 0.5
   );
 }

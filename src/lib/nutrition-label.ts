@@ -15,6 +15,16 @@ export type LabelValues = {
   fiber: number | null;
   /** Milligrams. */
   sodium: number | null;
+  // The rest of what a US label must list, in the app's units (vitamin D in micrograms).
+  saturatedFat: number | null;
+  transFat: number | null;
+  cholesterol: number | null;
+  sugar: number | null;
+  addedSugar: number | null;
+  vitaminD: number | null;
+  calcium: number | null;
+  iron: number | null;
+  potassium: number | null;
 };
 
 export type LabelReading = LabelValues & {
@@ -30,7 +40,7 @@ export type LabelReading = LabelValues & {
 };
 
 type Nutrient = keyof LabelValues;
-type Field = { key: Nutrient; label: RegExp; unit: "kcal" | "g" | "mg" };
+type Field = { key: Nutrient; label: RegExp; unit: "kcal" | "g" | "mg" | "mcg" };
 
 const fields: Field[] = [
   { key: "calories", label: /\bcalories\b|\bcal[oó]r[ií]as\b/i, unit: "kcal" },
@@ -43,6 +53,16 @@ const fields: Field[] = [
   { key: "protein", label: /\bprotein\b|\bprote[ií]nas?\b/i, unit: "g" },
   { key: "fiber", label: /\b(?:dietary\s*)?fib(?:er|re)\b/i, unit: "g" },
   { key: "sodium", label: /\bsodium\b/i, unit: "mg" },
+  { key: "saturatedFat", label: /\bsat(?:urated|\.)?\s*fat\b/i, unit: "g" },
+  { key: "transFat", label: /\btrans\.?\s*fat\b/i, unit: "g" },
+  { key: "cholesterol", label: /\bcholest(?:erol|\.)?/i, unit: "mg" },
+  // "Sugar Alcohol" is a different line; "Includes 10g Added Sugars" is read on its own.
+  { key: "sugar", label: /\btotal\s*sugars?\b|^sugars?\b(?!\s*alc)/i, unit: "g" },
+  { key: "addedSugar", label: /^added\s*sugars?\b/i, unit: "g" },
+  { key: "vitaminD", label: /\bvit(?:amin|\.)?\s*d\b/i, unit: "mcg" },
+  { key: "calcium", label: /\bcalcium\b/i, unit: "mg" },
+  { key: "iron", label: /\biron\b/i, unit: "mg" },
+  { key: "potassium", label: /\bpotas(?:sium|\.)?/i, unit: "mg" },
 ];
 // Lines that mention a nutrient without giving its amount for this food.
 const noise =
@@ -54,6 +74,15 @@ const plausible: Record<Nutrient, number> = {
   protein: 200,
   fiber: 100,
   sodium: 10000,
+  saturatedFat: 100,
+  transFat: 50,
+  cholesterol: 2000,
+  sugar: 300,
+  addedSugar: 300,
+  vitaminD: 1000,
+  calcium: 5000,
+  iron: 200,
+  potassium: 10000,
 };
 
 /** OCR reads a label's 0 as O and 1 as l or I, and a trailing "g" as 9. */
@@ -72,18 +101,26 @@ function digits(text: string) {
 type Amount = { value: number; unit: string; raw: string };
 /** The first amount at the start of `text`, e.g. "8g", "<1 g", "160mg", "230". */
 function leadingAmount(text: string): Amount | null {
-  const match = /^\s*(<|less\s*than\s*)?(\d+(?:[.,]\d+)?)\s*(mg|g|kcal|mcg)?\b/i.exec(digits(text));
+  const match = /^\s*(<|less\s*than\s*)?(\d+(?:[.,]\d+)?)\s*(mg|g|kcal|mcg|µg)?\b/i.exec(
+    digits(text)
+  );
   if (!match) return null;
   let value = Number(match[2].replace(",", "."));
   // A "less than" amount is logged as half its bound: "<1g" is 0.5 g.
   if (match[1]) value /= 2;
-  return { value, unit: (match[3] ?? "").toLowerCase(), raw: match[2] };
+  const unit = (match[3] ?? "").toLowerCase();
+  return { value, unit: unit === "µg" ? "mcg" : unit, raw: match[2] };
 }
 
 function convert(field: Field, amount: Amount, impliedUnit: boolean): number | null {
   let { value } = amount;
   const unit = amount.unit;
   if (field.unit === "kcal") return unit === "g" || unit === "mg" ? null : value;
+  if (field.unit === "mcg") {
+    // A bare number is usually the % Daily Value column.
+    if (!unit) return impliedUnit ? value : null;
+    return unit === "mcg" ? value : unit === "mg" ? value * 1000 : null;
+  }
   if (!unit) {
     if (impliedUnit) return value;
     // "Total Fat 09" is "0g" read as "09".
@@ -114,9 +151,10 @@ function readField(field: Field, boxes: TextBox[]): number | null {
     const match = field.label.exec(text);
     if (!match) continue;
     // "PROTEIN, g" gives the unit once for a column of bare numbers.
-    const implied = new RegExp(`^[\\s,.:]*\\(?${field.unit === "mg" ? "mg" : "g"}\\b`, "i").test(
-      text.slice(match.index + match[0].length)
-    );
+    const implied = new RegExp(
+      `^[\\s,.:]*\\(?${field.unit === "kcal" ? "g" : field.unit}\\b`,
+      "i"
+    ).test(text.slice(match.index + match[0].length));
     // The value follows the label within a short gap, which allows bilingual labels such as
     // "Total Fat / Grasa Total 0g" but not "SODIUM CONTENT … FROM 790mg".
     const after = /^[^\d<]{0,20}?(?=<|\d|[Oo]\s*m?g\b|less)/i.exec(
@@ -198,14 +236,39 @@ function readServing(boxes: TextBox[], values: LabelValues) {
   return { servingLabel, servingAmount, servingUnit };
 }
 
+/** "Includes 10g Added Sugars" gives the amount before the nutrient's name. */
+function readAddedSugar(boxes: TextBox[]) {
+  for (const box of boxes) {
+    const match =
+      /incl(?:udes|\.)?\s*(<|less\s*than\s*)?(\d+(?:[.,]\d+)?)\s*g\s*(?:of\s*)?added/i.exec(
+        digits(box.text)
+      );
+    if (match) {
+      const value = Number(match[2].replace(",", ".")) / (match[1] ? 2 : 1);
+      if (value <= plausible.addedSugar) return value;
+    }
+  }
+  return null;
+}
+
 /** Values found on a label photo; missing nutrients stay null rather than zero. */
 export function readNutritionLabel(boxes: TextBox[]): LabelReading {
   const ordered = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x);
   const values = Object.fromEntries(
     fields.map((field) => [field.key, readField(field, ordered)])
   ) as LabelValues;
+  values.addedSugar = readAddedSugar(ordered) ?? values.addedSugar;
   const warnings: string[] = [];
   const { fat, carbs, protein } = values;
+  const over = (part: number | null, whole: number | null) =>
+    part !== null && whole !== null && part > whole + 0.5;
+  if (
+    over(values.saturatedFat, fat) ||
+    over(values.transFat, fat) ||
+    over(values.sugar, carbs) ||
+    over(values.addedSugar, values.sugar ?? carbs)
+  )
+    warnings.push("A part is more than its total, like sugars over carbs. Check the numbers.");
   const energy =
     fat !== null && carbs !== null && protein !== null ? 9 * fat + 4 * carbs + 4 * protein : null;
   let estimatedCalories = false;

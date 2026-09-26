@@ -66,6 +66,7 @@ import { FoodIcon } from "./food-icon";
 import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
+import { DayNutrients } from "./nutrient-list";
 import { PhotoLogger, photoLoggingOffered } from "./photo-logger";
 import { QuickLogBar } from "./quick-log-bar";
 import { CopyDay, MoveEntries } from "./copy-day";
@@ -124,6 +125,7 @@ export function TodayScreen() {
     start?: "typing" | "barcode";
   } | null>(null);
   const [copying, setCopying] = useState(false);
+  const [nutrientsOpen, setNutrientsOpen] = useState(false);
   const [photoLog, setPhotoLog] = useState(false);
   // On-device AI availability decides whether Home offers photo logging at all.
   const [ai, setAi] = useState<ModelStatus | null>(null);
@@ -993,10 +995,17 @@ export function TodayScreen() {
             </Text>
           )}
           {!!entries.length && (
-            <Text className="px-1 text-xs text-muted">
-              Fiber {totals.fiber === null ? "—" : `${number(totals.fiber, 0)} g`} · Sodium{" "}
-              {totals.sodium === null ? "—" : `${number(totals.sodium, 0)} mg`}
-            </Text>
+            <SystemButton
+              variant="ghost"
+              className="self-start px-1"
+              accessibilityHint="Shows vitamins, minerals and other nutrients for the day"
+              onPress={() => setNutrientsOpen(true)}
+            >
+              <Text className="text-xs text-muted">
+                Fiber {totals.fiber === null ? "—" : `${number(totals.fiber, 0)} g`} · Sodium{" "}
+                {totals.sodium === null ? "—" : `${number(totals.sodium, 0)} mg`} · All nutrients ›
+              </Text>
+            </SystemButton>
           )}
         </View>
       </Screen>
@@ -1032,6 +1041,14 @@ export function TodayScreen() {
         />
       )}
       <HomeWeightSheet ref={weightSheet} />
+      {nutrientsOpen && (
+        <DayNutrients
+          title={day === today ? "Today's nutrients" : `Nutrients · ${store.date(day)}`}
+          items={entries.map((entry) => entry.nutrients)}
+          open
+          close={() => setNutrientsOpen(false)}
+        />
+      )}
     </HomeSheets>
   );
 }

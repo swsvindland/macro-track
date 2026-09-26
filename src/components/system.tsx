@@ -64,7 +64,12 @@ export function SystemButton({
   fit = false,
   children,
   ...props
-}: ComponentProps<typeof Button> & { icon?: IconName; labelClassName?: string; fit?: boolean }) {
+}: ComponentProps<typeof Button> & {
+  /** An Ionicons name, or an element for a mark that isn't in the family. */
+  icon?: IconName | ReactElement;
+  labelClassName?: string;
+  fit?: boolean;
+}) {
   const iconColor: ThemeColor =
     variant === "primary"
       ? "accent-foreground"
@@ -85,7 +90,7 @@ export function SystemButton({
     >
       {(icon || labelClassName || fit) && typeof children === "string" ? (
         <>
-          {icon && <SystemIcon name={icon} size={18} color={iconColor} />}
+          {typeof icon === "string" ? <SystemIcon name={icon} size={18} color={iconColor} /> : icon}
           <Button.Label className={labelClassName} {...(fit ? fitted : {})}>
             {children}
           </Button.Label>

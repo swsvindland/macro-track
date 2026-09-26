@@ -17,6 +17,7 @@ import {
   healthLinks,
   preferences,
 } from "@/db";
+import { microKeys, nutrientInfo } from "./nutrition";
 
 function cell(value: unknown) {
   let text = value == null ? "" : String(value);
@@ -30,6 +31,12 @@ export function csv(rows: unknown[][]) {
 type Row = [day: string, ...cells: unknown[]];
 // A fasting day has no food; zero nutrients keep it in daily totals.
 const fasted = ["", "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, "fasting", "", ""];
+// Micronutrients follow the original columns, blank where a food's record doesn't list them:
+// "vitaminB12" is vitamin_b12_mcg.
+const microColumns = microKeys.map(
+  (key) =>
+    `${key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_${nutrientInfo[key].unit}`
+);
 export function exportDiaryCsv() {
   return db.transaction((tx) => {
     const entries = tx
@@ -59,10 +66,11 @@ export function exportDiaryCsv() {
         statuses.get(row.day) ?? "in-progress",
         row.food.source,
         row.food.sourceVersion,
+        ...microKeys.map((key) => row.nutrients[key]),
       ]),
       ...days
         .filter((row) => row.status === "fasting" && !logged.has(row.day))
-        .map((row): Row => [row.day, ...fasted]),
+        .map((row): Row => [row.day, ...fasted, ...microKeys.map(() => 0)]),
     ];
     // The sort is stable, so each day keeps its entries in eating order.
     rows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
@@ -85,6 +93,7 @@ export function exportDiaryCsv() {
         "day_status",
         "source",
         "source_version",
+        ...microColumns,
       ],
       ...rows,
     ]);

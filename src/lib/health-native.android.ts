@@ -122,9 +122,49 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
       );
     },
     async writeFood(food) {
-      const { calories, protein, carbs, fat, fiber, sodium } = food.nutrients;
-      const grams = (value: number | null) =>
-        value !== null && value > 0 ? { value, unit: "grams" as const } : undefined;
+      const { calories, protein, carbs, fat, fiber, sodium, ...micros } = food.nutrients;
+      const grams = (value: number | null | undefined) =>
+        value != null && value > 0 ? { value, unit: "grams" as const } : undefined;
+      const mass = (value: number | undefined, unit: "milligrams" | "micrograms") =>
+        value != null && value > 0 ? { value, unit } : undefined;
+      // Health Connect has no added sugar, omega-3/-6 or choline fields.
+      const extra = Object.fromEntries(
+        (
+          [
+            ["sugar", "sugar", "grams"],
+            ["saturatedFat", "saturatedFat", "grams"],
+            ["transFat", "transFat", "grams"],
+            ["monounsaturatedFat", "monounsaturatedFat", "grams"],
+            ["polyunsaturatedFat", "polyunsaturatedFat", "grams"],
+            ["cholesterol", "cholesterol", "milligrams"],
+            ["potassium", "potassium", "milligrams"],
+            ["calcium", "calcium", "milligrams"],
+            ["iron", "iron", "milligrams"],
+            ["magnesium", "magnesium", "milligrams"],
+            ["phosphorus", "phosphorus", "milligrams"],
+            ["zinc", "zinc", "milligrams"],
+            ["copper", "copper", "milligrams"],
+            ["manganese", "manganese", "milligrams"],
+            ["selenium", "selenium", "micrograms"],
+            ["vitaminA", "vitaminA", "micrograms"],
+            ["vitaminC", "vitaminC", "milligrams"],
+            ["vitaminD", "vitaminD", "micrograms"],
+            ["vitaminE", "vitaminE", "milligrams"],
+            ["vitaminK", "vitaminK", "micrograms"],
+            ["thiamin", "thiamin", "milligrams"],
+            ["riboflavin", "riboflavin", "milligrams"],
+            ["niacin", "niacin", "milligrams"],
+            ["pantothenicAcid", "pantothenicAcid", "milligrams"],
+            ["vitaminB6", "vitaminB6", "milligrams"],
+            ["folate", "folate", "micrograms"],
+            ["vitaminB12", "vitaminB12", "micrograms"],
+            ["caffeine", "caffeine", "milligrams"],
+          ] as const
+        ).flatMap(([key, field, unit]) => {
+          const value = unit === "grams" ? grams(micros[key]) : mass(micros[key], unit);
+          return value ? [[field, value]] : [];
+        })
+      );
       const start = new Date(food.eatenAt);
       // Nutrition is an interval record; its end must come after its start.
       const end = new Date(start.getTime() + 60000);
@@ -147,6 +187,7 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
           totalFat: grams(fat),
           dietaryFiber: grams(fiber),
           sodium: sodium !== null && sodium > 0 ? { value: sodium, unit: "milligrams" } : undefined,
+          ...extra,
           metadata: {
             clientRecordId: food.clientId,
             clientRecordVersion: food.version,
