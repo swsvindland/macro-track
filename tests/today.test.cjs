@@ -1144,6 +1144,7 @@ function barHarness({ os = "ios", keyboardUp = false, status = null } = {}) {
         photoLoggingOffered: (value) =>
           !!value && (value.state !== "unavailable" || value.reason === "disabled"),
       },
+      "./ai-mark": { AiMark: "AiMark" },
     }
   );
   const bar = harness.load("src/components/nutrition/quick-log-bar.tsx");
@@ -1175,10 +1176,10 @@ test("compiled quick-log bar searches, scans, and offers AI only where the model
   scan.props.onPress();
   assert.equal(find(tree, "IconButton", "Log food"), undefined, "search already opens the logger");
   assert.deepEqual(pressed.splice(0), ["search", "scan"]);
-  const sparkle = (tree) => tree.find((node) => node.props?.icon === "sparkles");
-  assert.equal(sparkle(tree), undefined, "no model, no sparkle");
+  const mark = (tree) => tree.find((node) => node.props?.icon?.type === "AiMark");
+  assert.equal(mark(tree), undefined, "no model, no AI mark");
   tree = render({ ai: { state: "unavailable", engine: "none", vision: false, reason: "device" } });
-  assert.equal(sparkle(tree), undefined);
+  assert.equal(mark(tree), undefined);
   assert.ok(find(tree, "IconButton", "Scan barcode"));
 
   // A photo where the model sees, a description where it only reads; turned off, it explains.
@@ -1191,7 +1192,8 @@ test("compiled quick-log bar searches, scans, and offers AI only where the model
   });
   assert.ok(find(tree, "IconButton", "Log a meal from a photo"));
   assert.deepEqual(pressed.splice(0), ["photo", "photo"]);
-  assert.equal(find(tree, "IconButton", "Log a meal from a photo").props.icon, "sparkles");
+  // The button wears the mark of the model on this phone, Apple Intelligence or Gemini.
+  assert.equal(find(tree, "IconButton", "Log a meal from a photo").props.icon.type, "AiMark");
 
   // Another day is named on the pill.
   tree = render({ label: "Log to Yesterday" });
@@ -1215,6 +1217,36 @@ test("compiled quick-log bar searches, scans, and offers AI only where the model
     "keyboardDidHide",
     "keyboardDidShow",
   ]);
+});
+
+test("the AI mark is Apple Intelligence on iOS and Gemini on Android", () => {
+  const jsx = (type, props) => ({ type, props });
+  const mark = (os) =>
+    load("src/components/nutrition/ai-mark.tsx", {
+      "react/jsx-runtime": { jsx, jsxs: jsx },
+      "react-native": { Platform: { OS: os } },
+      "expo-symbols": { SymbolView: "SymbolView" },
+      "heroui-native": { useThemeColor: (color) => `theme:${color}` },
+      "react-native-svg": {
+        __esModule: true,
+        default: "Svg",
+        Defs: "Defs",
+        LinearGradient: "LinearGradient",
+        Path: "Path",
+        Stop: "Stop",
+      },
+    }).AiMark;
+  const apple = mark("ios")({ size: 22 });
+  assert.equal(apple.type, "SymbolView");
+  assert.deepEqual(apple.props, {
+    name: "apple.intelligence",
+    size: 22,
+    tintColor: "theme:foreground",
+  });
+  const gemini = mark("android")({ size: 22 });
+  const svg = gemini.type({ size: 22 });
+  assert.equal(svg.type, "Svg");
+  assert.deepEqual([svg.props.width, svg.props.height], [22, 22]);
 });
 
 test("compiled tab bar opens Today's sheets through the app action, with the model's status", async () => {
@@ -1243,7 +1275,7 @@ test("compiled tab bar opens Today's sheets through the app action, with the mod
   appState.forEach((listener) => listener("active"));
   assert.equal(reads.count, 2);
   harness.remount();
-  assert.equal(render()[0].props.ai, available, "no reflow when the sparkle is known");
+  assert.equal(render()[0].props.ai, available, "no reflow when the AI mark is known");
   cleanups.forEach((cleanup) => cleanup?.());
   assert.equal(appState.length, 0);
 });

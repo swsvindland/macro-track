@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactElement } from "react";
 import { Text as NativeText, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Button, Card, useThemeColor, type ThemeColor } from "heroui-native";
@@ -97,7 +97,10 @@ export function SystemButton({
   );
 }
 
-/** Icon-only button with a 44pt target; the label is required for screen readers. */
+/**
+ * Icon-only button with a 44pt target; the label is required for screen readers. The icon is an
+ * Ionicons name, or an element for a mark that isn't in the family.
+ */
 export function SystemIconButton({
   icon,
   accessibilityLabel,
@@ -107,7 +110,7 @@ export function SystemIconButton({
   className,
   ...props
 }: ComponentProps<typeof Button> & {
-  icon: IconName;
+  icon: IconName | ReactElement;
   accessibilityLabel: string;
   color?: ThemeColor;
   iconSize?: number;
@@ -124,11 +127,15 @@ export function SystemIconButton({
         className
       )}
     >
-      <SystemIcon
-        name={icon}
-        size={iconSize}
-        color={color ?? (variant === "primary" ? "accent-foreground" : "foreground")}
-      />
+      {typeof icon === "string" ? (
+        <SystemIcon
+          name={icon}
+          size={iconSize}
+          color={color ?? (variant === "primary" ? "accent-foreground" : "foreground")}
+        />
+      ) : (
+        icon
+      )}
     </Button>
   );
 }
