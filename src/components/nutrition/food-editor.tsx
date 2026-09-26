@@ -10,6 +10,7 @@ import {
   favoriteFoods,
   recipeFoods,
   findPersonalBarcode,
+  lastEntryFor,
   personalFoods,
   recentFoods,
   saveCustomFood,
@@ -19,6 +20,7 @@ import {
   toggleFavorite,
   type DiaryReceipt,
 } from "@/lib/diary";
+import { portionFor } from "@/lib/fast-log";
 import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
 import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
@@ -69,15 +71,18 @@ export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) 
 
 export function BarcodeCamera({
   onScan,
+  skip = "",
 }: {
   onScan: (value: string, symbology: string) => Promise<void>;
+  /** A code just added, still in view while the camera reopens for the next one. */
+  skip?: string;
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [error, setError] = useState("");
   // One lookup at a time. A code that was rejected or not found is skipped while it
   // stays in view, so the camera keeps scanning for the next one.
   const scanning = useRef(false);
-  const last = useRef("");
+  const last = useRef(skip);
   if (!permission) return <Text className="text-muted">Checking camera access…</Text>;
   if (!permission.granted)
     return (
@@ -187,6 +192,9 @@ function LabelScanner({
     </View>
   );
 }
+
+/** The amount last logged of a food, else its first portion. */
+const rememberedAmount = (food: Food) => portionFor(food, lastEntryFor(food.id)).amount;
 
 const shown = (value: number | null) => (value === null ? "" : String(Number(value.toFixed(1))));
 
@@ -369,6 +377,7 @@ export function FoodEditor({
   initialFood,
   initialAmount,
   onPick,
+  scanAnother = false,
   pickerTitle,
   pickLabel,
   initialMode = "search",
@@ -382,7 +391,10 @@ export function FoodEditor({
   entry?: FoodEntry;
   initialFood?: Food;
   initialAmount?: number;
-  onPick?: (food: Food, amount: number) => void;
+  /** `keepScanning` when the person chose to scan another food next; the picker stays open. */
+  onPick?: (food: Food, amount: number, keepScanning?: boolean) => void;
+  /** Offers to add a picked food and reopen the camera, for scanning several foods in a row. */
+  scanAnother?: boolean;
   pickerTitle?: string;
   /** Confirm label when picking, e.g. "Log" when the pick is saved straight away. */
   pickLabel?: string;
@@ -405,14 +417,15 @@ export function FoodEditor({
   const [meal, setMeal] = useState<Meal>(
     () => entry?.meal ?? initialMeal ?? mealAtTime(initialTime ?? currentFoodTime())
   );
-  const [amount, setAmount] = useState(
-    String(entry?.amount ?? initialAmount ?? (initialFood?.basis === "serving" ? 1 : 100))
+  const [amount, setAmount] = useState(() =>
+    String(entry?.amount ?? initialAmount ?? (initialFood ? rememberedAmount(initialFood) : 100))
   );
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<Food[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [barcode, setBarcode] = useState("");
+  const [lastCode, setLastCode] = useState("");
   const [notFound, setNotFound] = useState(false);
   // An unknown barcode goes straight to photographing its label.
   const [scanLabel, setScanLabel] = useState(false);
@@ -451,7 +464,7 @@ export function FoodEditor({
 
   function select(selected: Food) {
     setFood(selected);
-    setAmount(String(selected.portions[0]?.amount ?? (selected.basis === "serving" ? 1 : 100)));
+    setAmount(String(rememberedAmount(selected)));
     setMode("portion");
     setError("");
   }
@@ -478,15 +491,26 @@ export function FoodEditor({
       setBusy(false);
     }
   }
-  function save() {
+  function save(keepScanning = false) {
     if (!food || saveLock.current) return;
     saveLock.current = true;
     try {
       const value = parseNumber(amount);
       if (onPick) {
         scaleNutrients(food, value);
-        onPick(food, value);
-        close();
+        onPick(food, value, keepScanning);
+        if (!keepScanning) {
+          close();
+          return;
+        }
+        saveLock.current = false;
+        setLastCode(barcode);
+        setBarcode("");
+        setFood(undefined);
+        setError("");
+        setNotFound(false);
+        setScanLabel(false);
+        setMode("barcode");
         return;
       }
       if (!entry && !loggedTime) throw new Error("Choose a time for this entry.");
@@ -546,7 +570,7 @@ export function FoodEditor({
         mode === "portion" && food ? (
           <View className="gap-2">
             <ErrorText message={error} />
-            <SystemButton onPress={save}>
+            <SystemButton onPress={() => save()}>
               {onPick
                 ? (pickLabel ?? (pickerTitle ? "Add to meal" : "Use ingredient"))
                 : entry
@@ -555,6 +579,11 @@ export function FoodEditor({
                     ? `Log at ${validFoodTime(loggedTime) ? formatClock(loggedTime) : loggedTime}`
                     : `Add to ${meal.toLowerCase()}`}
             </SystemButton>
+            {scanAnother && onPick && (
+              <SystemButton variant="secondary" icon="barcode-outline" onPress={() => save(true)}>
+                Add & scan another
+              </SystemButton>
+            )}
           </View>
         ) : undefined
       }
@@ -628,7 +657,7 @@ export function FoodEditor({
       )}
       {mode === "barcode" && (
         <>
-          <BarcodeCamera onScan={scan} />
+          <BarcodeCamera onScan={scan} skip={lastCode} />
           <Field label="Barcode digits" value={barcode} onChange={setBarcode} />
           <SystemButton
             isDisabled={busy}

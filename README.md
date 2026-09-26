@@ -14,7 +14,7 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Saved meals with adjustable quantities, plus copying meals between dates and meal slots. Choose **Save or copy this meal** from a meal’s ··· menu on Today; saved meals appear under Log again in the logger and in Library. Copies preserve nutrition snapshots and remain independently editable.
 - Recipes: add ingredients from food search, specify the number of servings in a batch, and log whole or fractional servings. Create and edit recipes in Library; recipes also appear in food search. Edits update future recipe portions without changing past diary entries.
 - Guided Cut/Bulk/Maintain programs generate calories and macros from your profile, goal and preferences. Weekly reviews use normalized weight and observed intake; maintenance gently corrects drift around a target weight. Goal changes preserve learning. Manual mode remains available. See [coaching method and limits](docs/coaching.md).
-- Quick-add estimates, whole-day copying, and optional cooked batch weights for gram-based recipe portions.
+- Quick-add estimates (calories worked out from macros when left blank), whole-day copying, and optional cooked batch weights for gram-based recipe portions.
 - Progress includes complete-day intake averages and the next check-in.
 - Readable food/weight CSV exports and confirmed local personal-data erasure.
 - Inherited weight history, smoothed trend, and opt-in HealthKit / Health Connect integration.

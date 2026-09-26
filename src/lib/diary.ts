@@ -1,5 +1,5 @@
 import { currentFoodTime, validFoodTime, inFoodGroup, mealAtTime } from "./food-time";
-import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import {
   coachingGoals,
   customFoods,
@@ -377,6 +377,22 @@ export function recentFoods(): Food[] {
   const latest = new Map<string, Food>();
   for (const row of rows) if (!latest.has(row.food.id)) latest.set(row.food.id, row.food);
   return resolveRecipeSnapshots([...latest.values()]).slice(0, 20);
+}
+/** A food's latest entry from the past year, so its portion can be offered again. */
+export function lastEntryFor(foodId: string, now = Date.now()): FoodEntry | undefined {
+  // The time bound keeps a food never logged from reading the whole diary.
+  return db
+    .select()
+    .from(foodEntries)
+    .where(
+      and(
+        gte(foodEntries.createdAt, now - 365 * 86_400_000),
+        sql`json_extract(${foodEntries.food}, '$.id') = ${foodId}`
+      )
+    )
+    .orderBy(desc(foodEntries.createdAt), desc(foodEntries.id))
+    .limit(1)
+    .get();
 }
 
 export function listSavedMeals() {

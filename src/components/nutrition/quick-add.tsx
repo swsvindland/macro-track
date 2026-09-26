@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { View } from "react-native";
-import { SystemButton } from "@/components/system";
+import { SystemButton, SystemText as Text } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import { logBatch, type LogReceipt } from "@/lib/fast-log";
 import { currentFoodTime, mealAtTime } from "@/lib/food-time";
@@ -39,17 +39,29 @@ export function QuickAdd({
   onAdd?: (item: MealItem) => void;
 }) {
   const { refresh } = useNutrition();
-  const { diaryLayout } = useStore();
+  const { diaryLayout, number } = useStore();
   const [loggedTime, setLoggedTime] = useState(() => time ?? currentFoodTime());
   const [meal, setMeal] = useState<Meal>(() => initialMeal ?? mealAtTime(loggedTime));
   const [name, setName] = useState("");
   const [values, setValues] = useState({ calories: "", protein: "", carbs: "", fat: "" });
   const [error, setError] = useState("");
   const locked = useRef(false);
+  const grams = (key: (typeof macros)[number]) =>
+    values[key].trim() ? parseNumber(values[key]) : 0;
+  const fromMacros = Math.round(4 * grams("protein") + 4 * grams("carbs") + 9 * grams("fat"));
+  const typed = values.calories.trim() ? parseNumber(values.calories) : null;
+  // Macros over the calories are always a slip; under them only once all three are in.
+  const mismatch =
+    typed !== null &&
+    Number.isFinite(typed) &&
+    fromMacros > 0 &&
+    Math.abs(fromMacros - typed) > typed * 0.15 &&
+    (fromMacros > typed || macros.every((key) => values[key].trim()));
   function save() {
     if (locked.current) return;
     try {
-      if (!values.calories.trim()) throw new Error("Enter calories for this entry.");
+      if (typed === null && fromMacros === 0)
+        throw new Error("Enter calories or macros for this entry.");
       const food: Food = {
         id: `quick:${Date.now()}-${Math.random().toString(36).slice(2)}`,
         name: name.trim() || "Quick add",
@@ -60,10 +72,10 @@ export function QuickAdd({
         sourceVersion: "quick-1",
         portions: [{ label: "1 entry", amount: 1 }],
         nutrients: {
-          calories: parseNumber(values.calories),
-          protein: values.protein.trim() ? parseNumber(values.protein) : 0,
-          carbs: values.carbs.trim() ? parseNumber(values.carbs) : 0,
-          fat: values.fat.trim() ? parseNumber(values.fat) : 0,
+          calories: typed ?? fromMacros,
+          protein: grams("protein"),
+          carbs: grams("carbs"),
+          fat: grams("fat"),
           fiber: null,
           sodium: null,
         },
@@ -118,6 +130,7 @@ export function QuickAdd({
         autoFocus
         value={values.calories}
         onChange={(value) => setValues((old) => ({ ...old, calories: value }))}
+        placeholder={fromMacros > 0 ? `${number(fromMacros, 0)} from macros` : undefined}
       />
       <View className="flex-row gap-2">
         {macros.map((key) => (
@@ -131,6 +144,11 @@ export function QuickAdd({
           </View>
         ))}
       </View>
+      {mismatch && (
+        <Text className="text-sm text-warning" accessibilityLiveRegion="polite">
+          {`Macros add up to ${number(fromMacros, 0)} kcal.`}
+        </Text>
+      )}
       <Field
         label="Name (optional)"
         value={name}

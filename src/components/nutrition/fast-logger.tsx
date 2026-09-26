@@ -315,6 +315,7 @@ export function FastLogger({
     return (
       <FoodEditor
         initialMode={picker}
+        scanAnother={picker === "barcode"}
         pickerTitle={oneStep ? "Log food" : "Add to meal"}
         pickLabel={oneStep ? "Log" : undefined}
         close={() => {
@@ -324,7 +325,7 @@ export function FastLogger({
           else setPicker(null);
           keepOpen.current = false;
         }}
-        onPick={(food, value) => {
+        onPick={(food, value, keepScanning) => {
           const item: MealItem = {
             food,
             amount: value,
@@ -332,7 +333,7 @@ export function FastLogger({
             nutrients: scaleNutrients(food, value),
           };
           // With nothing else selected today, a scan or new food is logged in one step.
-          if (oneStep) commit([item]);
+          if (oneStep && !keepScanning) commit([item]);
           else {
             keepOpen.current = true;
             setDirect(false);

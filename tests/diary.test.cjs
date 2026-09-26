@@ -204,6 +204,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       Choices: "Choices",
       DateInput: "DateInput",
       ErrorText: "Error",
+      SearchInput: "SearchInput",
       Screen: "Screen",
       ActionMenu: "ActionMenu",
       DayPicker: "DayPicker",
@@ -225,7 +226,16 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "@/components/measurements/use-measurement-log": { useMeasurementLog: () => ({}) },
     "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
+    // Pure helpers such as portionFor; tests that log pass the database-backed module.
+    "@/lib/fast-log": load("src/lib/fast-log.ts", {
+      "@/db": {},
+      "./diary": diary,
+      "./nutrition": nutrition,
+      "./metrics": metrics,
+      "./food-time": foodTime,
+    }),
     "./fast-logger": { FastLogger: "FastLogger" },
+    "./quick-add": { QuickAdd: "QuickAdd" },
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
     "./food-editor": { FoodEditor: "FoodEditor" },
@@ -1618,5 +1628,287 @@ test("compiled Home: of two mounted Homes, only the newer opens a link's sheet",
   t.mock.timers.tick(1);
   assert.equal(sheet(covered.render(), "FastLogger").props.start, "barcode");
   covered.harness.unmount();
+  sqlite.close();
+});
+
+// B12: quick add from macros, remembered quantities and scanning several foods in a row.
+function quickAdd(diary, fastLog) {
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { QuickAdd } = harness.load("src/components/nutrition/quick-add.tsx");
+  const tree = () =>
+    nodes(harness.render(QuickAdd, { day: "2024-01-01", close: () => {}, onLogged: () => {} }));
+  const field = (label) =>
+    tree().find((node) => node.type === "Field" && node.props.label === label);
+  return {
+    tree,
+    field,
+    type(values) {
+      for (const [label, value] of Object.entries(values)) field(label).props.onChange(value);
+    },
+    warning: () =>
+      tree().find((node) => node.type === "Text" && /^Macros add up/.test(node.props.children))
+        ?.props.children,
+    save() {
+      button(tree(), "Add to diary").props.onPress();
+      return tree().find((node) => node.type === "Error").props.message;
+    },
+  };
+}
+
+test("compiled quick add works out calories from macros and flags ones that don't add up", () => {
+  const { diary, fastLog, sqlite } = diaryDatabase();
+  const logged = () => diary.entriesForDay("2024-01-01").map((row) => row.nutrients);
+  let sheet = quickAdd(diary, fastLog);
+  assert.equal(sheet.field("Calories (kcal)").props.placeholder, undefined);
+  assert.equal(sheet.save(), "Enter calories or macros for this entry.");
+  assert.equal(logged().length, 0);
+
+  sheet = quickAdd(diary, fastLog);
+  sheet.type({ "Protein (g)": "30", "Carbs (g)": "40", "Fat (g)": "10.5" });
+  assert.equal(sheet.field("Calories (kcal)").props.placeholder, "375 from macros");
+  assert.equal(sheet.warning(), undefined);
+  assert.equal(sheet.save(), "");
+  assert.deepEqual(logged().at(-1), {
+    calories: 375,
+    protein: 30,
+    carbs: 40,
+    fat: 10.5,
+    fiber: null,
+    sodium: null,
+  });
+
+  // The warning never blocks the entered calories.
+  sheet = quickAdd(diary, fastLog);
+  sheet.type({ "Calories (kcal)": "500", "Protein (g)": "30", "Carbs (g)": "40", "Fat (g)": "10" });
+  assert.equal(sheet.warning(), "Macros add up to 370 kcal.");
+  sheet.save();
+  assert.equal(logged().at(-1).calories, 500);
+
+  const warns = (values) => {
+    const next = quickAdd(diary, fastLog);
+    next.type(values);
+    return next.warning() !== undefined;
+  };
+  // Within 15%, or macros below the calories while some are still blank.
+  assert.equal(
+    warns({ "Calories (kcal)": "400", "Protein (g)": "30", "Carbs (g)": "40", "Fat (g)": "10" }),
+    false
+  );
+  assert.equal(warns({ "Calories (kcal)": "500", "Protein (g)": "30" }), false);
+  // Macros over the calories are flagged even while some are blank.
+  assert.equal(warns({ "Calories (kcal)": "100", "Protein (g)": "30" }), true);
+  assert.equal(warns({ "Calories (kcal)": "0", "Fat (g)": "5" }), true);
+
+  sheet = quickAdd(diary, fastLog);
+  sheet.type({ "Protein (g)": "3O" });
+  assert.equal(sheet.save(), "Enter valid, non-negative nutrition values.");
+  assert.equal(logged().length, 2);
+  sqlite.close();
+});
+
+test("a food's latest entry from the past year is the portion offered again", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const log = (amount) =>
+    diary.saveEntry({
+      day: "2024-01-01",
+      meal: "Lunch",
+      food,
+      amount,
+      portionLabel: `${amount} g`,
+    });
+  assert.equal(diary.lastEntryFor(food.id), undefined);
+  log(30);
+  log(45);
+  assert.equal(diary.lastEntryFor(food.id).amount, 45);
+  assert.equal(diary.lastEntryFor("custom:other"), undefined);
+  sqlite.prepare("UPDATE food_entries SET created_at = created_at - ?").run(366 * 86_400_000);
+  assert.equal(diary.lastEntryFor(food.id), undefined, "older than a year");
+  assert.equal(diary.lastEntryFor(food.id, Date.now() - 2 * 86_400_000).amount, 45);
+  sqlite.close();
+});
+
+const can = { ...food, id: "custom:can", name: "Can", barcode: "04963406" };
+const bar = {
+  ...food,
+  id: "custom:bar",
+  name: "Bar",
+  barcode: "0036000291452",
+  portions: [{ label: "1 bar", amount: 40 }],
+};
+function scanner(diary, props) {
+  const harness = screenHarness(diary);
+  const { FoodEditor, FoodRow, BarcodeCamera } = harness.load(
+    "src/components/nutrition/food-editor.tsx"
+  );
+  const render = () => nodes(harness.render(FoodEditor, props));
+  const quantity = () =>
+    render().find((node) => node.type === "Field" && /^Quantity/.test(node.props.label));
+  const scan = (code) =>
+    render()
+      .find((node) => node.type === BarcodeCamera)
+      .props.onScan(code);
+  return { render, quantity, scan, FoodRow, BarcodeCamera };
+}
+
+test("compiled scans, searches and Library reuse the quantity last logged", async () => {
+  const { diary, sqlite } = diaryDatabase();
+  diary.saveCustomFood(can);
+  diary.saveCustomFood(bar);
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Lunch",
+    food: can,
+    amount: 355,
+    portionLabel: "355 g",
+  });
+  let editor = scanner(diary, { initialMode: "barcode", close: () => {} });
+  await editor.scan("04963406");
+  assert.equal(editor.quantity().props.value, "355");
+  editor = scanner(diary, { initialMode: "barcode", close: () => {} });
+  await editor.scan("0036000291452");
+  assert.equal(
+    editor.quantity().props.value,
+    "40",
+    "a food never logged starts at its first portion"
+  );
+
+  editor = scanner(diary, { close: () => {} });
+  editor
+    .render()
+    .find((node) => node.type === editor.FoodRow && node.props.food.id === can.id)
+    .props.onPress();
+  assert.equal(editor.quantity().props.value, "355");
+  assert.equal(scanner(diary, { initialFood: can, close: () => {} }).quantity().props.value, "355");
+  assert.equal(
+    scanner(diary, { initialFood: can, initialAmount: 2, close: () => {} }).quantity().props.value,
+    "2"
+  );
+  // A food whose basis changed since starts over at its own portion.
+  diary.saveCustomFood({ ...can, basis: "serving", portions: [] });
+  assert.equal(
+    scanner(diary, {
+      initialFood: { ...can, basis: "serving", portions: [] },
+      close: () => {},
+    }).quantity().props.value,
+    "1"
+  );
+  sqlite.close();
+});
+
+test("compiled Add & scan another hands the food over and reopens the camera past its code", async () => {
+  const { diary, sqlite } = diaryDatabase();
+  diary.saveCustomFood(can);
+  diary.saveCustomFood(bar);
+  const picks = [];
+  let closed = 0;
+  const props = {
+    initialMode: "barcode",
+    scanAnother: true,
+    pickerTitle: "Log food",
+    pickLabel: "Log",
+    close: () => closed++,
+    onPick: (food, amount, keepScanning) => picks.push([food.name, amount, keepScanning]),
+  };
+  const editor = scanner(diary, props);
+  await editor.scan("04963406");
+  editor.quantity().props.onChange("2O");
+  button(editor.render(), "Add & scan another").props.onPress();
+  assert.deepEqual(picks, [], "an invalid quantity stays on the portion");
+  assert.ok(editor.render().find((node) => node.type === "Error").props.message);
+  editor.quantity().props.onChange("20");
+  button(editor.render(), "Add & scan another").props.onPress();
+  assert.deepEqual(picks, [["Can", 20, true]]);
+  assert.equal(closed, 0);
+  const tree = editor.render();
+  const camera = tree.find((node) => node.type === editor.BarcodeCamera);
+  assert.equal(camera.props.skip, "04963406");
+  assert.equal(
+    tree.find((node) => node.type === "Field" && node.props.label === "Barcode digits").props.value,
+    ""
+  );
+  assert.equal(tree.find((node) => node.type === "Error").props.message, "");
+
+  await editor.scan("0036000291452");
+  button(editor.render(), "Log").props.onPress();
+  assert.deepEqual(picks, [
+    ["Can", 20, true],
+    ["Bar", 40, false],
+  ]);
+  assert.equal(closed, 1);
+
+  // Only a scanning picker offers it.
+  const plain = scanner(diary, { ...props, scanAnother: false });
+  await plain.scan("04963406");
+  assert.equal(button(plain.render(), "Add & scan another"), undefined);
+  const logging = scanner(diary, { initialMode: "barcode", close: () => {} });
+  await logging.scan("04963406");
+  assert.equal(button(logging.render(), "Add & scan another"), undefined);
+
+  // The reopened camera passes over the code just added until another one shows.
+  const harness = screenHarness({});
+  const scans = [];
+  const view = () =>
+    nodes(
+      harness.render(editor.BarcodeCamera, {
+        onScan: async (code) => void scans.push(code),
+        skip: "04963406",
+      })
+    ).find((node) => node.type === "CameraView");
+  view().props.onBarcodeScanned({ data: "04963406", type: "upc_e" });
+  assert.deepEqual(scans, []);
+  view().props.onBarcodeScanned({ data: "0036000291452", type: "upc_a" });
+  assert.deepEqual(scans, ["0036000291452"]);
+  sqlite.close();
+});
+
+test("compiled Scan from Home: Scan another builds a selection instead of logging one food", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const day = metrics.localDay();
+  let closed = 0;
+  const logged = [];
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: day,
+        initialTime: "09:10",
+        start: "barcode",
+        close: () => closed++,
+        onLogged: (receipt) => logged.push(receipt),
+      })
+    );
+  let picker = render().find((node) => node.type === "FoodEditor");
+  assert.equal(picker.props.scanAnother, true);
+  assert.equal(picker.props.pickLabel, "Log");
+  picker.props.onPick(can, 20, true);
+  assert.equal(diary.entriesForDay(day).length, 0, "the first scan waits for the next");
+  picker = render().find((node) => node.type === "FoodEditor");
+  assert.ok(picker, "the camera stays open");
+  assert.equal(picker.props.pickLabel, undefined);
+  assert.equal(picker.props.pickerTitle, "Add to meal");
+  picker.props.onPick(bar, 40, false);
+  picker.props.close();
+  assert.equal(closed, 0, "closing the picker returns to the selection, not Home");
+  button(render(), "Log 2 foods").props.onPress();
+  assert.deepEqual(
+    diary.entriesForDay(day).map((row) => [row.food.name, row.amount]),
+    [
+      ["Can", 20],
+      ["Bar", 40],
+    ]
+  );
+  assert.equal(logged.length, 1);
+  assert.equal(closed, 1);
+
+  // "New food" is not a scan, so it doesn't offer scanning another.
+  const other = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const Logger = other.load("src/components/nutrition/fast-logger.tsx").FastLogger;
+  const props = { initialDay: day, close: () => {}, onLogged: () => {} };
+  button(nodes(other.render(Logger, props)), "New food").props.onPress();
+  assert.equal(
+    nodes(other.render(Logger, props)).find((node) => node.type === "FoodEditor").props.scanAnother,
+    false
+  );
   sqlite.close();
 });
