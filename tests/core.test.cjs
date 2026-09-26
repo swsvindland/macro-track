@@ -1,14 +1,22 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync, readdirSync } = require("node:fs");
+const {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs");
+const { tmpdir } = require("node:os");
+const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
-const { drizzle } = require(
-  require("node:path").join(
-    require("node:path").dirname(require.resolve("drizzle-orm/expo-sqlite")),
-    "driver.cjs"
-  )
-);
+const drizzleExpo = path.dirname(require.resolve("drizzle-orm/expo-sqlite"));
+const { drizzle } = require(path.join(drizzleExpo, "driver.cjs"));
+const { migrate } = require(path.join(drizzleExpo, "migrator.cjs"));
 const { eq } = require("drizzle-orm");
 
 // Execute production TypeScript under Node while substituting only native boundaries.
@@ -17,7 +25,7 @@ function load(file, dependencies = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const module = { exports: {} };
-  const sourceRequire = require("node:module").createRequire(require("node:path").resolve(file));
+  const sourceRequire = require("node:module").createRequire(path.resolve(file));
   new Function("require", "module", "exports", output)(
     (name) => (name in dependencies ? dependencies[name] : sourceRequire(name)),
     module,
@@ -131,8 +139,11 @@ function database() {
     .filter((f) => f.endsWith(".sql"))
     .sort())
     sqlite.exec(readFileSync(`drizzle/${migration}`, "utf8"));
-  // Same Drizzle Expo driver as production, backed by real SQLite instead of a phone.
-  const client = {
+  return { sqlite, db: drizzle(expoClient(sqlite), { schema }) };
+}
+// Same Drizzle Expo driver as production, backed by real SQLite instead of a phone.
+function expoClient(sqlite) {
+  return {
     prepareSync(sql) {
       return {
         executeSync(params) {
@@ -152,8 +163,9 @@ function database() {
         },
       };
     },
+    getFirstSync: (sql, ...params) => sqlite.prepare(sql).get(...params) ?? null,
+    runSync: (sql, ...params) => sqlite.prepare(sql).run(...params),
   };
-  return { sqlite, db: drizzle(client, { schema }) };
 }
 test("migration preserves old weight data and creates new storage", () => {
   const sqlite = new DatabaseSync(":memory:");
@@ -165,6 +177,187 @@ test("migration preserves old weight data and creates new storage", () => {
   for (const file of migrations.slice(2)) sqlite.exec(readFileSync(`drizzle/${file}`, "utf8"));
   assert.equal(sqlite.prepare("SELECT weight_kg FROM weight_entries").get().weight_kg, 80.5);
   assert.equal(sqlite.prepare("SELECT count(*) AS n FROM photos").get().n, 0);
+  sqlite.close();
+});
+const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8"));
+// Drizzle's own migrator on real SQLite, stopping at any journal version.
+function versionedDatabase() {
+  const sqlite = new DatabaseSync(":memory:");
+  const expoDb = expoClient(sqlite);
+  const db = drizzle(expoDb, { schema });
+  const migrations = Object.fromEntries(
+    journal.entries.map((entry) => [
+      `m${String(entry.idx).padStart(4, "0")}`,
+      readFileSync(`drizzle/${entry.tag}.sql`, "utf8"),
+    ])
+  );
+  const upgrade = (count) =>
+    migrate(db, { journal: { entries: journal.entries.slice(0, count) }, migrations });
+  return { sqlite, db, expoDb, upgrade };
+}
+// A real temporary folder stands in for the app's Documents directory.
+function documentsFolder() {
+  const root = mkdtempSync(path.join(tmpdir(), "macro-track-"));
+  const local = (uri) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
+  class Directory {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    get exists() {
+      return existsSync(local(this.uri));
+    }
+    create() {
+      mkdirSync(local(this.uri), { recursive: true });
+    }
+    delete() {
+      rmSync(local(this.uri), { recursive: true });
+    }
+    list() {
+      return readdirSync(local(this.uri), { withFileTypes: true }).map((entry) =>
+        entry.isDirectory() ? new Directory(this, entry.name) : new File(this, entry.name)
+      );
+    }
+  }
+  class File {
+    constructor(parent, name) {
+      this.uri = `${parent.uri}/${name}`;
+    }
+    get name() {
+      return path.basename(this.uri);
+    }
+    get exists() {
+      return existsSync(local(this.uri));
+    }
+    delete() {
+      rmSync(local(this.uri));
+    }
+    moveSync(destination) {
+      renameSync(local(this.uri), local(destination.uri));
+      this.uri = destination.uri;
+    }
+  }
+  const document = { uri: `file://${root}` };
+  mkdirSync(path.join(root, "cache"));
+  const fileSystem = {
+    Directory,
+    File,
+    Paths: { document, cache: new Directory(document, "cache"), availableDiskSpace: Infinity },
+  };
+  const backups = path.join(root, "MacroTrackBackups");
+  const files = () => (existsSync(backups) ? readdirSync(backups).sort() : []);
+  const snapshot = load("src/db/snapshot.ts", { "expo-file-system": fileSystem });
+  return { root, backups, files, fileSystem, snapshot };
+}
+test("a pending migration snapshots the database once; current and fresh databases are skipped", async (t) => {
+  const { root, backups, files, snapshot } = documentsFolder();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fresh = new DatabaseSync(":memory:");
+  assert.equal(snapshot.snapshotBeforeMigrations(expoClient(fresh), journal), null);
+  // Drizzle creates its table before a first migration that may then roll back.
+  fresh.exec(
+    "CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text, created_at numeric)"
+  );
+  assert.equal(snapshot.snapshotBeforeMigrations(expoClient(fresh), journal), null);
+  assert.deepEqual(files(), []);
+
+  const { sqlite, db, expoDb, upgrade } = versionedDatabase();
+  const latest = journal.entries.length - 1;
+  await upgrade(latest);
+  db.insert(schema.weightEntries).values({ weightKg: 80.5, measuredAt: "2024-01-01" }).run();
+  assert.deepEqual(snapshot.migrationState(expoDb, journal), { applied: latest, pending: 1 });
+  const name = `pre-migration-${latest}.db`;
+  assert.equal(snapshot.snapshotBeforeMigrations(expoDb, journal).name, name);
+  // A relaunch after a failed migration replaces the copy instead of failing on it.
+  assert.equal(snapshot.snapshotBeforeMigrations(expoDb, journal).name, name);
+  assert.deepEqual(files(), [name]);
+  const copy = new DatabaseSync(path.join(backups, name), { readOnly: true });
+  assert.equal(copy.prepare("SELECT weight_kg FROM weight_entries").get().weight_kg, 80.5);
+  assert.equal(copy.prepare("SELECT count(*) AS n FROM __drizzle_migrations").get().n, latest);
+  copy.close();
+
+  await upgrade(latest + 1);
+  assert.equal(snapshot.snapshotBeforeMigrations(expoDb, journal), null);
+  assert.deepEqual(files(), [name]);
+  sqlite.close();
+});
+test("pre-migration snapshots keep the newest two and never block migrations", async (t) => {
+  const { root, backups, files, fileSystem, snapshot } = documentsFolder();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { sqlite, expoDb, upgrade } = versionedDatabase();
+  const count = journal.entries.length;
+  await upgrade(count - 4);
+  mkdirSync(backups);
+  writeFileSync(path.join(backups, "before-restore-1.backup.json"), "{}");
+  // Three app updates, each adding one migration.
+  for (let applied = count - 4; applied < count - 1; applied++) {
+    const bundled = { entries: journal.entries.slice(0, applied + 1) };
+    assert.ok(snapshot.snapshotBeforeMigrations(expoDb, bundled));
+    await upgrade(applied + 1);
+  }
+  const kept = [count - 3, count - 2].map((version) => `pre-migration-${version}.db`);
+  assert.deepEqual(files(), ["before-restore-1.backup.json", ...kept].sort());
+
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    // The disk fills partway through the copy; the half-written file must not keep the space.
+    const full = {
+      ...expoDb,
+      runSync: (sql, target) => {
+        expoDb.runSync(sql, target);
+        writeFileSync(`${target}-journal`, "");
+        throw new Error("database or disk is full");
+      },
+    };
+    assert.equal(snapshot.snapshotBeforeMigrations(full, journal), null);
+    assert.deepEqual(files(), ["before-restore-1.backup.json", ...kept].sort());
+    // A copy killed with the app is cleared, and low storage leaves the space to the migration.
+    writeFileSync(path.join(backups, "pre-migration.partial"), "x");
+    writeFileSync(path.join(backups, "pre-migration.partial-journal"), "");
+    fileSystem.Paths.availableDiskSpace = snapshot.snapshotSpace(expoDb) - 1;
+    assert.equal(snapshot.snapshotBeforeMigrations(expoDb, journal), null);
+    assert.deepEqual(files(), ["before-restore-1.backup.json", ...kept].sort());
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(warnings.length, 2);
+  await upgrade(count);
+  assert.deepEqual(snapshot.migrationState(expoDb, journal), { applied: count, pending: 0 });
+  sqlite.close();
+});
+test("the migration error screen shares a database copy and erase removes every copy", async (t) => {
+  const { root, backups, files, fileSystem, snapshot } = documentsFolder();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { sqlite, expoDb, upgrade } = versionedDatabase();
+  const latest = journal.entries.length - 1;
+  await upgrade(latest);
+  const shared = [];
+  const dataFiles = (migrationSnapshot) =>
+    load("src/lib/data-files.ts", {
+      "expo-file-system": fileSystem,
+      "expo-sharing": {
+        isAvailableAsync: async () => true,
+        shareAsync: async (uri) => shared.push(uri),
+      },
+      "@/db": { expoDb, migrationSnapshot },
+      "@/db/snapshot": snapshot,
+      "./data-ownership": { erasePersonalRecords: () => {} },
+      "./health": { withHealthPaused: (work) => work() },
+      "./health-schedule": { configureHealthSchedule: async () => {} },
+    });
+  const startup = snapshot.snapshotBeforeMigrations(expoDb, journal);
+  await dataFiles(startup).shareDatabaseCopy();
+  // If the startup copy failed (low storage), the button tries again.
+  rmSync(path.join(backups, startup.name));
+  fileSystem.Paths.availableDiskSpace = snapshot.snapshotSpace(expoDb) - 1;
+  await assert.rejects(dataFiles(null).shareDatabaseCopy(), /Not enough free storage/);
+  fileSystem.Paths.availableDiskSpace = Infinity;
+  await dataFiles(null).shareDatabaseCopy();
+  assert.deepEqual(shared, [startup.uri, startup.uri]);
+  assert.deepEqual(files(), [startup.name]);
+  await dataFiles(startup).eraseLocalData();
+  assert.equal(existsSync(backups), false);
   sqlite.close();
 });
 test("health sync is repeatable, updates exports and never resurrects deleted imports", async () => {

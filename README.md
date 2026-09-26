@@ -24,7 +24,7 @@ A downloadable AI model for phones without Apple Intelligence or Gemini Nano and
 
 Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food from **Today**. Without Health weights, Today asks for a morning weigh-in; it also asks you to confirm recent days were fully logged, which weekly check-ins need. **Library** holds personal foods, saved meals and recipes. Due check-ins appear directly on Today (after the morning weigh-in and day confirmation) with Accept/Keep actions and expandable evidence; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
 
-Reload after pulling changes so all personal-database migrations run. The native client must include the camera, document picker, sharing and crypto modules, and the local `modules/local-ai` module for photo logging (rebuild the dev client after pulling it). Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
+Reload after pulling changes so all personal-database migrations run. The app copies the database before migrating and keeps the last two copies (see [backups](docs/backups.md#pre-migration-copies)). The native client must include the camera, document picker, sharing and crypto modules, and the local `modules/local-ai` module for photo logging (rebuild the dev client after pulling it). Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
 
 ## Development
 
