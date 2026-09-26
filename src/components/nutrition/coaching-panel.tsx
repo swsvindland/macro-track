@@ -3,24 +3,17 @@ import { Alert, View } from "react-native";
 import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
 import { ActionMenu, ErrorText } from "@/components/ui";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
-import { coachingSnapshot, saveGoal, finishCheckIn } from "@/lib/coaching-store";
+import { coachingSnapshot, coverage, saveGoal, finishCheckIn } from "@/lib/coaching-store";
 import { dayToConfirm, setDayStatus } from "@/lib/diary";
-import { fromKg, localDay, weightUnit } from "@/lib/metrics";
+import { formatPace, formatWeight, localDay, shortDay } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
+import { OutlierPrompt } from "./home-check-in";
 import { ProgramEditor } from "./program-editor";
 
-const localeOf = (language: string) => (language === "zh" ? "zh-CN" : language);
-
-/** "Sep 24", or "Tue, Sep 30" with the weekday; the store's date() always adds the year. */
-export function shortDay(day: string, language: string, weekday = false) {
-  return new Date(`${day}T12:00:00`).toLocaleDateString(localeOf(language), {
-    ...(weekday ? { weekday: "short" as const } : {}),
-    month: "short",
-    day: "numeric",
-  });
-}
 const weekdayOf = (day: string, language: string) =>
-  new Date(`${day}T12:00:00`).toLocaleDateString(localeOf(language), { weekday: "long" });
+  new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
+    weekday: "long",
+  });
 
 function Stat({ title, value, note }: { title: string; value: string; note?: string }) {
   return (
@@ -47,14 +40,8 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
     [why, setWhy] = useState(false);
   const finished = useRef("");
   const program = goal?.program;
-  const digits = units === "stone" ? 2 : 1;
-  const weight = (kg: number) => `${number(fromKg(kg, units), digits)} ${weightUnit(units)}`;
-  const pace = (kg: number | null) => {
-    if (kg === null) return "—";
-    const shown = number(Math.abs(fromKg(kg, units)), digits);
-    const sign = shown === number(0, digits) ? "" : kg < 0 ? "−" : "+";
-    return `${sign}${shown} ${weightUnit(units)}/wk`;
-  };
+  const weight = (kg: number) => formatWeight(kg, units, number);
+  const pace = (kg: number | null) => (kg === null ? "—" : formatPace(kg, units, number));
   function act(action: () => void, setError: (message: string) => void) {
     try {
       action();
@@ -221,11 +208,12 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
               <Stat title="Your pace" value={pace(review.weeklyKg)} />
               <Stat title="Goal pace" value={pace(review.desiredWeeklyKg)} />
               <Stat
-                title="Logged"
-                value={`${review.completeDays} days`}
+                title={review.method === 2 ? "Usable days" : "Complete days"}
+                value={coverage(review)}
                 note={`${review.weightDays} weigh-ins`}
               />
             </View>
+            <OutlierPrompt outlier={review.outlier} />
             {why && <Text className="text-sm text-muted">{review.reason}</Text>}
             {review.proposed && (
               <View className="gap-1">

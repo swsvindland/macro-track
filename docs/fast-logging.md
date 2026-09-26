@@ -8,7 +8,7 @@ Home is ordered by the reasons to open the app: see how today is going, clear th
 
 1. **Header.** A compact row replaces the large title: previous/next day chevrons around a date label that opens a calendar, a **Today** pill on past days, and a **···** day menu (Log weight, Copy a day, Mark day as In progress / Complete / Not fully logged / Fasted). The header stays fixed while the list scrolls.
 2. **Summary.** Calories left (or over, or eaten without targets) in one large number, a pace bar and one status line, then protein/carbs/fat against targets. The bar's solid fill is what was eaten; a lighter extension shows what you usually eat for the rest of the day; a tick marks the target; amber means the usual rest of day would take you past it by more than max(100 kcal, 5%); a smaller overshoot reads as "right around your target".
-3. **One task at a time**, only on today and only when due, in this order: morning weigh-in → confirm an unfinished recent day → weekly check-in. Each resolves in the same slot so the next can appear. The order matters: the check-in reviews complete days up to yesterday and weights up to today, so it waits until both are answered.
+3. **One task at a time**, only on today and only when due, in this order: morning weigh-in → confirm an unfinished recent day (the last 21 days while coached, else 7) → weekly check-in. Each resolves in the same slot so the next can appear. The order matters: the check-in reviews complete days up to yesterday and weights up to today, so it waits until both are answered.
 4. **Log food**, **Photo** and **Scan**. Photo appears only where the phone can run on-device AI (**Describe** where only text is supported); see [photo and description logging](ai-logging.md). After a save, a short message with **Undo** appears right under them.
 5. **Today's food.** One list grouped by time (or meal in the classic layout). Each group's **···** offers Add food here and Save or copy this meal. Tap an entry to edit it. Fiber and sodium sit in one small line at the end.
 
@@ -28,7 +28,7 @@ When Health isn't delivering weights, Home shows a weigh-in card until noon on d
 
 ## Weekly flow
 
-When due and after the morning tasks, Home shows the check-in: current → proposed calories, proposed macros and your pace against the goal pace, with **Accept plan** and **Keep current**. Either action finishes the check-in immediately, refreshes targets and removes the card. **Why?** expands the reasoning, dates and estimated expenditure. When data is insufficient, the card shows logging and weigh-in coverage with **Keep targets this week** and **Log weight**. Plan shows the same review with a 2×2 evidence grid and blocks Accept/Keep until an unfinished recent day is answered.
+When due and after the morning tasks, Home shows the check-in: current → proposed calories, proposed macros and your pace against the goal pace, with **Accept plan** and **Keep current**. Either action finishes the check-in immediately, refreshes targets and removes the card. **Why?** expands the reasoning, dates and estimated expenditure. When data is insufficient, the card shows usable days against the 12 needed and weigh-in days with **Keep targets this week** and **Log weight**. When one weigh-in far from its neighbors holds the review, the card names it with a one-tap **Delete** and **Undo**. Plan shows the same review with a 2×2 evidence grid and blocks Accept/Keep until an unfinished recent day is answered.
 
 ## Interaction budgets
 

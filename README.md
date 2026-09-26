@@ -66,10 +66,11 @@ Catalog filenames include the source and build-recipe version, so an app update 
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:tz
 pnpm exec expo export --platform ios --platform android
 ```
 
-Tests use real SQLite with the production Drizzle driver and cover migrations, health sync, source catalog integrity, search, barcode normalization, quantity arithmetic, unknown nutrients, history snapshots, dated targets and logging completeness. These checks do not replace physical-device camera, Health permission or UI testing.
+Tests use real SQLite with the production Drizzle driver and cover migrations, health sync, source catalog integrity, search, barcode normalization, quantity arithmetic, unknown nutrients, history snapshots, dated targets and logging completeness. `pnpm test:tz` repeats them in Los Angeles, Auckland and London time. These checks do not replace physical-device camera, Health permission or UI testing.
 
 The September 24, 2026 foundation passed all 21 automated tests, TypeScript and lint checks, iOS simulator compilation/installation, Android arm64 debug compilation, and production JavaScript/asset exports for both platforms. See [the milestone report](docs/foundation-validation.md) for catalog measurements and remaining QA.
 

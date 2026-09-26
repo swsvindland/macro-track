@@ -1,5 +1,5 @@
 import { shiftDay, type Targets } from "./nutrition";
-import { weightTrend } from "./metrics";
+import { weightTrend, type TrendPoint } from "./metrics";
 import type { Goal, Review } from "./coaching";
 
 export type Program = {
@@ -99,7 +99,7 @@ export type ProgramInput = {
   targets: Targets;
   days: { day: string; status: string }[];
   entries: { day: string; nutrients: { calories: number } }[];
-  weights: { day: string; kg: number }[];
+  weights: { day: string; kg: number; id?: number }[];
   priorExpenditure?: number;
 };
 export function reviewProgram(input: ProgramInput): Review {
@@ -145,8 +145,6 @@ export function reviewProgram(input: ProgramInput): Review {
     (statuses.get(date) === "fasting" && !totals.has(date));
   result.completeDays = calendar.filter(known).length;
   if (goal.mode === "manual") return hold("Manual targets stay under your control.", "holding");
-  if (!latest || latest.day < shiftDay(end, -3))
-    return hold("Add a recent weigh-in so the plan can use your current trend.");
   // Interpolate only between observed trend points at most seven days apart.
   const at = (date: string) => {
     const after = series.findIndex((row) => row.day >= date);
@@ -184,6 +182,8 @@ export function reviewProgram(input: ProgramInput): Review {
   }
   consume();
   result.observedDays = used;
+  if (!latest || latest.day < shiftDay(end, -3))
+    return hold("Add a recent weigh-in so the plan can use your current trend.");
   if (used < 12 || result.weightDays < 6)
     return hold(
       "Learning from your logs. Aim for 12 covered days in blocks of at least 7 and six weigh-in days within the last three weeks. Gaps pause learning without resetting it."
@@ -192,10 +192,36 @@ export function reviewProgram(input: ProgramInput): Review {
   result.weeklyKg = (deltaKg / used) * 7;
   const raw = result.intake - (deltaKg / used) * 7700;
   const recent = series.filter((row) => row.day >= start);
-  if (
-    Math.abs(result.weeklyKg) > weight * 0.01 ||
-    recent.some((row, i) => i > 0 && Math.abs(row.raw - recent[i - 1].raw) > weight * 0.03)
-  )
+  const apart = (a: TrendPoint, b: TrendPoint) => Math.abs(a.raw - b.raw) > weight * 0.03;
+  const jumped = recent.some((row, i) => i > 0 && apart(recent[i - 1], row));
+  if (jumped) {
+    // A day far from the days on both sides of it is likely a misread that can be deleted.
+    // A lasting step has no such day, so it only holds the review.
+    const raws = recent.map((row) => row.raw).sort((a, b) => a - b);
+    const median = (raws[(raws.length - 1) >> 1] + raws[raws.length >> 1]) / 2;
+    const off = (kg: number) => Math.abs(kg - median);
+    const suspect = series
+      .filter(
+        (row, i) =>
+          row.day >= start &&
+          [series[i - 1], series[i + 1]].every((near) => !near || apart(near, row))
+      )
+      .sort((a, b) => off(b.raw) - off(a.raw))[0];
+    const reading =
+      suspect &&
+      input.weights
+        .filter((w) => w.day === suspect.day && Number.isFinite(w.kg) && w.kg > 0)
+        .reduce((worst, w) => (off(w.kg) > off(worst.kg) ? w : worst));
+    if (reading)
+      return {
+        ...hold(
+          "One weigh-in is far from the ones around it. Delete it if it was a misread; otherwise keep the current plan while the trend settles.",
+          "holding"
+        ),
+        outlier: { day: reading.day, kg: reading.kg, id: reading.id },
+      };
+  }
+  if (jumped || Math.abs(result.weeklyKg) > weight * 0.01)
     return hold(
       "Your weight is changing sharply. Keep the current plan while the trend settles.",
       "holding"

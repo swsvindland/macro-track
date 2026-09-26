@@ -2,10 +2,78 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { SystemButton, SystemLabel, SystemPanel, SystemText as Text } from "@/components/system";
 import { ErrorText } from "@/components/ui";
-import { coachingSnapshot, finishCheckIn } from "@/lib/coaching-store";
-import { fromKg, localDay, weightUnit } from "@/lib/metrics";
+import type { WeightEntry } from "@/db";
+import type { Review } from "@/lib/coaching";
+import { coachingSnapshot, coverage, finishCheckIn } from "@/lib/coaching-store";
+import { dayOf, formatPace, formatWeight, localDay, shortDay } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import { deleteWeight, restoreWeight } from "@/lib/weigh-in";
+
+/**
+ * Offers to delete the weigh-in that holds the check-in, then Undo. It stays mounted as the
+ * review refreshes, so Undo outlives the outlier until another reading is flagged.
+ */
+export function OutlierPrompt({ outlier }: { outlier?: Review["outlier"] }) {
+  const { refresh } = useNutrition();
+  const { number, units, language, refresh: reloadWeights } = useStore();
+  const [removed, setRemoved] = useState<WeightEntry | null>(null),
+    [error, setError] = useState("");
+  function run(action: () => void) {
+    try {
+      action();
+      reloadWeights();
+      refresh();
+      setError("");
+    } catch {
+      setError("Could not change that weigh-in.");
+    }
+  }
+  const id = outlier?.id;
+  const reading =
+    id !== undefined
+      ? outlier
+      : removed && { kg: removed.weightKg, day: dayOf(removed.measuredAt) };
+  if (!reading) return null;
+  const label = `${formatWeight(reading.kg, units, number)} on ${shortDay(reading.day, language)}`;
+  return (
+    <View className="gap-1">
+      <View className="flex-row items-center gap-2">
+        <Text className="flex-1 text-sm tabular-nums">
+          {id !== undefined ? `Delete ${label}?` : `Deleted ${label}`}
+        </Text>
+        {id !== undefined ? (
+          <SystemButton
+            variant="danger-soft"
+            onPress={() =>
+              run(() => {
+                // A second tap finds nothing to delete and keeps the first tap's Undo.
+                const row = deleteWeight(id);
+                if (row) setRemoved(row);
+              })
+            }
+          >
+            Delete
+          </SystemButton>
+        ) : (
+          <SystemButton
+            variant="ghost"
+            labelClassName="text-accent-soft-foreground"
+            onPress={() =>
+              run(() => {
+                if (removed) restoreWeight(removed);
+                setRemoved(null);
+              })
+            }
+          >
+            Undo
+          </SystemButton>
+        )}
+      </View>
+      <ErrorText message={error} />
+    </View>
+  );
+}
 
 /** The weekly decision, answerable from Home in one tap. */
 export function HomeCheckIn({
@@ -28,8 +96,6 @@ export function HomeCheckIn({
   });
   if (!data) return null;
   const { review, targets } = data;
-  const perWeek = (kg: number) =>
-    `${kg > 0 ? "+" : kg < 0 ? "−" : ""}${number(Math.abs(fromKg(kg, units)), 1)} ${weightUnit(units)}/wk`;
   function finish(decision: "accepted" | "kept") {
     if (lockedDay.current === localDay()) return;
     lockedDay.current = localDay();
@@ -71,7 +137,8 @@ export function HomeCheckIn({
             </Text>
             {review.weeklyKg !== null && review.desiredWeeklyKg !== null && (
               <Text className="text-sm text-muted tabular-nums">
-                Your pace {perWeek(review.weeklyKg)} · goal {perWeek(review.desiredWeeklyKg)}
+                Your pace {formatPace(review.weeklyKg, units, number)} · goal{" "}
+                {formatPace(review.desiredWeeklyKg, units, number)}
               </Text>
             )}
           </View>
@@ -81,10 +148,11 @@ export function HomeCheckIn({
               {review.status === "learning" ? "Still learning your needs" : "No change this week"}
             </Text>
             <Text className="text-sm text-muted tabular-nums">
-              {review.completeDays} complete days · {review.weightDays} weigh-in days so far
+              {`${coverage(review)} ${review.method === 2 ? "usable" : "complete"} days · ${review.weightDays} weigh-in days`}
             </Text>
           </View>
         )}
+        <OutlierPrompt outlier={review.outlier} />
         {details && (
           <View className="gap-1">
             <Text className="text-sm text-muted">{review.reason}</Text>

@@ -418,7 +418,7 @@ export function typicalAfter(days: TimedCalories[], cutoff: string): number | nu
 }
 
 /**
- * The most recent of the last 7 days that has food and targets but was never
+ * The most recent of the last 7 days (21 while coached) that has food and targets but was never
  * marked complete or partial. Coaching only learns from answered days, so Home
  * asks about one at a time.
  */
@@ -429,7 +429,7 @@ export function dayToConfirm(today: string): { day: string; calories: number } |
     .where(
       and(
         eq(diaryDays.status, "in-progress"),
-        gte(diaryDays.day, shiftDay(today, -7)),
+        gte(diaryDays.day, shiftDay(today, isCoached() ? -21 : -7)),
         lt(diaryDays.day, today)
       )
     )

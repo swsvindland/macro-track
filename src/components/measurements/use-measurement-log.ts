@@ -3,6 +3,7 @@ import { Alert } from "react-native";
 import { eq } from "drizzle-orm";
 import { db, healthLinks, measurements, weightEntries } from "@/db";
 import { useStore } from "@/lib/store";
+import { deleteWeight } from "@/lib/weigh-in";
 import {
   dayOf,
   formatHeight,
@@ -149,8 +150,7 @@ export function useMeasurementLog(kind: Kind) {
         style: "destructive",
         onPress: () => {
           try {
-            if (kind === "weight")
-              db.delete(weightEntries).where(eq(weightEntries.id, editing.id)).run();
+            if (kind === "weight") deleteWeight(editing.id);
             else db.delete(measurements).where(eq(measurements.id, editing.id)).run();
             refresh();
             setOpen(false);
