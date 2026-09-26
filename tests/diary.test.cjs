@@ -1416,6 +1416,25 @@ test("an answered day is never changed, and the setting turns counting off", (t)
   sqlite.close();
 });
 
+test("a restore asks about yesterday instead of counting over an answer it doesn't carry", (t) => {
+  const backup = (db) =>
+    load("src/lib/backup-data.ts", {
+      "@/db": { db, ...schema },
+      "./metrics": metrics,
+      "./nutrition": nutrition,
+    });
+  const phone = loggedYesterday(t, fullDay);
+  phone.diary.setDayStatus(yesterday, "in-progress");
+  const saved = backup(phone.db).createBackup();
+  const other = diaryDatabase();
+  backup(other.db).restoreBackup(saved);
+  assert.equal(other.diary.countLoggedDay(), null);
+  assert.equal(other.diary.dayStatus(yesterday), "in-progress");
+  assert.equal(other.diary.dayToConfirm(today).day, yesterday);
+  phone.sqlite.close();
+  other.sqlite.close();
+});
+
 function countingHome(diary, store = {}, focus = { current: true }) {
   return homeScreen(
     diary,

@@ -916,7 +916,11 @@ test("light-mode accent text, links and focus rings keep AA contrast on every su
 
 // Check-in parity: adjusted targets, custom macros, one-tap Maintain and ignored weigh-ins.
 const loadBackup = (db) =>
-  load("src/lib/backup-data.ts", { "@/db": { db, ...schema }, "./nutrition": nutrition });
+  load("src/lib/backup-data.ts", {
+    "@/db": { db, ...schema },
+    "./metrics": metrics,
+    "./nutrition": nutrition,
+  });
 
 test("programs keep macros set at a check-in, and adjustments stay in the coached range", () => {
   const own = { ...profile, initialExpenditure: 2600 };
@@ -1192,10 +1196,35 @@ test("ignored weigh-ins stay in history but leave the trend, check-ins, CSV and 
   const backup = loadBackup(db);
   const copy = backup.createBackup();
   assert.equal(copy.data.weights.filter((w) => w.excluded).length, 1);
+  assert.deepEqual(
+    copy.data.weights.filter((w) => w.healthId),
+    [
+      {
+        ...row,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        healthId: "scale-1",
+      },
+    ]
+  );
   backup.restoreBackup(copy);
   assert.deepEqual(backup.createBackup().data, copy.data);
+  // Restored, it keeps its Health sample: sync after turning it on again neither imports it
+  // nor writes it back, so it stays ignored.
+  const written = [];
+  adapter.write = async (record) => {
+    written.push(record.value);
+    return "exported";
+  };
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 21 });
+  assert.ok(!written.includes(77.1));
+  assert.equal(weights().length, 22);
+  assert.equal(store.currentReview().status, "ready");
   const legacy = structuredClone(copy);
-  legacy.data.weights.forEach((w) => delete w.excluded);
+  legacy.data.weights.forEach((w) => {
+    delete w.excluded;
+    delete w.healthId;
+  });
   backup.restoreBackup(legacy);
   assert.equal(weights().filter((w) => w.excluded).length, 0);
   assert.equal(store.currentReview().outlier.kg, 77.1);

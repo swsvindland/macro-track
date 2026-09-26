@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   db,
   customFoods,
@@ -15,7 +15,8 @@ import {
   coachingGoals,
   checkIns,
 } from "@/db";
-import { recipeFood, validateFood, type Food, type Recipe } from "./nutrition";
+import { localDay } from "./metrics";
+import { recipeFood, shiftDay, validateFood, type Food, type Recipe } from "./nutrition";
 
 export const MAX_BACKUP_TEXT = 20 * 1024 * 1024;
 const text = z.string().max(20000);
@@ -238,6 +239,8 @@ const dataSchema = z.strictObject({
         updatedAt: iso.nullable(),
         // Backups made before readings could be ignored count every reading.
         excluded: z.boolean().default(false),
+        // The Health sample a reading was imported from, so a restore keeps them linked.
+        healthId: text.min(1).optional(),
       })
     )
     .max(100000),
@@ -295,23 +298,37 @@ export function parseBackup(json: string): Backup {
   return validateBackup(value);
 }
 export function createBackup(): Backup {
-  const snapshot = db.transaction((tx) => ({
-    format: "macro-track-backup",
-    version: 1,
-    createdAt: new Date().toISOString(),
-    data: {
-      goals: tx.select().from(coachingGoals).all(),
-      checkIns: tx.select().from(checkIns).all(),
-      entries: tx.select().from(foodEntries).all(),
-      customFoods: tx.select().from(customFoods).all(),
-      favorites: tx.select().from(savedFoods).all(),
-      savedMeals: tx.select().from(savedMeals).all(),
-      recipes: tx.select().from(recipes).all(),
-      days: tx.select().from(diaryDays).all(),
-      targets: tx.select().from(nutritionTargets).all(),
-      weights: tx.select().from(weightEntries).all(),
-    },
-  }));
+  const snapshot = db.transaction((tx) => {
+    const imported = new Map(
+      tx
+        .select()
+        .from(healthLinks)
+        .where(and(eq(healthLinks.origin, "health"), eq(healthLinks.localKind, "weight")))
+        .all()
+        .map((link) => [link.localId, link.remoteId])
+    );
+    return {
+      format: "macro-track-backup",
+      version: 1,
+      createdAt: new Date().toISOString(),
+      data: {
+        goals: tx.select().from(coachingGoals).all(),
+        checkIns: tx.select().from(checkIns).all(),
+        entries: tx.select().from(foodEntries).all(),
+        customFoods: tx.select().from(customFoods).all(),
+        favorites: tx.select().from(savedFoods).all(),
+        savedMeals: tx.select().from(savedMeals).all(),
+        recipes: tx.select().from(recipes).all(),
+        days: tx.select().from(diaryDays).all(),
+        targets: tx.select().from(nutritionTargets).all(),
+        weights: tx
+          .select()
+          .from(weightEntries)
+          .all()
+          .map((row) => ({ ...row, healthId: imported.get(row.id) })),
+      },
+    };
+  });
   return parseBackup(JSON.stringify(snapshot));
 }
 
@@ -332,6 +349,7 @@ export function restoreBackup(value: unknown, recoveryUri?: string) {
     tx.delete(diaryDays).run();
     tx.delete(nutritionTargets).run();
     tx.delete(weightEntries).run();
+    tx.delete(healthLinks).where(eq(healthLinks.localKind, "weight")).run();
     for (const row of data.entries) tx.insert(foodEntries).values(row).run();
     for (const row of data.customFoods) tx.insert(customFoods).values(row).run();
     for (const row of data.favorites) tx.insert(savedFoods).values(row).run();
@@ -339,7 +357,7 @@ export function restoreBackup(value: unknown, recoveryUri?: string) {
     for (const row of data.recipes) tx.insert(recipes).values(row).run();
     for (const row of data.days) tx.insert(diaryDays).values(row).run();
     for (const row of data.targets) tx.insert(nutritionTargets).values(row).run();
-    for (const row of data.weights)
+    for (const { healthId, ...row } of data.weights) {
       tx.insert(weightEntries)
         .values({
           ...row,
@@ -347,17 +365,34 @@ export function restoreBackup(value: unknown, recoveryUri?: string) {
           updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,
         })
         .run();
+      // A reading from Health keeps its sample, so sync neither imports it again nor writes it
+      // back and an ignored one stays ignored. Imported readings can't be edited, so the row
+      // still matches the sample's fingerprint.
+      if (healthId)
+        tx.insert(healthLinks)
+          .values({
+            key: `health:weight:${healthId}`,
+            localKind: "weight",
+            localId: row.id,
+            remoteId: healthId,
+            fingerprint: `${row.weightKg}:${row.measuredAt}`,
+            origin: "health",
+          })
+          .onConflictDoNothing()
+          .run();
+    }
     if (recoveryUri)
       tx.insert(preferences)
         .values({ key: "recoveryBackupUri", value: recoveryUri })
         .onConflictDoUpdate({ target: preferences.key, set: { value: recoveryUri } })
         .run();
-    tx.delete(healthLinks).where(eq(healthLinks.localKind, "weight")).run();
     for (const [key, value] of [
       ["healthSyncEnabled", "false"],
       ["weightSyncEpoch", `${Date.now()}-${Math.random().toString(36).slice(2)}`],
       ["healthSyncError", ""],
       ["lastSync", ""],
+      // An answer about yesterday isn't in the backup, so Home asks instead of counting it.
+      ["settledDay", shiftDay(localDay(), -1)],
     ])
       tx.insert(preferences)
         .values({ key, value })

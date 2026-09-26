@@ -257,6 +257,7 @@ function diaryDatabase() {
   });
   const backup = load("src/lib/backup-data.ts", {
     "@/db": { db, ...schema },
+    "./metrics": metrics,
     "./nutrition": nutrition,
     "./food-time": foodTime,
   });

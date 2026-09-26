@@ -57,6 +57,8 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
         .select()
         .from(weightEntries)
         .all()
+        // An ignored reading stays out of Health; one already written is removed like a deletion.
+        .filter((w) => !w.excluded)
         .map((w) => ({
           id: w.id,
           kind: "weight" as const,

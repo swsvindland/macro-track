@@ -456,6 +456,53 @@ test("health sync is repeatable, updates exports and never resurrects deleted im
   assert.equal(records.size, 1);
   sqlite.close();
 });
+test("an ignored weigh-in stays out of Health and is written again once included", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  const weight = (weightKg, excluded) =>
+    db
+      .insert(schema.weightEntries)
+      .values({ weightKg, measuredAt: "2024-01-01T07:00:00Z", excluded })
+      .returning()
+      .get();
+  const exclude = (row, excluded) =>
+    db
+      .update(schema.weightEntries)
+      .set({ excluded })
+      .where(eq(schema.weightEntries.id, row.id))
+      .run();
+  const typo = weight(180.4, true);
+  const kept = weight(80, false);
+  const remote = new Map();
+  const adapter = {
+    authorize: async () => ({ read: ["weight"], write: ["weight"] }),
+    read: async () => [...remote.values()],
+    write: async (record) => {
+      remote.set(record.clientId, { ...record, id: record.clientId });
+      return record.clientId;
+    },
+    remove: async (_, id) => {
+      remote.delete(id);
+    },
+  };
+  const values = () => [...remote.values()].map((record) => record.value);
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 1 });
+  assert.deepEqual(values(), [80]);
+  exclude(kept, true);
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 0 });
+  assert.deepEqual(values(), [], "ignoring a written reading removes it");
+  exclude(kept, false);
+  exclude(typo, false);
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 2 });
+  assert.deepEqual(values().sort(), [180.4, 80]);
+  assert.equal(db.select().from(schema.weightEntries).all().length, 2);
+  sqlite.close();
+});
 test("failed sync retries safely and doesn't claim success", async () => {
   const { db, sqlite } = database();
   const health = load("src/lib/health.ts", {

@@ -28,8 +28,8 @@ export function deleteWeight(id: number): WeightEntry | undefined {
 }
 
 /**
- * Leaves a weigh-in out of the trend and check-ins, or counts it again. It stays in history,
- * and a Health reading keeps its link, so sync neither re-imports nor re-exports it.
+ * Leaves a weigh-in out of the trend, check-ins and Health exports, or counts it again. It
+ * stays in history, and a Health reading keeps its link, so sync doesn't import it again.
  */
 export function setWeightExcluded(id: number, excluded: boolean): WeightEntry | undefined {
   return db
