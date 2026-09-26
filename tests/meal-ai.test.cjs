@@ -20,7 +20,8 @@ function load(file, dependencies = {}) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const modelJson = load("src/lib/model-json.ts");
-const ai = load("src/lib/meal-ai.ts", { "./nutrition": nutrition });
+const rank = load("src/lib/food-rank.ts");
+const ai = load("src/lib/meal-ai.ts", { "./nutrition": nutrition, "./food-rank": rank });
 
 // The app's catalog search: generic foods first, with a deeper generic limit.
 const catalogs = ["usda", "off"].map(

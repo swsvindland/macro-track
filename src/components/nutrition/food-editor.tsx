@@ -17,7 +17,8 @@ import {
   deleteEntry,
   toggleFavorite,
 } from "@/lib/diary";
-import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
+import { lookupBarcode, searchFoods } from "@/lib/food-catalog";
+import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
 import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
@@ -401,22 +402,38 @@ export function FoodEditor({
   const [scanLabel, setScanLabel] = useState(false);
   const [favorites, setFavorites] = useState(() => favoriteFoods());
   const saveLock = useRef(false);
+  // Only the search list shows history, so typing an amount or a label doesn't read it.
+  const { recent, personal } = useNutritionQuery(
+    () =>
+      mode === "search"
+        ? { recent: recentFoods(), personal: [...personalFoods(), ...recipeFoods()] }
+        : { recent: [], personal: [] },
+    [mode]
+  );
   useEffect(() => {
     let active = true;
     if (mode !== "search" || !query.trim()) return;
     const timer = setTimeout(() => {
       setBusy(true);
       setError("");
-      const personal = [...personalFoods(), ...recipeFoods()].filter((item) =>
-        `${item.name} ${item.brand}`.toLowerCase().includes(query.toLowerCase().trim())
+      // The person's own foods first, then the catalog, each ranked for the search.
+      const mine = [
+        ...new Map([...favorites, ...recent, ...personal].map((item) => [item.id, item])).values(),
+      ];
+      const known = new Set(mine.map((item) => item.id));
+      const own = rankSearch(
+        query,
+        mine.filter((item) => matchesQuery(query, item)),
+        known
       );
-      searchCatalog(query)
+      const shown = new Set(own.map((item) => item.id));
+      searchFoods(query, known)
         .then((foods) => {
-          if (active) setResults([...personal, ...foods]);
+          if (active) setResults([...own, ...foods.filter((food) => !shown.has(food.id))]);
         })
         .catch(() => {
           if (active) {
-            setResults(personal);
+            setResults(own);
             setError(
               "The bundled catalog couldn't open. You can still create and log a custom food."
             );
@@ -430,7 +447,7 @@ export function FoodEditor({
       active = false;
       clearTimeout(timer);
     };
-  }, [mode, query]);
+  }, [mode, query, favorites, recent, personal]);
 
   function select(selected: Food) {
     setFood(selected);
@@ -486,14 +503,6 @@ export function FoodEditor({
       saveLock.current = false;
     }
   }
-  // Only the search list shows history, so typing an amount or a label doesn't read it.
-  const { recent, personal } = useNutritionQuery(
-    () =>
-      mode === "search"
-        ? { recent: recentFoods(), personal: [...personalFoods(), ...recipeFoods()] }
-        : { recent: [], personal: [] },
-    [mode]
-  );
   const history = [
     ...new Map([...favorites, ...recent, ...personal].map((item) => [item.id, item])).values(),
   ].slice(0, 25);

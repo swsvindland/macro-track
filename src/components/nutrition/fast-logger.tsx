@@ -15,7 +15,8 @@ import {
   type LogChoice,
   type LogReceipt,
 } from "@/lib/fast-log";
-import { searchCatalog } from "@/lib/food-catalog";
+import { searchFoods } from "@/lib/food-catalog";
+import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import {
   meals,
   scaleNutrients,
@@ -34,6 +35,9 @@ import { QuickAdd } from "./quick-add";
 import { TimeField } from "./time-field";
 
 const isMeal = (choice: LogChoice) => choice.key.startsWith("meal:");
+/** Tells apart catalog foods with the same name: "Chicken Breast · Tyson". */
+const source = (food: Food) =>
+  food.brand || (food.source === "usda" ? "USDA" : food.source === "off" ? "Open Food Facts" : "");
 const startAmount = (choice: LogChoice) => String(isMeal(choice) ? 1 : choice.items[0].amount);
 
 /** A typed quantity for one food, or a multiplier for every food in a saved meal. */
@@ -127,11 +131,12 @@ export function FastLogger({
     return { ...loggingChoices(time), today, yesterday: shiftDay(today, -1) };
   }, [revision, time]);
   const trimmed = query.trim().toLowerCase();
+  const known = data.known;
   useEffect(() => {
     if (!trimmed) return;
     let active = true;
     const timer = setTimeout(() => {
-      void searchCatalog(trimmed)
+      void searchFoods(trimmed, known)
         .then((foods) => {
           if (active) setResults({ query: trimmed, foods, error: "" });
         })
@@ -148,31 +153,39 @@ export function FastLogger({
       active = false;
       clearTimeout(timer);
     };
-  }, [trimmed]);
-  const matches = (name: string) => name.toLowerCase().includes(trimmed);
+  }, [trimmed, known]);
+  // The person's own foods come first, ranked like the catalog below them, so rows already on
+  // screen don't move when the catalog answers.
+  const byKey = new Map(data.choices.map((choice) => [choice.key, choice]));
+  const own = trimmed
+    ? rankSearch(
+        trimmed,
+        data.choices
+          .map((choice) => choice.items[0].food)
+          .filter((food) => matchesQuery(trimmed, food)),
+        known
+      ).map((food) => byKey.get(`food:${food.id}`)!)
+    : [];
+  const listed = new Set(own.map((choice) => choice.key));
   const choices: LogChoice[] = !trimmed
     ? [...data.meals.slice(0, 2), ...data.choices].slice(0, 20)
     : [
-        ...data.meals.filter((choice) => matches(choice.title)),
-        ...new Map(
-          [
-            ...data.choices.filter((choice) =>
-              matches(`${choice.title} ${choice.items[0].food.brand}`)
-            ),
-            ...(results?.query === trimmed ? results.foods : []).map((food) => {
-              const item = portionFor(
-                food,
-                data.history.find((row) => row.food.id === food.id)
-              );
-              return {
-                key: `food:${food.id}`,
-                title: food.name,
-                detail: item.portionLabel,
-                items: [item],
-              };
-            }),
-          ].map((choice) => [choice.key, choice])
-        ).values(),
+        ...data.meals.filter((choice) => matchesQuery(trimmed, { name: choice.title, brand: "" })),
+        ...own,
+        ...(results?.query === trimmed ? results.foods : [])
+          .filter((food) => !listed.has(`food:${food.id}`))
+          .map((food) => {
+            const item = portionFor(
+              food,
+              data.history.find((row) => row.food.id === food.id)
+            );
+            return {
+              key: `food:${food.id}`,
+              title: food.name,
+              detail: item.portionLabel,
+              items: [item],
+            };
+          }),
       ].slice(0, 40);
   const inCart = new Map(cart.map((choice) => [choice.key, choice]));
   const items = cart.flatMap((choice) => choice.items);
@@ -359,6 +372,9 @@ export function FastLogger({
         : ` ${basis}`;
     // The only item: logging it now saves a trip back through the list.
     const solo = !cart.some((row) => row.key !== editing.key);
+    const subtitle = isMeal(editing)
+      ? editing.items.map((item) => item.food.name).join(", ")
+      : source(editing.items[0].food);
     const addToMeal = () =>
       attempt(() => {
         add(portioned(editing, amount));
@@ -397,9 +413,9 @@ export function FastLogger({
         <Text accessibilityRole="header" numberOfLines={2} className="text-xl font-semibold">
           {editing.title}
         </Text>
-        {isMeal(editing) && (
+        {!!subtitle && (
           <Text numberOfLines={2} className="-mt-2 text-sm text-muted">
-            {editing.items.map((item) => item.food.name).join(", ")}
+            {subtitle}
           </Text>
         )}
         <Field
@@ -573,6 +589,9 @@ export function FastLogger({
         const selected = inCart.get(choice.key);
         const shown = selected ?? choice;
         const saved = isMeal(choice);
+        // Search results name their catalog too; familiar foods only need a brand.
+        const food = choice.items[0].food;
+        const brand = saved ? "" : trimmed ? source(food) : food.brand;
         return (
           <View
             key={choice.key}
@@ -595,13 +614,22 @@ export function FastLogger({
                     </View>
                   )}
                 </View>
-                <Text numberOfLines={1} className="text-sm text-muted tabular-nums">
-                  {saved && !selected
-                    ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
-                    : shown.detail}{" "}
-                  · {number(totalNutrients(shown.items.map((item) => item.nutrients)).calories, 0)}{" "}
-                  kcal
-                </Text>
+                {/* A long brand or portion gives way before the calories do. */}
+                <View className="flex-row">
+                  <Text numberOfLines={1} className="shrink text-sm text-muted tabular-nums">
+                    {[
+                      brand,
+                      saved && !selected
+                        ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
+                        : shown.detail,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Text>
+                  <Text className="text-sm text-muted tabular-nums">
+                    {` · ${number(totalNutrients(shown.items.map((item) => item.nutrients)).calories, 0)} kcal`}
+                  </Text>
+                </View>
               </View>
             </SystemButton>
             <SystemIconButton

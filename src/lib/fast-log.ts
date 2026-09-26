@@ -67,6 +67,10 @@ export function loggingChoices(time = currentFoodTime()) {
     const item = portionFor(food, recent.get(food.id));
     return { key: `food:${food.id}`, title: food.name, detail: item.portionLabel, items: [item] };
   });
+  // Search ranks the person's foods first, and the ones they eat most above the rest.
+  const known = new Map(foods.map((food) => [food.id, 0]));
+  for (const entry of history)
+    if (known.has(entry.food.id)) known.set(entry.food.id, known.get(entry.food.id)! + 1);
   // Saved meals whose foods are usually eaten around this hour come first.
   const saved = listSavedMeals()
     .map((meal) => ({
@@ -80,7 +84,7 @@ export function loggingChoices(time = currentFoodTime()) {
     detail: `${meal.items.length} foods · saved meal`,
     items: meal.items,
   }));
-  return { choices, meals, history, personal: [...current.values()] };
+  return { choices, meals, history, known, personal: [...current.values()] };
 }
 
 export function logBatch(

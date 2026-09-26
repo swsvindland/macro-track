@@ -38,6 +38,7 @@ function load(file, dependencies = {}, compile = false) {
   return module.exports;
 }
 const nutrition = load("src/lib/nutrition.ts");
+const rank = load("src/lib/food-rank.ts");
 const metrics = load("src/lib/metrics.ts");
 const foodTime = load("src/lib/food-time.ts", { "./nutrition": nutrition });
 const schema = load("src/db/schema.ts");
@@ -167,6 +168,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/food-catalog": {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
+    "@/lib/food-rank": rank,
   };
   Object.assign(dependencies, extraDependencies);
   const store = {
@@ -419,7 +421,7 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       manifest[source].version
     );
     for (const query of ["chicken breast", '" OR - NEAR ( *', "crème", "rice"]) {
-      const expression = nutrition.searchExpression(query);
+      const expression = rank.searchExpression(query);
       if (expression)
         assert.doesNotThrow(() =>
           database
@@ -431,7 +433,7 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       assert.ok(
         database
           .prepare("SELECT name FROM food_search WHERE food_search MATCH ? LIMIT 5")
-          .all(nutrition.searchExpression("chicken breast")).length
+          .all(rank.searchExpression("chicken breast")).length
       );
     else {
       const row = database
@@ -1977,6 +1979,128 @@ test("compiled fast logger merges saved meals into usual foods and search, and c
   tree.find((node) => node.props.children === "Log 1 food").props.onPress();
   assert.equal(diary.entriesForDay(metrics.localDay()).length, 1);
   assert.equal(state.closed, 1);
+  sqlite.close();
+});
+
+test("compiled fast logger search finds eaten foods by word and names each brand", async () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const egg = {
+    ...food,
+    id: "usda:173424",
+    name: "Egg, whole, cooked, hard-boiled",
+    source: "usda",
+    barcode: null,
+  };
+  const branded = {
+    ...egg,
+    id: "off:1",
+    name: "Large eggs",
+    brand: "Eggland's Best",
+    source: "off",
+  };
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    food: egg,
+    amount: 50,
+    portionLabel: "1 large · 50 g",
+  });
+  const searches = [];
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": {
+        searchFoods: async (query, known) => {
+          searches.push({ query, known });
+          return [egg, branded];
+        },
+      },
+    }
+  );
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "08:10",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  const titles = (tree) =>
+    tree
+      .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+      .map((node) => node.props.accessibilityLabel.slice(7));
+  const texts = (tree) =>
+    tree.filter((node) => node.type === "Text").map((node) => node.props.children);
+  let tree = render();
+  assert.ok(
+    texts(tree).includes("1 large · 50 g"),
+    "a familiar food without a brand shows its portion"
+  );
+  tree.find((node) => node.type === "SearchInput").props.onChange("eggs");
+  tree = render();
+  // A plural finds the food before the catalog answers; a substring match missed it.
+  assert.deepEqual(titles(tree), [egg.name]);
+  harness.effects.forEach((effect) => effect());
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(searches.length, 1);
+  assert.equal(searches[0].query, "eggs");
+  assert.equal(searches[0].known.get(egg.id), 1, "search boosts foods by how often they are eaten");
+  tree = render();
+  assert.deepEqual(titles(tree), [egg.name, branded.name], "the eaten food is listed once, first");
+  assert.ok(texts(tree).includes("USDA · 1 large · 50 g"));
+  assert.ok(texts(tree).includes("Eggland's Best · 1 serving · 30 g"));
+  tree.find((node) => node.props.accessibilityLabel === `Adjust ${branded.name}`).props.onPress();
+  assert.ok(texts(render()).includes("Eggland's Best"), "the portion screen names the brand");
+  sqlite.close();
+});
+
+test("compiled food search lists the person's matching foods first, then the catalog", async () => {
+  const { diary, sqlite } = diaryDatabase();
+  const egg = {
+    ...food,
+    id: "usda:173424",
+    name: "Egg, whole, cooked, hard-boiled",
+    source: "usda",
+  };
+  const branded = {
+    ...egg,
+    id: "off:1",
+    name: "Large eggs",
+    brand: "Eggland's Best",
+    source: "off",
+  };
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    food: egg,
+    amount: 50,
+    portionLabel: "50 g",
+  });
+  diary.saveCustomFood(food);
+  diary.saveCustomFood({ ...food, id: "custom:eggnog", name: "Eggnog" });
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/food-catalog": { searchFoods: async () => [branded, egg] },
+    }
+  );
+  const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
+  const render = () => nodes(harness.render(FoodEditor, { close: () => {}, initialQuery: "eggs" }));
+  render();
+  harness.effects.forEach((effect) => effect());
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const rows = render().filter((node) => node.props.food && node.props.onPress);
+  assert.deepEqual(
+    rows.map((node) => node.props.food.name),
+    [egg.name, "Eggnog", branded.name],
+    "own foods by match, the eaten egg before a longer word, then the catalog"
+  );
   sqlite.close();
 });
 

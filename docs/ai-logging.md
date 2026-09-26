@@ -37,7 +37,8 @@ Photos are downscaled to at most 1,280 px on iPhone and 1,024 px on Android befo
 - `modules/local-ai` — local Expo module. `getStatus`, `download`, `prewarm` and `generate(instructions, prompt, schema, imageUri, maxTokens)`; Swift (FoundationModels, weak-linked) and Kotlin (ML Kit GenAI).
 - `src/lib/local-ai.ts` — JS bridge; missing module reports “unavailable”. Retries a busy model twice.
 - `src/lib/model-json.ts` — schema description for Gemini Nano and lenient JSON extraction.
-- `src/lib/meal-ai.ts` — prompts, schema, clean-up, retrieval, ranking, pick step and amounts. Pure and injected with `generate`/`search`, so tests run it against the real catalogs.
+- `src/lib/meal-ai.ts` — prompts, schema, clean-up, retrieval, pick step and amounts. Pure and injected with `generate`/`search`, so tests run it against the real catalogs.
+- `src/lib/food-rank.ts` — stems and ranking, shared with manual food search.
 - `src/components/nutrition/photo-logger.tsx` — capture, progress, review and adjust screens.
 - `plugins/with-kotlin-plugin-version.js` — pins the Kotlin Gradle plugin to 2.2.21. ML Kit GenAI ships Kotlin 2.3 metadata, which React Native's default 2.1.20 compiler cannot read; `expo-build-properties`' `kotlinVersion` alone only reaches Expo's version catalog.
 

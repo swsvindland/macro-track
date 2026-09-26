@@ -1,5 +1,19 @@
+import {
+  countWords,
+  coverage,
+  forms,
+  isBranded,
+  nameWords,
+  same,
+  scoreFoods,
+  stem,
+  term,
+  words,
+} from "./food-rank";
 import type { JsonSchema } from "./model-json";
 import { scaleNutrients, type Food, type MealItem } from "./nutrition";
+
+export { isBranded, rankFoods, stem, words } from "./food-rank";
 
 /**
  * Photo/description logging. The on-device model only names the foods and their amounts;
@@ -298,54 +312,6 @@ function most(unit: string) {
 
 // --- Matching seen foods to catalog foods ---
 
-const stop = new Set("a an and the of with in on or s to for style".split(" "));
-/** Catalog wording differs from everyday names: USDA files burger buns under "Rolls, hamburger". */
-const alternatives: Record<string, string[]> = {
-  fries: ["fries", "fried"],
-  bun: ["bun", "roll"],
-  buns: ["bun", "roll"],
-  ketchup: ["ketchup", "catsup"],
-  soda: ["soda", "carbonated"],
-  pop: ["carbonated"],
-  strip: ["strip", "slice"],
-  strips: ["strip", "slice"],
-};
-
-export function words(value: string): string[] {
-  return (
-    value
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .match(/[\p{L}\p{N}]+/gu) ?? []
-  ).filter((word) => !stop.has(word));
-}
-
-// "Tomato slice" and "bacon strip" name a food plus how much of it; only the food is searched.
-const countWords =
-  /^(?:slices?|pieces?|strips?|leaf|leaves|wedges?|chunks?|servings?|portions?|cups?|bowls?|plates?|sides?|orders?|small|medium|large|regular|jumbo|mini|kids?|tall|grande|venti)$/;
-function nameWords(seen: SeenFood) {
-  const list = words(seen.name);
-  const food = list.filter((word) => !countWords.test(word));
-  return (food.length ? food : list).slice(0, 6);
-}
-
-/** A prefix that matches singular and plural forms in the catalog's prefix search. */
-export function stem(word: string): string {
-  if (word.length <= 3) return word;
-  if (word.endsWith("ies")) return word.length > 5 ? word.slice(0, -3) : word;
-  if (/(?:ches|shes|xes|oes|sses)$/.test(word)) return word.slice(0, -2);
-  if (word.endsWith("y") && word.length > 4) return word.slice(0, -1);
-  if (/(?:ss|us|is)$/.test(word)) return word;
-  if (word.endsWith("s")) return word.slice(0, -1);
-  return word;
-}
-
-const forms = (word: string) => alternatives[word] ?? [stem(word)];
-function term(word: string) {
-  const options = forms(word).map((form) => `"${form}"*`);
-  return options.length === 1 ? options[0] : `(${options.join(" OR ")})`;
-}
 const every = (list: string[]) => list.map(term).join(" AND ");
 
 /** Catalog searches from most to least specific. */
@@ -362,121 +328,6 @@ export function catalogQueries(seen: SeenFood): string[] {
   // The head noun ("cheese" of "cheddar cheese"), then the first word ("beef" of "beef patty").
   if (name.length > 1) queries.push(term(name.at(-1)!), term(name[0]));
   return [...new Set(queries)];
-}
-
-/** Restaurant and packaged foods, which suit a seen food only when its brand is known. */
-export function isBranded(food: Food) {
-  if (food.source === "off" || food.brand) return true;
-  // USDA prefixes restaurant items in capitals: "McDONALD'S, french fries", "T.G.I. FRIDAY'S, …".
-  const first = food.name.split(/[\s,]/)[0].replace(/^Mc/, "");
-  return first === first.toUpperCase() && (first.match(/[A-Z]/g)?.length ?? 0) >= 2;
-}
-
-// Catalog words that describe how an ordinary food is prepared or measured, not a different food.
-const neutral = new Set(
-  (
-    "raw cooked ripe fresh plain regular whole prepared commercial average year round all type " +
-    "varieties includes baked broiled roasted grilled boiled steamed pan fried microwaved heated " +
-    "cured sliced chopped diced shredded mature seeds without salt added drained solids liquid " +
-    "enriched unenriched white red yellow green brewed tap water ready serve made broilers " +
-    "fryers meat only flesh separable"
-  )
-    .split(" ")
-    .map(stem)
-);
-// Words that mark a less common form or part; the model should name these if it means them.
-const variations = new Set(
-  (
-    "powder dehydrated dried canned frozen unprepared imitation meatless substitute low reduced " +
-    "nonfat free fortified mix flake concentrate baby infant toddler stick oil seed juice paste " +
-    "puree soup dry lite light diet sugar sweetened unsweetened blend spread flavored feet " +
-    "giblets liver gizzard heart neck back skin kidney tongue tripe glutinous sprouted instant " +
-    "parboiled precooked turkey stewed"
-  )
-    .split(" ")
-    .map(stem)
-);
-
-// USDA's own markers for the typical entry among varieties: "Tomatoes, red, ripe, raw, year round average".
-const typical = new Set(["average", "varieties", "regular", "ripe"].map(stem));
-
-// The everyday variety when a seen food doesn't name one ("rice" is usually long-grain).
-const usual: Record<string, { mark: string[]; others: string[] }> = {
-  rice: { mark: ["long"], others: ["short", "medium", "brown", "wild", "basmati", "jasmine"] },
-  cheese: {
-    mark: ["cheddar", "american"],
-    others:
-      "mozzarella parmesan swiss feta provolone cottage cream goat blue ricotta monterey brie gouda".split(
-        " "
-      ),
-  },
-  milk: {
-    mark: ["whole"],
-    others: "skim nonfat reduced lowfat almond soy oat chocolate buttermilk".split(" "),
-  },
-};
-
-/** Both sides are stemmed, so a match may only differ by a plural-length ending. */
-const same = (word: string, form: string) =>
-  word === form || (word.startsWith(form) && word.length - form.length <= 2);
-
-function coverage(seen: SeenFood, food: Food) {
-  const target = nameWords(seen);
-  const found = words(`${food.name} ${food.brand}`).map(stem);
-  const has = (word: string) => forms(word).some((form) => found.some((w) => same(w, form)));
-  // The last word names the food ("coffee" in "black coffee"); earlier words describe it.
-  const weight = (i: number) => (i === target.length - 1 ? 2 : 1);
-  const total = target.reduce((sum, _, i) => sum + weight(i), 0);
-  const hits = target.reduce((sum, word, i) => sum + (has(word) ? weight(i) : 0), 0);
-  const mentioned = [...new Set(target.flatMap(forms))];
-  const extra = found.filter((w) => !/^\d+$/.test(w) && !mentioned.some((form) => same(w, form)));
-  const brand = words(seen.brand);
-  const lead = words(food.name.split(",")[0]).map(stem);
-  const said = words(seen.name);
-  const usualFor = said.map((word) => usual[word]).find(Boolean);
-  return {
-    name: total ? hits / total : 0,
-    usual:
-      !!usualFor &&
-      !said.some((word) => usualFor.others.includes(word)) &&
-      found.some((w) => usualFor.mark.some((mark) => same(w, stem(mark)))),
-    typical: found.some((w) => typical.has(w)),
-    variations: extra.filter((w) => variations.has(w)).length,
-    others: extra.filter((w) => !neutral.has(w) && !variations.has(w)).length,
-    // USDA leads with the food itself: "Tomatoes, red, ripe, raw", not "Canadian bacon".
-    leads: lead.length > 0 && lead.every((w) => mentioned.some((form) => same(w, form))),
-    brand: brand.length ? brand.every(has) : null,
-  };
-}
-
-/** Orders candidates for a seen food: name match, common form, brand agreement, the person's own foods. */
-export function rankFoods(seen: SeenFood, foods: Food[], known: ReadonlySet<string> = new Set()) {
-  return scoreFoods(seen, foods, known).map((row) => row.food);
-}
-
-function scoreFoods(seen: SeenFood, foods: Food[], known: ReadonlySet<string>) {
-  const unique = new Map<string, Food>();
-  for (const food of foods) {
-    const key = `${food.name}|${food.brand}`.toLowerCase();
-    if (!unique.has(key) || known.has(food.id)) unique.set(key, food);
-  }
-  return [...unique.values()]
-    .map((food, index) => {
-      const match = coverage(seen, food);
-      let score =
-        3 * match.name +
-        (match.leads ? 0.5 : 0) +
-        (match.usual ? 0.6 : 0) +
-        (match.typical ? 0.3 : 0) -
-        0.8 * match.variations -
-        0.25 * match.others;
-      if (match.brand !== null) score += match.brand ? 2 : -1;
-      else if (isBranded(food)) score -= 2;
-      if (known.has(food.id)) score += 1.5;
-      return { food, score, index, name: match.name };
-    })
-    .filter((row) => row.name > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index);
 }
 
 export const PICK_INSTRUCTIONS = `You match foods from a meal to entries in a nutrition database. For each food, choose the entry that is the same food in the form it is usually eaten: cooked rather than raw for meat, fish, eggs, rice and pasta; ripe, raw and plain for salad vegetables and fruit; ready to eat rather than dry, frozen or unprepared; the regular version rather than low fat, meatless or flavored; a generic entry rather than a brand-name product, unless the food names a restaurant or brand; the food itself rather than a dish that contains it. Cheese on a burger or sandwich is usually American or cheddar.`;
