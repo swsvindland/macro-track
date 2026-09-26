@@ -74,6 +74,9 @@ export const foodEntries = sqliteTable(
     food: text("food", { mode: "json" }).$type<Food>().notNull(),
     amount: real("amount").notNull(),
     portionLabel: text("portion_label").notNull(),
+    // The unit and count the amount was entered in ("portion:0" × 2); null for older entries.
+    portionUnit: text("portion_unit"),
+    portionCount: real("portion_count"),
     nutrients: text("nutrients", { mode: "json" }).$type<Nutrients>().notNull(),
     createdAt: integer("created_at").notNull(),
   },

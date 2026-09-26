@@ -7,7 +7,7 @@ import {
   SystemText as Text,
 } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
-import { favoriteFoods, personalFoods, recentFoods, recipeFoods } from "@/lib/diary";
+import { favoriteFoods, personalFoods, recentFoods, recipeFoods, targetsForDay } from "@/lib/diary";
 import { logBatch, type LogReceipt } from "@/lib/fast-log";
 import { searchCatalogMatch } from "@/lib/food-catalog";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
@@ -20,18 +20,23 @@ import {
   type ModelStatus,
 } from "@/lib/local-ai";
 import { analyzeMeal, draftItem, type DraftFood, type SeenFood } from "@/lib/meal-ai";
-import { localDay, parseNumber } from "@/lib/metrics";
+import { localDay } from "@/lib/metrics";
 import {
+  countText,
   meals,
-  scaleNutrients,
+  parseAmount,
+  portionItem,
+  portionOf,
+  portionUnits,
   shiftDay,
   totalNutrients,
   type Food,
   type Meal,
   type MealItem,
 } from "@/lib/nutrition";
-import { useNutrition } from "@/lib/nutrition-store";
+import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
 import { discardPhoto, PhotoCapture } from "./photo-capture";
 import { TimeField } from "./time-field";
@@ -77,6 +82,13 @@ function describeError(error: unknown) {
     : "Couldn't analyze this meal. Try again.";
 }
 
+/** The amount field for a drafted item: the unit and count the photo was read as. */
+function draftOf(item: MealItem | null): AmountDraft {
+  if (!item) return { unit: "", text: "", fresh: true };
+  const { unit, count } = portionOf(item);
+  return { unit, text: countText(item.food, unit, count), fresh: true };
+}
+
 /** The person's own, saved and recently logged foods, preferred when they match. */
 function knownFoods(): Food[] {
   return [
@@ -119,13 +131,14 @@ export function PhotoLogger({
   const [phase, setPhase] = useState<Phase>({ step: "capture" });
   const [drafts, setDrafts] = useState<DraftFood[]>([]);
   const [editing, setEditing] = useState<string | null>(null),
-    [amount, setAmount] = useState("");
+    [amount, setAmount] = useState<AmountDraft>(() => draftOf(null));
   const [searching, setSearching] = useState<{ key?: string; query: string } | null>(null);
   const [error, setError] = useState("");
   const [day, setDay] = useState(initialDay),
     [time, setTime] = useState(() => initialTime ?? currentFoodTime());
   const [meal, setMeal] = useState<Meal>(() => initialMeal ?? mealAtTime(time));
   const [when, setWhen] = useState(false);
+  const targets = useNutritionQuery(() => targetsForDay(day), [day]);
   // Each analysis gets a number; a cancelled or superseded one can't overwrite the screen.
   const run = useRef(0);
   // The description the draft on screen was made from.
@@ -273,13 +286,7 @@ export function PhotoLogger({
         pickerTitle={searching.key ? "Replace food" : "Add to meal"}
         pickLabel={searching.key ? "Use this food" : "Add to meal"}
         close={() => setSearching(null)}
-        onPick={(food, value) => {
-          const item: MealItem = {
-            food,
-            amount: value,
-            portionLabel: `${value} ${food.basis === "serving" ? "serving(s)" : food.basis}`,
-            nutrients: scaleNutrients(food, value),
-          };
+        onPick={(food, amount, item) => {
           if (searching.key)
             update(searching.key, (draft) => ({
               ...draft,
@@ -294,7 +301,7 @@ export function PhotoLogger({
                 seen: {
                   name: food.name,
                   brand: food.brand,
-                  quantity: value,
+                  quantity: amount,
                   unit: food.basis,
                   grams: null,
                 },
@@ -310,15 +317,15 @@ export function PhotoLogger({
   const draft = editing ? drafts.find((row) => row.key === editing) : undefined;
   if (draft) {
     const current = draft.item;
-    const value = parseNumber(amount);
-    let preview: MealItem["nutrients"] | null = null;
+    let next: MealItem | null = null;
     try {
-      if (current) preview = scaleNutrients(current.food, value);
+      if (current)
+        next = portionItem(current.food, amount.unit, parseAmount(amount.text), {
+          previous: current,
+        });
     } catch {
       /* Shown on save. */
     }
-    const basis = current?.food.basis;
-    const unit = basis === "serving" ? (value === 1 ? " serving" : " servings") : ` ${basis}`;
     const seen = `${draft.seen.brand ? `${draft.seen.brand} ` : ""}${draft.seen.name} · ${draft.seen.quantity} ${draft.seen.unit}`;
     return (
       <Editor
@@ -330,26 +337,24 @@ export function PhotoLogger({
           current ? (
             <View className="gap-2">
               <ErrorText message={error} />
-              <SystemButton
-                isDisabled={!preview}
-                onPress={() => {
-                  if (!preview) return setError("Enter a valid quantity.");
-                  update(draft.key, (row) => ({
-                    ...row,
-                    item: {
-                      ...current,
-                      amount: value,
-                      portionLabel: `${value}${unit}`,
-                      nutrients: preview!,
-                    },
-                  }));
-                  setEditing(null);
+              <AmountPicker
+                units={portionUnits(current.food)}
+                value={amount}
+                onChange={(value) => {
+                  setAmount(value);
+                  setError("");
                 }}
-              >
-                {preview
-                  ? `Use ${value}${unit} · ${number(preview.calories, 0)} kcal`
-                  : "Use this amount"}
-              </SystemButton>
+                actions={[
+                  {
+                    label: "Use",
+                    onPress: () => {
+                      if (!next) return setError("Enter a valid quantity.");
+                      update(draft.key, (row) => ({ ...row, item: next }));
+                      setEditing(null);
+                    },
+                  },
+                ]}
+              />
             </View>
           ) : undefined
         }
@@ -358,41 +363,7 @@ export function PhotoLogger({
           {current?.food.name ?? draft.seen.name}
         </Text>
         <Text className="-mt-2 text-sm text-muted">Seen: {seen}</Text>
-        {current && (
-          <>
-            <Field
-              label={`Quantity (${basis === "serving" ? "servings" : basis})`}
-              numeric
-              selectTextOnFocus
-              value={amount}
-              onChange={(next) => {
-                setAmount(next);
-                setError("");
-              }}
-            />
-            {!!current.food.portions.length && (
-              <View className="flex-row flex-wrap gap-2">
-                {current.food.portions.slice(0, 6).map((portion, i) => (
-                  <SystemButton
-                    key={i}
-                    variant="secondary"
-                    className={`px-3 ${value === portion.amount ? "bg-accent-soft" : ""}`}
-                    accessibilityState={{ selected: value === portion.amount }}
-                    onPress={() => setAmount(String(portion.amount))}
-                  >
-                    {`${portion.label} · ${number(portion.amount, Number.isInteger(portion.amount) ? 0 : 1)} ${basis}`}
-                  </SystemButton>
-                ))}
-              </View>
-            )}
-            {preview && (
-              <Text className="text-sm font-semibold tabular-nums">
-                {number(preview.calories, 0)} kcal · {number(preview.protein, 0)} g protein ·{" "}
-                {number(preview.carbs, 0)} g carbs · {number(preview.fat, 0)} g fat
-              </Text>
-            )}
-          </>
-        )}
+        {current && <PortionPreview nutrients={next?.nutrients ?? null} targets={targets} />}
         {draft.options.length > (current ? 1 : 0) && (
           <View className="gap-1">
             <SystemLabel className="px-1 pt-2">
@@ -410,7 +381,7 @@ export function PhotoLogger({
                   onPress={() => {
                     const item = draftItem(draft.seen, food);
                     update(draft.key, (row) => ({ ...row, item }));
-                    setAmount(String(item.amount));
+                    setAmount(draftOf(item));
                   }}
                 >
                   <View className="flex-1 gap-0.5">
@@ -543,7 +514,7 @@ export function PhotoLogger({
               accessibilityLabel={`Adjust ${row.item?.food.name ?? row.seen.name}`}
               onPress={() => {
                 setEditing(row.key);
-                setAmount(row.item ? String(row.item.amount) : "");
+                setAmount(draftOf(row.item));
                 setError("");
               }}
             >

@@ -3,7 +3,7 @@ import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/f
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import { SystemButton, SystemIconButton, SystemText as Text } from "@/components/system";
 import { Choices, DateInput, Editor, ErrorText, Field } from "@/components/ui";
 import type { FoodEntry } from "@/db";
 import {
@@ -15,6 +15,7 @@ import {
   saveCustomFood,
   saveEntry,
   deleteEntry,
+  targetsForDay,
   toggleFavorite,
 } from "@/lib/diary";
 import { lookupBarcode, searchFoods } from "@/lib/food-catalog";
@@ -23,16 +24,28 @@ import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
 import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import {
+  countText,
   customFood,
+  defaultPortion,
   meals,
   normalizeBarcode,
-  scaleNutrients,
+  parseAmount,
+  portionItem,
+  portionOf,
+  portionUnits,
   type Food,
   type Meal,
+  type MealItem,
 } from "@/lib/nutrition";
 import { localDay, parseNumber } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
+import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
 import { discardPhoto, PhotoCapture } from "./photo-capture";
+
+/** The amount field for a food, starting at `portion` or the food's usual portion. */
+function draftFor(food: Food, portion = defaultPortion(food)): AmountDraft {
+  return { unit: portion.unit, text: countText(food, portion.unit, portion.count), fresh: true };
+}
 
 export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) {
   const { number } = useStore();
@@ -370,7 +383,8 @@ export function FoodEditor({
   entry?: FoodEntry;
   initialFood?: Food;
   initialAmount?: number;
-  onPick?: (food: Food, amount: number) => void;
+  /** Receives the amount in the food's basis, and the item with its unit and label. */
+  onPick?: (food: Food, amount: number, item: MealItem) => void;
   pickerTitle?: string;
   /** Confirm label when picking, e.g. "Log" when the pick is saved straight away. */
   pickLabel?: string;
@@ -379,7 +393,7 @@ export function FoodEditor({
   initialQuery?: string;
 }) {
   const { refresh } = useNutrition();
-  const { number, diaryLayout } = useStore();
+  const { diaryLayout } = useStore();
   const [mode, setMode] = useState<"search" | "barcode" | "custom" | "portion">(
     entry || initialFood ? "portion" : initialMode
   );
@@ -389,9 +403,20 @@ export function FoodEditor({
     entry ? (entry.loggedTime ?? "") : (initialTime ?? currentFoodTime())
   );
   const [meal, setMeal] = useState<Meal>(entry?.meal ?? initialMeal);
-  const [amount, setAmount] = useState(
-    String(entry?.amount ?? initialAmount ?? (initialFood?.basis === "serving" ? 1 : 100))
+  // An entry opens at the unit and count it was logged in; left alone, its amount and label stay.
+  const [start] = useState<AmountDraft>(() =>
+    entry
+      ? draftFor(entry.food, portionOf(entry))
+      : initialFood
+        ? draftFor(
+            initialFood,
+            initialAmount === undefined
+              ? undefined
+              : { unit: initialFood.basis, count: initialAmount }
+          )
+        : { unit: "", text: "", fresh: true }
   );
+  const [amount, setAmount] = useState(start);
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<Food[]>([]);
   const [busy, setBusy] = useState(false);
@@ -451,7 +476,7 @@ export function FoodEditor({
 
   function select(selected: Food) {
     setFood(selected);
-    setAmount(String(selected.portions[0]?.amount ?? (selected.basis === "serving" ? 1 : 100)));
+    setAmount(draftFor(selected));
     setMode("portion");
     setError("");
   }
@@ -479,10 +504,13 @@ export function FoodEditor({
     if (!food || saveLock.current) return;
     saveLock.current = true;
     try {
-      const value = parseNumber(amount);
+      const kept =
+        entry && food === entry.food && amount.unit === start.unit && amount.text === start.text;
+      const item: MealItem = kept
+        ? entry
+        : portionItem(food, amount.unit, parseAmount(amount.text), { previous: entry });
       if (onPick) {
-        scaleNutrients(food, value);
-        onPick(food, value);
+        onPick(food, item.amount, item);
         close();
         return;
       }
@@ -493,8 +521,10 @@ export function FoodEditor({
         meal: diaryLayout === "timeline" && loggedTime ? mealAtTime(loggedTime) : meal,
         loggedTime: loggedTime || null,
         food,
-        amount: value,
-        portionLabel: `${value} ${food.basis === "serving" ? "serving(s)" : food.basis}`,
+        amount: item.amount,
+        portionLabel: item.portionLabel,
+        portionUnit: item.portionUnit,
+        portionCount: item.portionCount,
       });
       refresh();
       close();
@@ -509,11 +539,16 @@ export function FoodEditor({
   let preview = null;
   if (food) {
     try {
-      preview = scaleNutrients(food, parseNumber(amount));
+      preview = portionItem(food, amount.unit, parseAmount(amount.text)).nutrients;
     } catch {
       /* Validation is shown on save. */
     }
   }
+  const picking = !!onPick;
+  const targets = useNutritionQuery(
+    () => (mode === "portion" && !picking ? targetsForDay(day) : null),
+    [mode, picking, day]
+  );
   return (
     <Editor
       title={
@@ -534,15 +569,26 @@ export function FoodEditor({
         mode === "portion" && food ? (
           <View className="gap-2">
             <ErrorText message={error} />
-            <SystemButton onPress={save}>
-              {onPick
-                ? (pickLabel ?? (pickerTitle ? "Add to meal" : "Use ingredient"))
-                : entry
-                  ? "Save changes"
-                  : diaryLayout === "timeline"
-                    ? `Log at ${validFoodTime(loggedTime) ? formatClock(loggedTime) : loggedTime}`
-                    : `Add to ${meal.toLowerCase()}`}
-            </SystemButton>
+            <AmountPicker
+              units={portionUnits(food)}
+              value={amount}
+              onChange={(next) => {
+                setAmount(next);
+                setError("");
+              }}
+              actions={[
+                {
+                  label: onPick
+                    ? (pickLabel ?? (pickerTitle ? "Add to meal" : "Use ingredient"))
+                    : entry
+                      ? "Save changes"
+                      : diaryLayout === "timeline"
+                        ? `Log at ${validFoodTime(loggedTime) ? formatClock(loggedTime) : loggedTime}`
+                        : `Add to ${meal.toLowerCase()}`,
+                  onPress: save,
+                },
+              ]}
+            />
           </View>
         ) : undefined
       }
@@ -667,32 +713,41 @@ export function FoodEditor({
       )}
       {mode === "portion" && food && (
         <>
-          <View className="gap-2">
-            <Text className="text-xl font-semibold">{food.name}</Text>
-            <Text className="text-sm text-muted">
-              {food.brand ? `${food.brand} · ` : ""}
-              {food.source === "usda"
-                ? "USDA FoodData Central"
-                : food.source === "off"
-                  ? "Open Food Facts · check the label"
-                  : food.source === "recipe"
-                    ? "My recipe"
-                    : "My food"}
-            </Text>
-            <SystemButton
-              variant="ghost"
-              className="self-start"
+          <View className="flex-row items-start gap-1">
+            <View className="flex-1 gap-1">
+              <Text className="text-xl font-semibold">{food.name}</Text>
+              <Text className="text-sm text-muted">
+                {food.brand ? `${food.brand} · ` : ""}
+                {food.source === "usda"
+                  ? "USDA FoodData Central"
+                  : food.source === "off"
+                    ? "Open Food Facts · check the label"
+                    : food.source === "recipe"
+                      ? "My recipe"
+                      : "My food"}
+              </Text>
+            </View>
+            <SystemIconButton
+              icon={favorites.some((item) => item.id === food.id) ? "heart" : "heart-outline"}
+              color={
+                favorites.some((item) => item.id === food.id)
+                  ? "accent-soft-foreground"
+                  : "foreground"
+              }
+              accessibilityLabel={
+                favorites.some((item) => item.id === food.id)
+                  ? "Remove from saved foods"
+                  : "Save to my library"
+              }
               onPress={() => {
                 toggleFavorite(food);
                 setFavorites(favoriteFoods());
                 refresh();
               }}
-            >
-              {favorites.some((item) => item.id === food.id)
-                ? "Remove from saved foods"
-                : "Save to my library"}
-            </SystemButton>
+            />
           </View>
+          {/* Correcting an entry is mostly its time, so there the fields come first. */}
+          {!entry && <PortionPreview nutrients={preview} targets={targets} />}
           {!onPick && (
             <>
               <DateInput label="Date" value={day} onChange={setDay} />
@@ -706,42 +761,7 @@ export function FoodEditor({
               )}
             </>
           )}
-          <Field
-            label={`Quantity (${food.basis === "serving" ? "servings" : food.basis})`}
-            value={amount}
-            onChange={setAmount}
-            numeric
-            autoFocus={!entry}
-            selectTextOnFocus
-          />
-          {!!food.portions.length && (
-            <View className="flex-row flex-wrap gap-2">
-              {food.portions.slice(0, 6).map((portion, i) => (
-                <SystemButton
-                  key={i}
-                  variant="secondary"
-                  className={`px-3 ${parseNumber(amount) === portion.amount ? "bg-accent-soft" : ""}`}
-                  accessibilityState={{ selected: parseNumber(amount) === portion.amount }}
-                  onPress={() => setAmount(String(portion.amount))}
-                >
-                  {`${portion.label} · ${number(portion.amount, Number.isInteger(portion.amount) ? 0 : 1)} ${food.basis}`}
-                </SystemButton>
-              ))}
-            </View>
-          )}
-          {preview && (
-            <SystemPanel>
-              <SystemPanel.Body className="gap-2">
-                <Text className="font-semibold tabular-nums text-3xl">
-                  {number(preview.calories, 0)} <Text className="text-base text-muted">kcal</Text>
-                </Text>
-                <Text className="text-sm text-muted">
-                  Protein {number(preview.protein)} g · Carbs {number(preview.carbs)} g · Fat{" "}
-                  {number(preview.fat)} g
-                </Text>
-              </SystemPanel.Body>
-            </SystemPanel>
-          )}
+          {!!entry && <PortionPreview nutrients={preview} targets={targets} />}
           {entry && (
             <SystemButton
               variant="danger-soft"

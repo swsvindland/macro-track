@@ -148,6 +148,11 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
+    "./amount-picker": {
+      AmountPicker: "AmountPicker",
+      PortionPreview: "PortionPreview",
+      DayRing: "DayRing",
+    },
     "./time-field": { TimeField: "TimeField" },
     "./quick-add": { QuickAdd: "QuickAdd" },
     "./photo-logger": {
@@ -204,6 +209,16 @@ function nodes(tree) {
     ...nodes(tree.props?.header),
   ];
 }
+/** Types into a portion screen's amount field, optionally in another of the food's units. */
+function enterAmount(tree, text, unit) {
+  const picker = tree.find((node) => node.type === "AmountPicker");
+  picker.props.onChange({ unit: unit ?? picker.props.value.unit, text, fresh: false });
+}
+const amountAction = (tree, label) =>
+  tree
+    .find((node) => node.type === "AmountPicker")
+    .props.actions.find((action) => action.label === label);
+
 function diaryDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   for (const migration of readdirSync("drizzle")
@@ -682,9 +697,12 @@ test("ingredient picker returns the chosen amount without adding diary food", ()
       onPick: (food, amount) => (picked = { food, amount }),
     })
   );
-  tree
-    .find((node) => node.type === "Button" && node.props.children === "Use ingredient")
-    .props.onPress();
+  assert.deepEqual(
+    tree.find((node) => node.type === "AmountPicker").props.value,
+    { unit: "g", text: "75", fresh: true },
+    "an ingredient's amount opens in its basis"
+  );
+  amountAction(tree, "Use ingredient").onPress();
   assert.equal(picked.amount, 75);
   assert.equal(closed, 1);
   assert.equal(diary.entriesForDay(metrics.localDay()).length, 0);
@@ -1354,6 +1372,621 @@ test("remembered portions follow current food definitions and logger choices fav
   sqlite.close();
 });
 
+const bread = {
+  ...food,
+  id: "custom:bread",
+  name: "Sandwich bread",
+  barcode: null,
+  nutrients: { calories: 250, protein: 9, carbs: 47, fat: 3, fiber: 2.5, sodium: null },
+  portions: [{ label: "2 SLICES (56 g)", amount: 56 }],
+};
+
+test("portion units offer weights, volumes the food converts, its own portions and kcal", () => {
+  const labels = (item) => nutrition.portionUnits(item).map((unit) => unit.label);
+  const perUnit = (item, key) =>
+    nutrition.portionUnits(item).find((unit) => unit.key === key).perUnit;
+  assert.deepEqual(labels(bread), ["g", "oz", "slice", "kcal"]);
+  assert.equal(perUnit(bread, "portion:0"), 28);
+  // A cup of the food gives its density, so every volume converts.
+  const rice = {
+    ...bread,
+    portions: [
+      { label: "1 cup", amount: 158 },
+      { label: "1 serving (approximate serving size)", amount: 186 },
+    ],
+  };
+  assert.deepEqual(labels(rice), [
+    "g",
+    "oz",
+    "ml",
+    "fl oz",
+    "cup",
+    "tbsp",
+    "tsp",
+    "serving",
+    "kcal",
+  ]);
+  assert.equal(perUnit(rice, "cup"), 158);
+  assert.equal(perUnit(rice, "tbsp"), 158 / 16);
+  // A per-serving label with a weight and a measure converts both.
+  const bar = {
+    ...bread,
+    basis: "serving",
+    portions: [
+      { label: "1 serving (2/3 cup (40 g))", amount: 1 },
+      { label: "1 bar", amount: 1 },
+    ],
+  };
+  assert.deepEqual(labels(bar), [
+    "g",
+    "oz",
+    "ml",
+    "fl oz",
+    "cup",
+    "tbsp",
+    "tsp",
+    "serving",
+    "bar",
+    "kcal",
+  ]);
+  assert.equal(perUnit(bar, "g"), 1 / 40);
+  assert.equal(perUnit(bar, "cup"), 1.5);
+  // A drink counts in volumes and its own fluid ounces, and has no grams without a weight.
+  const drink = { ...bread, basis: "ml", portions: [{ label: "12 f oz (360 ml)", amount: 360 }] };
+  assert.deepEqual(labels(drink), ["ml", "fl oz", "cup", "tbsp", "tsp", "kcal"]);
+  assert.deepEqual(nutrition.defaultPortion(drink), { unit: "floz", count: 12 });
+  assert.deepEqual(nutrition.defaultPortion(bread), { unit: "portion:0", count: 2 });
+  assert.deepEqual(nutrition.defaultPortion({ ...bread, portions: [] }), { unit: "g", count: 100 });
+  assert.ok(!labels({ ...drink, nutrients: { ...drink.nutrients, calories: 0 } }).includes("kcal"));
+});
+
+test("portion units keep exact weights and name qualified measures in full", () => {
+  const units = (item) =>
+    nutrition.portionUnits(item).map((unit) => [unit.key, unit.label, unit.perUnit]);
+  // "1 oz, dry, yields" is what an ounce of dry couscous makes, so an ounce stays 28.35 g.
+  const couscous = {
+    ...bread,
+    portions: [
+      { label: "1 cup, dry, yields", amount: 528 },
+      { label: "1 cup, cooked", amount: 157 },
+      { label: "1 oz, dry, yields", amount: 86 },
+    ],
+  };
+  assert.deepEqual(units(couscous).slice(0, 5), [
+    ["g", "g", 1],
+    ["oz", "oz", 28.3495],
+    ["portion:0", "cup, dry, yields", 528],
+    ["portion:1", "cup, cooked", 157],
+    ["portion:2", "oz, dry, yields", 86],
+  ]);
+  assert.equal(nutrition.portionItem(couscous, "oz", 4).portionLabel, "4 oz · 113 g");
+  assert.deepEqual(nutrition.defaultPortion(couscous), { unit: "portion:0", count: 1 });
+  assert.equal(nutrition.portionLabelFor(couscous, "portion:0", 1), "1 cup, dry, yields · 528 g");
+  // Each way of cutting a cup is offered; an unqualified cup gives the density for volumes.
+  const strawberries = {
+    ...bread,
+    portions: [
+      { label: "1 cup, pureed", amount: 232 },
+      { label: "1 cup, sliced", amount: 166 },
+      { label: "1 cup", amount: 144 },
+      { label: '1 large (1-3/8" dia)', amount: 18 },
+    ],
+  };
+  assert.deepEqual(
+    nutrition.portionUnits(strawberries).map((unit) => unit.label),
+    ["g", "oz", "ml", "fl oz", "cup", "tbsp", "tsp", "cup, pureed", "cup, sliced", "large", "kcal"]
+  );
+  assert.equal(nutrition.portionLabelFor(strawberries, "portion:1", 2), "2 cups, sliced · 332 g");
+  assert.equal(nutrition.portionLabelFor(strawberries, "cup", 1), "1 cup · 144 g");
+  // A label whose count disagrees with its weight ("4 oz. (28.349 g)") is left out, so the
+  // food opens at the weight and an ounce stays an ounce.
+  const tenders = { ...bread, portions: [{ label: "4 oz. (28.349 g)", amount: 28.349 }] };
+  assert.deepEqual(units(tenders), [
+    ["g", "g", 1],
+    ["oz", "oz", 28.3495],
+    ["kcal", "kcal", 0.4],
+  ]);
+  assert.deepEqual(nutrition.defaultPortion(tenders), { unit: "g", count: 28.349 });
+  // A label ounce of 28 g is still one ounce.
+  const snack = { ...bread, portions: [{ label: "1 oz (28 g)", amount: 28 }] };
+  assert.deepEqual(nutrition.defaultPortion(snack), { unit: "oz", count: 1 });
+});
+
+test("amount labels count units, keep the estimate mark and never say serving(s)", () => {
+  const label = (item, unit, count, estimate) =>
+    nutrition.portionLabelFor(item, unit, count, { estimate });
+  assert.equal(label(bread, "portion:0", 2), "2 slices · 56 g");
+  assert.equal(label(bread, "portion:0", 0.5), "½ slice · 14 g");
+  assert.equal(label(bread, "portion:0", 1.5), "1½ slices · 42 g");
+  assert.equal(label(bread, "g", 120), "120 g");
+  assert.equal(label(bread, "oz", 2), "2 oz · 57 g");
+  assert.equal(label(bread, "kcal", 300, true), "≈ 300 kcal · 120 g");
+  const serving = { ...bread, basis: "serving", portions: [] };
+  assert.equal(label(serving, "serving", 0.5), "½ serving");
+  assert.equal(label(serving, "serving", 2), "2 servings");
+  assert.equal(label(serving, "kcal", 375), "375 kcal · 1½ servings");
+  assert.equal(nutrition.countLabel(3, "patty"), "3 patties");
+  // A doubled saved meal keeps each food's unit and estimate mark.
+  const item = nutrition.portionItem(bread, "portion:0", 2, { estimate: true });
+  assert.equal(item.portionLabel, "≈ 2 slices · 56 g");
+  const doubled = nutrition.scaleItem(item, 2);
+  assert.deepEqual(
+    [doubled.amount, doubled.portionCount, doubled.portionLabel, doubled.nutrients.calories],
+    [112, 4, "≈ 4 slices · 112 g", 280]
+  );
+  const older = {
+    ...item,
+    food: serving,
+    amount: 1,
+    portionLabel: "1 serving",
+    portionUnit: null,
+    portionCount: null,
+  };
+  assert.equal(nutrition.scaleItem(older, 1.5).portionLabel, "1½ servings");
+  // A saved meal from before units doubles in the unit its label names.
+  const toast = { ...item, portionLabel: "2 slices · 56 g", portionUnit: undefined };
+  assert.deepEqual(
+    [nutrition.scaleItem(toast, 2).portionLabel, nutrition.scaleItem(toast, 2).portionUnit],
+    ["4 slices · 112 g", "portion:0"]
+  );
+});
+
+test("amounts take fractions and mixed numbers and convert between units", () => {
+  for (const [text, value] of [
+    ["2", 2],
+    [".5", 0.5],
+    ["2,5", 2.5],
+    ["1/2", 0.5],
+    ["1 1/2", 1.5],
+    ["½", 0.5],
+    ["1½", 1.5],
+    ["1 ¾", 1.75],
+  ])
+    assert.equal(nutrition.parseAmount(text), value, text);
+  for (const text of ["", "abc", "1/0", "1 1", "-2", "2/"])
+    assert.ok(Number.isNaN(nutrition.parseAmount(text)), text);
+  assert.ok(Number.isNaN(metrics.parseNumber("1/2")), "weigh-ins keep plain decimals");
+  // The keypad builds "1 1/2" over a selected amount and ignores keys that can't make one.
+  let text = "30";
+  for (const [key, fresh] of [
+    ["1", true],
+    [" ", false],
+    ["1", false],
+    ["/", false],
+    ["2", false],
+    ["/", false],
+    [".", false],
+  ])
+    text = nutrition.typeAmount(text, key, fresh);
+  assert.equal(text, "1 1/2");
+  assert.equal(nutrition.typeAmount("1½", "⌫"), "1");
+  assert.equal(nutrition.typeAmount("120", "⌫", true), "");
+  assert.equal(nutrition.typeAmount("0", "5"), "5");
+  const units = nutrition.portionUnits(bread);
+  const convert = (count, from, to) => nutrition.convertCount(units, from, count, to);
+  assert.equal(convert(120, "g", "oz"), 4.2);
+  assert.equal(convert(4.2, "oz", "g"), 119);
+  assert.equal(convert(84, "g", "portion:0"), 3);
+  assert.equal(convert(100, "g", "portion:0"), 3.5, "counts round to the nearest quarter");
+  assert.equal(convert(1.5, "portion:0", "g"), 42);
+  assert.equal(convert(2, "portion:0", "kcal"), 140);
+  assert.equal(convert(300, "kcal", "g"), 120);
+  // "300 kcal" of a food is the weight that has 300 kcal.
+  const kcal = nutrition.portionItem(food, "kcal", 300);
+  assert.ok(Math.abs(kcal.amount - 500 / 3) < 1e-9);
+  assert.ok(Math.abs(kcal.nutrients.calories - 300) < 1e-9);
+  assert.equal(kcal.portionLabel, "300 kcal · 167 g");
+});
+
+test("logging again remembers the unit and count, following the food's current portions", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  diary.saveCustomFood(bread);
+  fastLog.logBatch([nutrition.portionItem(bread, "portion:0", 2)], {
+    day: metrics.localDay(),
+    time: "08:00",
+  });
+  const first = () => fastLog.loggingChoices("08:00").choices[0];
+  const read = (choice) => [
+    choice.detail,
+    choice.items[0].amount,
+    choice.items[0].portionUnit,
+    choice.items[0].portionCount,
+  ];
+  assert.deepEqual(read(first()), ["2 slices · 56 g", 56, "portion:0", 2]);
+  // Thicker slices are still 2 slices.
+  diary.saveCustomFood({ ...bread, portions: [{ label: "1 slice", amount: 32 }] });
+  assert.deepEqual(read(first()), ["2 slices · 64 g", 64, "portion:0", 2]);
+  // Without slices, the last amount in grams.
+  diary.saveCustomFood({ ...bread, portions: [] });
+  assert.deepEqual(read(first()), ["56 g", 56, "g", 56]);
+  sqlite.close();
+});
+
+test("an entry from before units reopens in the unit its label names, round after round", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const day = metrics.localDay();
+  const catalog = (id, portions) => ({
+    ...food,
+    id,
+    name: id,
+    barcode: null,
+    source: "usda",
+    portions,
+  });
+  const egg = catalog("usda:egg", [
+    { label: "1 large", amount: 50 },
+    { label: "1 medium", amount: 44 },
+  ]);
+  const milk = catalog("usda:milk", [{ label: "1 serving", amount: 244 }]);
+  diary.saveEntry({
+    day,
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    food: egg,
+    amount: 88,
+    portionLabel: "2 medium · 88 g",
+  });
+  // "ml" is no unit of this milk, so the label is kept as it is.
+  diary.saveEntry({
+    day,
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    food: milk,
+    amount: 254.2,
+    portionLabel: "≈ 250 ml · 254 g",
+  });
+  const choices = () =>
+    fastLog.loggingChoices("08:00").choices.sort((a, b) => a.title.localeCompare(b.title));
+  const read = () =>
+    choices().map(({ detail, items: [item] }) => [
+      detail,
+      item.amount,
+      item.portionUnit ?? null,
+      item.portionCount ?? null,
+    ]);
+  for (let round = 0; round < 3; round++) {
+    assert.deepEqual(read(), [
+      ["2 medium · 88 g", 88, "portion:1", 2],
+      ["≈ 250 ml · 254 g", 254.2, null, null],
+    ]);
+    fastLog.logBatch(
+      choices().flatMap((choice) => choice.items),
+      { day, time: `08:0${round + 1}` }
+    );
+  }
+  // Older labels spell measures out, name qualified ones and may no longer fit the food.
+  const jam = catalog("usda:jam", [
+    { label: "1 tablespoon", amount: 17 },
+    { label: "1 oz, boneless", amount: 28 },
+  ]);
+  const older = (portionLabel, amount) => nutrition.portionOf({ food: jam, amount, portionLabel });
+  assert.deepEqual(older("2 tablespoon · 34 g", 34), { unit: "tbsp", count: 2 });
+  assert.deepEqual(older("1 oz, boneless · 28 g", 28), { unit: "portion:1", count: 1 });
+  assert.deepEqual(older("≈ 1½ tbsp · 26 g", 25.5), { unit: "tbsp", count: 1.5 });
+  assert.deepEqual(older("3 tablespoon · 60 g", 60), { unit: "g", count: 60 });
+  // Confirming it unchanged on the portion screen keeps it too.
+  const kept = choices()[1].items[0];
+  const same = nutrition.portionItem(milk, "g", 254.2, { previous: kept });
+  assert.deepEqual(
+    [same.portionLabel, same.portionUnit, same.amount],
+    ["≈ 250 ml · 254 g", null, 254.2]
+  );
+  sqlite.close();
+});
+
+test("copied and saved meals keep each food's unit and count", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const day = metrics.localDay(),
+    yesterday = nutrition.shiftDay(day, -1);
+  diary.saveEntry({
+    day: yesterday,
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    ...nutrition.portionItem(bread, "portion:0", 2),
+  });
+  diary.copyMeal(yesterday, "Breakfast", day, "Breakfast", "08:00");
+  const saved = diary.saveMeal("Toast", yesterday, "Breakfast");
+  assert.deepEqual([saved.items[0].portionUnit, saved.items[0].portionCount], ["portion:0", 2]);
+  diary.logSavedMeal(saved.id, day, "Lunch", 2, "12:00");
+  assert.deepEqual(
+    diary
+      .entriesForDay(day)
+      .map((entry) => [entry.portionLabel, entry.amount, entry.portionUnit, entry.portionCount]),
+    [
+      ["2 slices · 56 g", 56, "portion:0", 2],
+      ["4 slices · 112 g", 112, "portion:0", 4],
+    ]
+  );
+  const [choice] = fastLog.loggingChoices("12:00").choices;
+  assert.deepEqual(
+    [choice.detail, choice.items[0].portionUnit, choice.items[0].portionCount],
+    ["4 slices · 112 g", "portion:0", 4]
+  );
+  sqlite.close();
+});
+
+test("an entry's unit and count survive a backup, and older backups restore without them", () => {
+  const { diary, sqlite, backup } = diaryDatabase();
+  diary.saveEntry({
+    day: "2024-01-01",
+    meal: "Breakfast",
+    ...nutrition.portionItem(bread, "portion:0", 1.5),
+  });
+  const original = backup.createBackup();
+  const [saved] = original.data.entries;
+  assert.deepEqual([saved.portionUnit, saved.portionCount], ["portion:0", 1.5]);
+  backup.restoreBackup(backup.parseBackup(JSON.stringify(original)));
+  assert.deepEqual(backup.createBackup().data, original.data);
+  const older = JSON.parse(JSON.stringify(original));
+  for (const entry of older.data.entries) {
+    delete entry.portionUnit;
+    delete entry.portionCount;
+  }
+  backup.restoreBackup(older);
+  const [restored] = diary.entriesForDay("2024-01-01");
+  assert.deepEqual(
+    [restored.portionUnit, restored.portionCount, restored.portionLabel, restored.amount],
+    [null, null, "1½ slices · 42 g", 42]
+  );
+  sqlite.close();
+});
+
+test("compiled entry editor keeps the amount and label when only the time changes", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const day = metrics.localDay();
+  diary.saveEntry({
+    day,
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    ...nutrition.portionItem(bread, "portion:0", 2, { estimate: true }),
+  });
+  diary.saveEntry({
+    day,
+    meal: "Breakfast",
+    loggedTime: "08:05",
+    food,
+    amount: 50,
+    portionLabel: "1 large · 50 g",
+  });
+  const edit = (entry, change) => {
+    const harness = screenHarness(diary, { diaryLayout: "timeline" });
+    const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
+    const render = () => nodes(harness.render(FoodEditor, { entry, close: () => {} }));
+    change(render);
+    amountAction(render(), "Save changes").onPress();
+  };
+  const time = (value) => (render) =>
+    render()
+      .find((node) => node.type === "TimeField")
+      .props.onChange(value);
+  let [estimate, older] = diary.entriesForDay(day);
+  edit(estimate, (render) => {
+    const tree = render();
+    const at = (type) => tree.findIndex((node) => node.type === type);
+    assert.ok(at("TimeField") < at("PortionPreview"), "a correction starts with the time");
+    time("09:15")(render);
+  });
+  edit(older, time("09:20"));
+  [estimate, older] = diary.entriesForDay(day);
+  assert.deepEqual(
+    [estimate.loggedTime, estimate.amount, estimate.portionLabel, estimate.portionCount],
+    ["09:15", 56, "≈ 2 slices · 56 g", 2]
+  );
+  assert.deepEqual(
+    [older.loggedTime, older.amount, older.portionLabel],
+    ["09:20", 50, "1 large · 50 g"]
+  );
+  // A new amount is the person's own, so it is labeled afresh.
+  edit(estimate, (render) => {
+    assert.deepEqual(render().find((node) => node.type === "AmountPicker").props.value, {
+      unit: "portion:0",
+      text: "2",
+      fresh: true,
+    });
+    enterAmount(render(), "3");
+  });
+  [estimate] = diary.entriesForDay(day);
+  assert.deepEqual(
+    [estimate.amount, estimate.portionLabel, estimate.portionCount],
+    [84, "3 slices · 84 g", 3]
+  );
+  sqlite.close();
+});
+
+/** FastLogger with the real, compiled amount picker, whose keys and chips a test can press. */
+function keypadLogger(diary, fastLog) {
+  const keypad = screenHarness(
+    diary,
+    {},
+    {
+      "react-native-svg": { __esModule: true, default: "Svg", Circle: "Circle" },
+      "heroui-native": { useThemeColor: () => "#000000" },
+    }
+  );
+  const picker = keypad.load("src/components/nutrition/amount-picker.tsx");
+  const harness = screenHarness(
+    diary,
+    {},
+    { "@/lib/fast-log": fastLog, "./amount-picker": picker }
+  );
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const state = { closed: 0 };
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "08:10",
+        close: () => state.closed++,
+        onLogged: () => {},
+      })
+    );
+  const props = (type) => render().find((node) => node.type === type).props;
+  const pad = () => nodes(keypad.render(picker.AmountPicker, props(picker.AmountPicker)));
+  return {
+    state,
+    render,
+    value: () => props(picker.AmountPicker).value,
+    preview: () => props(picker.PortionPreview),
+    ring: () => props(picker.DayRing),
+    press: (...keys) => {
+      for (const key of keys)
+        pad()
+          .find((node) => node.props.value === key && node.props.onPress)
+          .props.onPress();
+    },
+    chip: (label) => pad().find((node) => node.props.unit?.label === label),
+    button: (label) =>
+      pad().find(
+        (node) =>
+          (node.type === "Button" && node.props.children === label) ||
+          (node.type === "IconButton" && node.props.accessibilityLabel === label)
+      ),
+  };
+}
+
+test("compiled keypad logs 1 1/2 slices, converts a prefilled amount and logs 300 kcal as grams", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const day = metrics.localDay();
+  diary.saveCustomFood(bread);
+  diary.saveTargets(day, { calories: 2000, protein: 150, carbs: 200, fat: 70 });
+  diary.saveEntry({
+    day: nutrition.shiftDay(day, -1),
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    ...nutrition.portionItem(bread, "g", 60),
+  });
+  let logger = keypadLogger(diary, fastLog);
+  logger
+    .render()
+    .find((node) => node.props.accessibilityLabel === `Adjust ${bread.name}`)
+    .props.onPress();
+  assert.deepEqual(logger.value(), { unit: "g", text: "60", fresh: true });
+  // A prefilled amount converts, so the preview hardly moves: 60 g is about 2¼ slices.
+  logger.chip("slice").props.onPress();
+  assert.deepEqual(logger.value(), { unit: "portion:0", text: "2¼", fresh: true });
+  assert.equal(logger.chip("slice").props.selected, true);
+  assert.equal(logger.chip("g").props.selected, false);
+  // A typed number keeps its value when a unit is picked after it.
+  logger.chip("g").props.onPress();
+  logger.press("1", " ", "1", "/", "2");
+  assert.equal(logger.value().text, "1 1/2");
+  logger.chip("slice").props.onPress();
+  assert.deepEqual(logger.value(), { unit: "portion:0", text: "1 1/2", fresh: true });
+  assert.equal(logger.preview().nutrients.calories, 105);
+  assert.equal(logger.preview().targets.calories, 2000, "rings use the day's targets");
+  assert.deepEqual(logger.ring(), { calories: 105, target: 2000 });
+  logger.button("Add").props.onPress();
+  assert.deepEqual(
+    logger.ring(),
+    { calories: 105, target: 2000 },
+    "the header counts the selection"
+  );
+  logger
+    .render()
+    .find((node) => node.props.children === "Log 1 food")
+    .props.onPress();
+  let [entry] = diary.entriesForDay(day);
+  assert.deepEqual(
+    [entry.amount, entry.portionLabel, entry.portionUnit, entry.portionCount],
+    [42, "1½ slices · 42 g", "portion:0", 1.5]
+  );
+  assert.equal(logger.state.closed, 1);
+
+  // Next time it opens at 1½ slices; − then two taps on + make 2, and kcal converts them.
+  logger = keypadLogger(diary, fastLog);
+  logger
+    .render()
+    .find((node) => node.props.accessibilityLabel === `Adjust ${bread.name}`)
+    .props.onPress();
+  assert.deepEqual(logger.value(), { unit: "portion:0", text: "1½", fresh: true });
+  logger.button("Decrease by ½ slice").props.onPress();
+  logger.button("Increase by ½ slice").props.onPress();
+  logger.button("Increase by ½ slice").props.onPress();
+  assert.equal(logger.value().text, "2");
+  logger.chip("kcal").props.onPress();
+  assert.deepEqual(logger.value(), { unit: "kcal", text: "140", fresh: true });
+  logger.press("3", "0", "0");
+  logger.button("Log").props.onPress();
+  entry = diary.entriesForDay(day)[1];
+  assert.deepEqual(
+    [entry.amount, entry.nutrients.calories, entry.portionLabel, entry.portionUnit],
+    [120, 300, "300 kcal · 120 g", "kcal"]
+  );
+  sqlite.close();
+});
+
+test("compiled amount picker steps aside while the system keyboard types another field", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const listeners = {};
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "react-native-svg": { __esModule: true, default: "Svg", Circle: "Circle" },
+      "heroui-native": { useThemeColor: () => "#000000" },
+      "react-native": {
+        View: "View",
+        Pressable: "Pressable",
+        ScrollView: "ScrollView",
+        Platform: { OS: "ios" },
+        Keyboard: {
+          addListener: (name, listener) => {
+            listeners[name] = listener;
+            return { remove: () => delete listeners[name] };
+          },
+        },
+      },
+    }
+  );
+  const { AmountPicker } = harness.load("src/components/nutrition/amount-picker.tsx");
+  const render = () =>
+    nodes(
+      harness.render(AmountPicker, {
+        units: nutrition.portionUnits(bread),
+        value: { unit: "g", text: "60", fresh: true },
+        onChange: () => {},
+        actions: [{ label: "Save changes", onPress: () => {} }],
+      })
+    );
+  const keys = () => render().filter((node) => node.props?.value === "1").length;
+  assert.equal(keys(), 1);
+  const stop = harness.effects[0]();
+  listeners.keyboardWillShow();
+  assert.equal(keys(), 0);
+  assert.ok(
+    render().some((node) => node.type === "Button" && node.props.children === "Save changes")
+  );
+  listeners.keyboardWillHide();
+  assert.equal(keys(), 1);
+  stop();
+  assert.deepEqual(Object.keys(listeners), []);
+  sqlite.close();
+});
+
+test("the portion screen saves a catalog food as a saved food", () => {
+  const { diary, sqlite, render } = fastLoggerHarness();
+  const catalog = { ...bread, id: "usda:bread", source: "usda", barcode: null };
+  diary.saveEntry({
+    day: metrics.localDay(),
+    meal: "Breakfast",
+    loggedTime: "08:00",
+    ...nutrition.portionItem(catalog, "portion:0", 2),
+  });
+  render()
+    .find((node) => node.props.accessibilityLabel === `Adjust ${catalog.name}`)
+    .props.onPress();
+  const icon = (label) => render().find((node) => node.props.accessibilityLabel === label);
+  icon("Save food").props.onPress();
+  assert.deepEqual(
+    diary.favoriteFoods().map((row) => row.id),
+    [catalog.id]
+  );
+  assert.ok(icon("Remove from saved foods"));
+  // Without a way to edit or delete one's own foods, a copy would only clutter search.
+  assert.equal(icon("Save as my food"), undefined);
+  sqlite.close();
+});
+
 /** Writes diary history straight to SQLite, dated `daysAgo` and created when it was eaten. */
 function historyWriter(sqlite) {
   const insert = sqlite.prepare(
@@ -1467,7 +2100,11 @@ test("saved foods stay visible above a long history and add in one tap", () => {
   assert.ok(tree.some((node) => node.props.accessibilityLabel === "Remove Never eaten"));
   assert.ok(tree.some((node) => node.props.children === "Log 1 food"));
   tree.find((node) => node.props.accessibilityLabel === "Add Old favorite").props.onLongPress();
-  assert.equal(render().find((node) => node.type === "Field").props.value, "42");
+  assert.deepEqual(render().find((node) => node.type === "AmountPicker").props.value, {
+    unit: "g",
+    text: "42",
+    fresh: true,
+  });
   sqlite.close();
 });
 
@@ -1705,20 +2342,17 @@ test("compiled fast logger keeps selected foods through scanning and permits qua
   render()
     .find((node) => node.props.accessibilityLabel === `Adjust ${food.name}`)
     .props.onPress();
-  render()
-    .find((node) => node.type === "Field")
-    .props.onChange("90");
-  render()
-    .find((node) => node.props.children === "Add to meal")
-    .props.onPress();
-  assert.equal(diary.entriesForDay(day).length, 0, "Add to meal keeps a draft");
+  enterAmount(render(), "90", "g");
+  amountAction(render(), "Add").onPress();
+  assert.equal(diary.entriesForDay(day).length, 0, "Add keeps a draft");
   render()
     .find((node) => node.props.children === "Scan")
     .props.onPress();
   const picker = render().find((node) => node.type === "FoodEditor");
   assert.equal(picker.props.initialMode, "barcode");
   assert.equal(picker.props.pickLabel, undefined, "a scan joins the selected foods");
-  picker.props.onPick({ ...food, id: "off:scan", name: "Scanned food", source: "off" }, 50);
+  const scanned = { ...food, id: "off:scan", name: "Scanned food", source: "off" };
+  picker.props.onPick(scanned, 50, nutrition.portionItem(scanned, "g", 50));
   picker.props.close();
   render()
     .find((node) => node.props.children === "Log 2 foods")
@@ -2133,17 +2767,28 @@ test("compiled fast logger logs a single adjusted portion in one tap and backs o
   render()
     .find((node) => node.props.accessibilityLabel === `Adjust ${food.name}`)
     .props.onPress();
-  const field = render().find((node) => node.type === "Field");
-  assert.equal(field.props.value, "30");
-  assert.equal(field.props.autoFocus, true);
-  assert.equal(field.props.selectTextOnFocus, true);
-  field.props.onChange("90");
-  const log = render().find(
-    (node) => node.type === "Button" && /^Log 90 g · /.test(node.props.children)
+  const picker = render().find((node) => node.type === "AmountPicker");
+  assert.deepEqual(
+    picker.props.value,
+    { unit: "portion:0", text: "1", fresh: true },
+    "the usual portion, selected so the first key replaces it"
   );
-  assert.equal(log.props.children, "Log 90 g · 162 kcal");
-  log.props.onPress();
-  log.props.onPress();
+  assert.deepEqual(
+    picker.props.units.map((unit) => unit.label),
+    ["g", "oz", "serving", "kcal"]
+  );
+  assert.equal(
+    render().find((node) => node.type === "PortionPreview").props.nutrients.calories,
+    54
+  );
+  enterAmount(render(), "90", "g");
+  assert.equal(
+    render().find((node) => node.type === "PortionPreview").props.nutrients.calories,
+    162
+  );
+  const log = amountAction(render(), "Log");
+  log.onPress();
+  log.onPress();
   assert.deepEqual(
     diary.entriesForDay(day).map((row) => [row.amount, row.loggedTime]),
     [[90, "12:10"]]
@@ -2175,8 +2820,9 @@ test("compiled fast logger logs a scan or new food directly when nothing else is
   const picker = render().find((node) => node.type === "FoodEditor");
   assert.equal(picker.props.pickLabel, "Log");
   const scanned = { ...food, id: "off:scan", name: "Scanned food", source: "off" };
-  picker.props.onPick(scanned, 50);
-  picker.props.onPick(scanned, 50);
+  const pick = () => picker.props.onPick(scanned, 50, nutrition.portionItem(scanned, "g", 50));
+  pick();
+  pick();
   picker.props.close();
   assert.deepEqual(
     diary.entriesForDay(metrics.localDay()).map((row) => [row.food.name, row.amount]),
@@ -2202,7 +2848,7 @@ test("compiled fast logger logs a scan or new food directly when nothing else is
     .render({ start: "barcode", initialDay: yesterday })
     .find((node) => node.type === "FoodEditor");
   assert.equal(pastPicker.props.pickLabel, undefined);
-  pastPicker.props.onPick(scanned, 50);
+  pastPicker.props.onPick(scanned, 50, nutrition.portionItem(scanned, "g", 50));
   pastPicker.props.close();
   assert.equal(past.diary.entriesForDay(yesterday).length, 0);
   assert.equal(past.state.closed, 0, "the draft stays open");
@@ -2661,12 +3307,13 @@ test("compiled photo logger keeps the reviewed draft when a re-run finds nothing
   render()
     .find((node) => node.props.accessibilityLabel === "Adjust Bananas, raw")
     .props.onPress();
-  render()
-    .find((node) => node.type === "Field" && node.props.label.startsWith("Quantity"))
-    .props.onChange("200");
-  render()
-    .find((node) => String(node.props.children).startsWith("Use 200 g"))
-    .props.onPress();
+  assert.deepEqual(
+    render().find((node) => node.type === "AmountPicker").props.value,
+    { unit: "portion:0", text: "1", fresh: true },
+    "the photo's one medium banana"
+  );
+  enterAmount(render(), "200", "g");
+  amountAction(render(), "Use").onPress();
   const portion = () =>
     render().some(
       (node) => typeof node.props.children === "string" && /^200 g · /.test(node.props.children)

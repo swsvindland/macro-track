@@ -62,6 +62,9 @@ const item = z.strictObject({
   food,
   amount: positive.max(100000),
   portionLabel: text.min(1),
+  // Added after the first backups, which restore with neither.
+  portionUnit: z.string().max(80).nullable().optional(),
+  portionCount: positive.max(100000).nullable().optional(),
   nutrients,
 });
 const iso = z.iso.datetime();

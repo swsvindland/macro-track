@@ -11,7 +11,20 @@ import {
   words,
 } from "./food-rank";
 import type { JsonSchema } from "./model-json";
-import { scaleNutrients, type Food, type MealItem } from "./nutrition";
+import {
+  countLabel,
+  formatCount,
+  parseAmount,
+  parsePortion,
+  portionLabelFor,
+  portionUnitKey,
+  portionUnits,
+  scaleNutrients,
+  servingSize,
+  sizes,
+  type Food,
+  type MealItem,
+} from "./nutrition";
 
 export { isBranded, rankFoods, stem, words } from "./food-rank";
 
@@ -409,7 +422,7 @@ const measures = new Set(
   (
     "cup tbsp tablespoon tsp teaspoon oz ounce lb pound g gram kg ml fl floz l liter pint " +
     "quart gallon package pkg container can bottle jar box bag scoop stick pat serving order " +
-    "portion cubic inch unit yield onz"
+    "portion cubic inch unit yield onz kcal"
   ).split(" ")
 );
 // stem() leaves words of three letters alone, so short plurals are listed too.
@@ -446,6 +459,8 @@ const unitNames: Record<string, string> = {
   unit: "piece",
   count: "piece",
   onz: "oz",
+  cal: "kcal",
+  calorie: "kcal",
 };
 const weights: Record<string, number> = { g: 1, oz: 28.35, lb: 453.6, kg: 1000 };
 const volumes: Record<string, number> = {
@@ -459,123 +474,104 @@ const volumes: Record<string, number> = {
   quart: 946,
   gallon: 3785,
 };
-const sizes = new Set(["small", "medium", "large", "regular", "extra", "jumbo", "whole", "kid"]);
-
 export function unitKey(unit: string) {
   const list = words(unit.replace(/\bfl(?:uid)?\.?\s*(?:oz|ounces?)\b/i, "floz"));
   const word = stem(list[0] ?? "piece");
   return unitNames[word] ?? unitNames[list[0] ?? ""] ?? word;
 }
 
-/** "1/2", ".5" and the mixed "1 1/2". */
-const fraction = (value: string) =>
-  value
-    .trim()
-    .split(/\s+/)
-    .reduce(
-      (sum, part) =>
-        sum +
-        (part.includes("/")
-          ? Number(part.split("/")[0]) / Number(part.split("/")[1])
-          : Number(part)),
-      0
-    );
-
-/**
- * A per-serving food's serving weight and volume, when its label gives them: "1 serving (30 g)",
- * "1 serving (2 tbsp (32g))".
- */
-function servingSize(food: Food) {
-  const size: { weight?: number; volume?: number } = {};
-  for (const portion of food.portions)
-    for (const [, count, name] of portion.label.matchAll(
-      /(\d+\s+\d+\/\d+|\d+\/\d+|\d*\.\d+|\d+)\s*(fl(?:uid)?\.?\s*(?:oz|ounces?)\b|[a-z]+)/gi
-    )) {
-      const unit = unitKey(name);
-      const kind = weights[unit] ? "weight" : "volume";
-      const amount = (fraction(count) * (weights[unit] ?? volumes[unit] ?? 0)) / portion.amount;
-      if (amount > 0 && Number.isFinite(amount)) size[kind] ??= amount;
-    }
-  return size;
-}
-
 /** `noun` is what one portion counts: "slice" in "1 slice, medium", "serving" in "1 large serving". */
-type Portion = { perUnit: number; name: string; words: string[]; noun: string };
-function parsePortion(portion: Food["portions"][number]): Portion | null {
-  const match = /^\s*(\d+(?:\.\d+)?|\d+\/\d+)\s+(.+)$/.exec(portion.label);
-  const count = match ? fraction(match[1]) : 1;
-  // "1 roll 1 serving" and "1 cup, chopped (1/2\" pieces)" are shown as "roll" and "cup".
-  const name = (match?.[2] ?? portion.label)
-    .split(/[,(]|\s\d/)[0]
-    .trim()
-    .toLowerCase();
-  // Some packaged-food portions are only a weight ("1 151.0g"), which names no unit.
-  if (!name || /^\d/.test(name) || !(count > 0) || !(portion.amount > 0)) return null;
-  const list = words(name).map(stem);
-  const noun = list.find((word) => !sizes.has(word)) ?? list[0] ?? "";
-  return { perUnit: portion.amount / count, name, words: list, noun };
-}
-
-function countLabel(quantity: number, name: string) {
-  const amount = Number(quantity.toFixed(2));
-  const [first = "serving", ...rest] = name.toLowerCase().split(" ");
-  if (amount === 1) return [1, first, ...rest].join(" ");
-  const plural =
-    sizes.has(first) || measures.has(first) || first.endsWith("s")
-      ? first
-      : first.endsWith("y") && !/[aeiou]y$/.test(first)
-        ? `${first.slice(0, -1)}ies`
-        : /(?:x|ch|sh)$/.test(first)
-          ? `${first}es`
-          : `${first}s`;
-  return [amount, plural, ...rest].join(" ");
+type Portion = { index: number; perUnit: number; name: string; noun: string };
+function portionsOf(food: Food): Portion[] {
+  return food.portions.flatMap((portion, index) => {
+    const parsed = parsePortion(portion);
+    if (!parsed) return [];
+    const list = words(parsed.name).map(stem);
+    const noun = list.find((word) => !sizes.has(word)) ?? list[0] ?? "";
+    return [{ index, perUnit: parsed.perUnit, name: parsed.name, noun }];
+  });
 }
 
 /**
- * Converts the seen quantity to the food's basis. Catalog portions ("1 slice = 113 g")
- * beat the model's own weight guess, which is the least reliable thing it produces.
+ * Converts the seen quantity to the food's basis, and to the unit the portion screen offers
+ * for it. Catalog portions ("1 slice = 113 g") beat the model's own weight guess, which is the
+ * least reliable thing it produces.
  */
 export function resolveAmount(
   seen: SeenFood,
   food: Food
-): { amount: number; portionLabel: string } {
+): { amount: number; portionLabel: string; unit: string; count: number } {
   const quantity = seen.quantity;
   const unit = unitKey(seen.unit);
-  const done = (amount: number, shown: string) => {
+  const units = portionUnits(food);
+  /** `count` is the seen quantity when it counts the `key` unit, whose label then describes it. */
+  const done = (amount: number, shown: string, key?: string | null, count?: number) => {
     // No single food in a meal plausibly weighs more than 2 kg.
-    const value = Math.min(Math.max(amount, food.basis === "serving" ? 0.1 : 1), 2000);
+    const value = Number(
+      Math.min(Math.max(amount, food.basis === "serving" ? 0.1 : 1), 2000).toFixed(
+        food.basis === "serving" ? 2 : 1
+      )
+    );
+    const found = units.find((row) => row.key === key);
+    const unit = found ?? units.find((row) => row.key === food.basis)!;
+    // The seen count, unless the cap changed the amount; shown as the amount field shows it.
+    const counted =
+      count !== undefined && Math.abs(count * unit.perUnit - value) <= value * 0.01
+        ? count
+        : value / unit.perUnit;
+    const shownCount = parseAmount(formatCount(counted, unit));
     return {
-      amount: Number(value.toFixed(food.basis === "serving" ? 2 : 1)),
+      amount: value,
       portionLabel:
-        food.basis === "serving" ? `≈ ${shown}` : `≈ ${shown} · ${Math.round(value)} ${food.basis}`,
+        found && count !== undefined
+          ? portionLabelFor(food, found.key, shownCount, { estimate: true })
+          : food.basis === "serving"
+            ? `≈ ${shown}`
+            : `≈ ${shown} · ${Math.round(value)} ${food.basis}`,
+      unit: unit.key,
+      count: shownCount,
     };
   };
   const shown = unit === "floz" ? "fl oz" : unit;
+  const servings = (value: number) => {
+    const count = Number(value.toFixed(2));
+    return `${countLabel(quantity, shown)} · ${count} serving${count === 1 ? "" : "s"}`;
+  };
+  // Grams, cups or kcal the food converts itself.
+  const direct = units.find((row) => row.key === unit && row.kind !== "count");
+  if (direct) return done(quantity * direct.perUnit, "", unit, quantity);
   const measured = weights[unit] ?? volumes[unit];
   if (food.basis === "serving") {
     const serving = food.portions[0]?.label.replace(/^1\s+/, "") || "serving";
-    if (!measured) return done(quantity, countLabel(quantity, serving));
+    const first = food.portions.length ? portionUnitKey(food, 0) : null;
+    if (!measured) return done(quantity, countLabel(quantity, serving), first, quantity);
     // "30 g" is 30 g worth of servings, not 30 of them. Without a serving weight it is one
     // serving, which the "≈" marks as a guess.
     const size = servingSize(food)[weights[unit] ? "weight" : "volume"];
-    if (!size) return done(1, countLabel(1, serving));
-    const servings = Number(((quantity * measured) / size).toFixed(2));
-    return done(
-      servings,
-      `${countLabel(quantity, shown)} · ${servings} serving${servings === 1 ? "" : "s"}`
-    );
+    if (!size) return done(1, countLabel(1, serving), first);
+    const amount = (quantity * measured) / size;
+    return done(amount, servings(amount));
   }
   if (food.basis === "g" && weights[unit])
     return done(quantity * weights[unit], countLabel(quantity, shown));
   if (food.basis === "ml" && volumes[unit])
     return done(quantity * volumes[unit], countLabel(quantity, shown));
-  const portions = food.portions.map(parsePortion).filter((p): p is Portion => !!p);
+  const portions = portionsOf(food);
+  // "1 cup, dry, yields" is what a cup of the dry food makes, not a cup of this one.
   const pick = (list: Portion[]) =>
-    list.find((p) => /\b(?:medium|regular)\b/.test(p.name)) ?? list[0];
+    list.find((p) => /\b(?:medium|regular)\b/.test(p.name)) ??
+    list.find((p) => !/\byields?\b/i.test(food.portions[p.index].label)) ??
+    list[0];
+  const key = (portion: Portion) => portionUnitKey(food, portion.index);
   const named = portions.filter((p) => forms(unit).some((form) => p.noun === stem(form)));
   if (named.length) {
     const portion = pick(named);
-    return done(quantity * portion.perUnit, countLabel(quantity, portion.name));
+    return done(
+      quantity * portion.perUnit,
+      countLabel(quantity, portion.name),
+      key(portion),
+      quantity
+    );
   }
   // "250 ml" of milk goes through its own "1 fl oz" of 30.5 g; without one, or for a drink logged
   // by weight, the model's weight or water's density.
@@ -599,7 +595,7 @@ export function resolveAmount(
     // Several of something are small pieces: ten nigiri are not ten salmon fillets.
     const small = quantity < 3 || (portion?.perUnit ?? 0) <= 150;
     if (portion && small && (!seen.grams || (grams < seen.grams * 4 && grams > seen.grams / 4)))
-      return done(grams, countLabel(quantity, portion.name));
+      return done(grams, countLabel(quantity, portion.name), key(portion), quantity);
   }
   if (seen.grams)
     return done(
@@ -608,13 +604,20 @@ export function resolveAmount(
     );
   const first = portions[0];
   return first
-    ? done(quantity * first.perUnit, countLabel(quantity, first.name))
+    ? done(quantity * first.perUnit, countLabel(quantity, first.name), key(first), quantity)
     : done(100 * quantity, countLabel(quantity, seen.unit));
 }
 
 export function draftItem(seen: SeenFood, food: Food): MealItem {
-  const { amount, portionLabel } = resolveAmount(seen, food);
-  return { food, amount, portionLabel, nutrients: scaleNutrients(food, amount) };
+  const { amount, portionLabel, unit, count } = resolveAmount(seen, food);
+  return {
+    food,
+    amount,
+    portionLabel,
+    portionUnit: unit,
+    portionCount: count,
+    nutrients: scaleNutrients(food, amount),
+  };
 }
 
 // --- The whole analysis ---

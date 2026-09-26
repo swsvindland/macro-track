@@ -13,6 +13,7 @@ import m0008 from "./0008_late_marauders.sql";
 import m0009 from "./0009_organic_terrax.sql";
 import m0010 from "./0010_fast_recent_foods.sql";
 import m0011 from "./0011_weight_time_index.sql";
+import m0012 from "./0012_portion_units.sql";
 
 export default {
   journal,
@@ -29,5 +30,6 @@ export default {
     m0009,
     m0010,
     m0011,
+    m0012,
   },
 };
