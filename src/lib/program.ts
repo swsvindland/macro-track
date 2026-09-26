@@ -1,4 +1,4 @@
-import { shiftDay, type Targets } from "./nutrition";
+import { coachedWeek, shiftDay, type CalorieShift, type Targets } from "./nutrition";
 import { weightTrend, type TrendPoint } from "./metrics";
 import type { Goal, Review } from "./coaching";
 
@@ -15,9 +15,29 @@ export type Program = {
   checkInDay: number;
   /** Macros set at a check-in: fixed protein grams, and carbs' percentage of the other calories. */
   custom?: { proteinG?: number; carbPct?: number };
+  /** Higher-calorie weekdays inside the same weekly budget; none when absent. */
+  shift?: CalorieShift;
 };
+/**
+ * Checks calorie shifting. With targets, the other days also keep at least 75% of them and enough
+ * calories for carbs and fat, and every day stays in the coached range.
+ */
+export function validateShift(shift: CalorieShift, targets?: Targets) {
+  const { days, size, unit } = shift;
+  if (
+    !Array.isArray(days) ||
+    days.length < 1 ||
+    days.length > 6 ||
+    new Set(days).size !== days.length ||
+    days.some((day) => !Number.isInteger(day) || day < 0 || day > 6) ||
+    !(unit === "%" ? size >= 1 && size <= 50 : unit === "kcal" && size >= 10 && size <= 1000)
+  )
+    throw new Error("Choose one to six higher days and how much more they get.");
+  if (targets) coachedWeek(targets, shift);
+}
 export function validateProgram(p: Program) {
   const { proteinG, carbPct } = p.custom ?? {};
+  if (p.shift) validateShift(p.shift);
   if (
     (proteinG !== undefined && !(proteinG >= 40 && proteinG <= 500)) ||
     (carbPct !== undefined && !(carbPct >= 0 && carbPct <= 100)) ||
@@ -187,7 +207,26 @@ export function startingTargets(
   const rate = goalRate(goal, weight, p.targetWeightKg);
   return programMacros(Math.round(expenditure + (rate * 7700) / 7), weight, p);
 }
+/**
+ * How far the trend has come from a cut or bulk's starting weight toward its goal, from 0 to 1.
+ * Maintenance has no distance to cover, so it has none.
+ */
+export function goalProgress(goal: Goal, startKg: number, trendKg: number, targetKg: number) {
+  if (goal.mode !== "lose" && goal.mode !== "gain") return null;
+  if (goalRate(goal, trendKg, targetKg) === 0) return 1;
+  const total = targetKg - startKg;
+  return total ? Math.min(1, Math.max(0, (trendKg - startKg) / total)) : 0;
+}
 const DAY_MS = 86400000;
+/**
+ * Whole days until a check-in, 0 on the day and negative once it's overdue, and the share of
+ * its cycle since `from`, the last check-in or the program's start, that has passed.
+ */
+export function checkInCycle(day: string, due: string, from: string) {
+  const days = Math.round((Date.parse(due) - Date.parse(day)) / DAY_MS),
+    span = Math.round((Date.parse(due) - Date.parse(from)) / DAY_MS);
+  return { days, progress: days <= 0 ? 1 : span > days ? 1 - days / span : 0 };
+}
 /**
  * The trend on each of `length` days from `from`: a weigh-in day's own value, or a straight line
  * between trend points at most seven days apart. Other days are null.

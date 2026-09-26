@@ -120,6 +120,18 @@ const dataSchema = z.strictObject({
                   carbPct: z.number().min(0).max(100).optional(),
                 })
                 .optional(),
+              // Added with calorie shifting; older backups restore without it.
+              shift: z
+                .strictObject({
+                  days: z
+                    .array(z.number().int().min(0).max(6))
+                    .min(1)
+                    .max(6)
+                    .refine((days) => new Set(days).size === days.length),
+                  size: z.number().positive().max(1000),
+                  unit: z.enum(["%", "kcal"]),
+                })
+                .optional(),
             })
             .nullable()
             .optional(),

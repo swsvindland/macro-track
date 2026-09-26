@@ -2,11 +2,11 @@ import { currentGoal } from "@/lib/coaching-store";
 import { router } from "expo-router";
 import type { Targets } from "@/lib/nutrition";
 import { CoachingPanel } from "./coaching-panel";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AccessibilityInfo, Platform, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { ErrorText, Field, Screen } from "@/components/ui";
-import { targetsForDay, saveTargets } from "@/lib/diary";
+import { baseTargetsForDay, saveTargets } from "@/lib/diary";
 import { localDay, parseNumber } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
@@ -21,8 +21,9 @@ const targetValues = (targets: Targets | null): TargetValues => ({
 });
 const savedMessage = "Targets saved. You’re ready to log.";
 
-export function PlanScreen() {
-  const targets = useNutritionQuery(() => targetsForDay(localDay()));
+/** `footer` floats above the tab bar, and the content scrolls clear of it. */
+export function PlanScreen({ footer }: { footer?: ReactNode } = {}) {
+  const targets = useNutritionQuery(() => baseTargetsForDay(localDay()));
   const goal = useNutritionQuery(currentGoal);
   const { refresh } = useNutrition();
   const { number } = useStore();
@@ -43,7 +44,7 @@ export function PlanScreen() {
   const macroCalories =
     parseNumber(values.protein) * 4 + parseNumber(values.carbs) * 4 + parseNumber(values.fat) * 9;
   return (
-    <Screen title="Plan">
+    <Screen title="Plan" footer={footer}>
       <CoachingPanel
         onTargetsChanged={() => {
           setDraft(null);
@@ -92,7 +93,7 @@ export function PlanScreen() {
                     fat: parseNumber(values.fat),
                   });
                   setDraft(null);
-                  setSaved(JSON.stringify(targetsForDay(localDay())));
+                  setSaved(JSON.stringify(baseTargetsForDay(localDay())));
                   refresh();
                   setError("");
                   if (Platform.OS === "ios")

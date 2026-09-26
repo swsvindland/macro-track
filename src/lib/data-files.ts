@@ -3,15 +3,22 @@ import * as Sharing from "expo-sharing";
 import journal from "../../drizzle/meta/_journal.json";
 import { expoDb, migrationSnapshot } from "@/db";
 import { migrationState, snapshotDatabase } from "@/db/snapshot";
-import { erasePersonalRecords, exportDiaryCsv, exportWeightCsv } from "./data-ownership";
+import {
+  erasePersonalRecords,
+  exportDiaryCsv,
+  exportTargetsCsv,
+  exportWeightCsv,
+} from "./data-ownership";
 import { withHealthPaused } from "./health";
 import { configureHealthSchedule } from "./health-schedule";
 
-export async function shareCsv(kind: "diary" | "weight") {
+export async function shareCsv(kind: "diary" | "weight" | "targets") {
   if (!(await Sharing.isAvailableAsync()))
     throw new Error("File sharing is unavailable on this device.");
   const file = new File(Paths.cache, `macro-track-${kind}-${Date.now()}.csv`);
-  file.write(kind === "diary" ? exportDiaryCsv() : exportWeightCsv());
+  file.write(
+    kind === "diary" ? exportDiaryCsv() : kind === "weight" ? exportWeightCsv() : exportTargetsCsv()
+  );
   await Sharing.shareAsync(file.uri, {
     mimeType: "text/csv",
     UTI: "public.comma-separated-values-text",

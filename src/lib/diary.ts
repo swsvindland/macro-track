@@ -24,6 +24,7 @@ import {
   normalizeBarcode,
   scaleItem,
   scaleNutrients,
+  shiftedTargets,
   validateFood,
   type DayState,
   type Food,
@@ -40,7 +41,8 @@ export function entriesForDay(day: string): FoodEntry[] {
     .orderBy(foodEntries.createdAt, foodEntries.id)
     .all();
 }
-export function targetsForDay(day: string): Targets | null {
+/** The daily budget saved for a day, before any calorie shifting. */
+export function baseTargetsForDay(day: string): Targets | null {
   return (
     db
       .select()
@@ -50,6 +52,21 @@ export function targetsForDay(day: string): Targets | null {
       .limit(1)
       .get()?.targets ?? null
   );
+}
+/** The calorie shifting of the program running on a day, so earlier days keep their own. */
+function shiftOn(day: string) {
+  return db
+    .select({ program: coachingGoals.program })
+    .from(coachingGoals)
+    .where(lte(coachingGoals.startedDay, day))
+    .orderBy(desc(coachingGoals.id))
+    .limit(1)
+    .get()?.program?.shift;
+}
+/** A day's targets: its budget, shifted for its weekday when the program then shifts calories. */
+export function targetsForDay(day: string): Targets | null {
+  const targets = baseTargetsForDay(day);
+  return targets && shiftedTargets(targets, shiftOn(day), day);
 }
 export function dayStatus(day: string) {
   return db.select().from(diaryDays).where(eq(diaryDays.day, day)).get()?.status ?? "in-progress";

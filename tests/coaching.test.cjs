@@ -1508,6 +1508,8 @@ const planScreen = (data) => {
     "./program-editor": { ProgramEditor: "ProgramEditor" },
     "react-native": { View: "View", Alert: {} },
     "@/components/ui": { ActionMenu: "ActionMenu", ErrorText: "Error" },
+    "@/components/plan/calorie-shift": { weekOf: () => null },
+    "@/components/plan/strategy": { CheckInRing: "CheckInRing", ProgramCard: "ProgramCard" },
   });
   const { CoachingPanel } = plan.load("src/components/nutrition/coaching-panel.tsx");
   return { plan, render: () => nodes(plan.render(CoachingPanel, { onTargetsChanged() {} })) };

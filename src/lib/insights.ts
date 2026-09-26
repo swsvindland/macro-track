@@ -1,8 +1,8 @@
-import { and, asc, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, gte, lte, sql } from "drizzle-orm";
 import { checkIns, coachingGoals, db, diaryDays, foodEntries, nutritionTargets } from "@/db";
 import { currentGoal, nextCheckInDay } from "./coaching-store";
 import { weightTrend, type TrendPoint } from "./metrics";
-import { shiftDay, type DayState, type Targets } from "./nutrition";
+import { shiftDay, shiftedTargets, type DayState, type Targets } from "./nutrition";
 import { dailyTrend, goalRate, observeRuns } from "./program";
 
 const DAY = 86400000;
@@ -40,16 +40,22 @@ export function dailyIntake(from: string, to: string) {
   }
   return days;
 }
-/** Dated targets read once, then looked up for any day. */
+/** Dated targets read once, then looked up for any day, shifted as `targetsForDay` shifts them. */
 export function targetTimeline() {
   const rows = db.select().from(nutritionTargets).orderBy(asc(nutritionTargets.effectiveDay)).all();
+  const goals = db
+    .select({ startedDay: coachingGoals.startedDay, program: coachingGoals.program })
+    .from(coachingGoals)
+    .orderBy(desc(coachingGoals.id))
+    .all();
   return (day: string) => {
     let targets: Targets | null = null;
     for (const row of rows) {
       if (row.effectiveDay > day) break;
       targets = row.targets;
     }
-    return targets;
+    const shift = goals.find((goal) => goal.startedDay <= day)?.program?.shift;
+    return targets && shiftedTargets(targets, shift, day);
   };
 }
 /** A day coaching can learn from: complete with food, or an explicit fast. */
