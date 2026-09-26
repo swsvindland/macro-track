@@ -183,6 +183,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/food-icons": load("src/lib/food-icons.ts"),
     "./food-icon": { FoodIcon: "FoodIcon" },
     "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
+    "./ai-mark": { AiMark: "AiMark" },
   };
   Object.assign(dependencies, extraDependencies);
   const store = {

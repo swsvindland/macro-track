@@ -194,6 +194,7 @@ function loggerHarness(diary, fastLog, props = {}) {
     "@/lib/food-icons": foodIcons,
     "./food-icon": { FoodIcon: "FoodIcon" },
     "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
+    "./ai-mark": { AiMark: "AiMark" },
     "./amount-picker": {
       AmountPicker: "AmountPicker",
       PortionPreview: "PortionPreview",
@@ -570,6 +571,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./quick-log-bar": element("QuickLogBar"),
     "./meal-editor": element("MealEditor"),
     "./nutrient-list": { ...element("FoodNutrients"), ...element("DayNutrients") },
+    "./ai-mark": element("AiMark"),
     "./recipe-editor": element("RecipeEditor"),
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
     "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },

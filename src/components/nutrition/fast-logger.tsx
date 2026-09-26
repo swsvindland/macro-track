@@ -34,6 +34,7 @@ import {
 import { localDay } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import { AiMark } from "./ai-mark";
 import { AmountPicker, DayRing, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
 import { FoodIcon } from "./food-icon";
@@ -92,12 +93,13 @@ const calories = (items: MealItem[]) =>
   totalNutrients(items.map((item) => item.nutrients)).calories;
 const actions: {
   key: "barcode" | "photo" | "quick" | "custom";
-  icon: IconName;
+  /** "ai" is the phone's own model mark, as on Home's quick-log bar. */
+  icon: IconName | "ai";
   label: string;
   spoken: string;
 }[] = [
   { key: "barcode", icon: "barcode-outline", label: "Scan", spoken: "Scan barcode" },
-  { key: "photo", icon: "sparkles-outline", label: "Photo", spoken: "Photo or description" },
+  { key: "photo", icon: "ai", label: "Photo", spoken: "Photo or description" },
   { key: "quick", icon: "flash-outline", label: "Quick add", spoken: "Quick add" },
   // Not a plus: as an icon it sits above the results' round + buttons, which add a food.
   { key: "custom", icon: "create-outline", label: "New food", spoken: "New food" },
@@ -539,7 +541,7 @@ export function FastLogger({
         offered.map((action) => (
           <SystemIconButton
             key={action.key}
-            icon={action.icon}
+            icon={action.icon === "ai" ? <AiMark /> : action.icon}
             color="accent-soft-foreground"
             accessibilityLabel={action.spoken}
             onPress={() => setPicker(action.key)}
@@ -612,7 +614,7 @@ export function FastLogger({
             <SystemButton
               key={action.key}
               variant="secondary"
-              icon={action.icon}
+              icon={action.icon === "ai" ? <AiMark size={18} /> : action.icon}
               className="px-3"
               accessibilityLabel={action.spoken}
               onPress={() => setPicker(action.key)}

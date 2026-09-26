@@ -312,6 +312,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/lib/food-icons": load("src/lib/food-icons.ts"),
     "./food-icon": { FoodIcon: "FoodIcon" },
     "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
+    "./ai-mark": { AiMark: "AiMark" },
     "@/lib/local-ai": { textRecognitionAvailable: () => false, recognizeText: async () => [] },
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
