@@ -332,6 +332,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./quick-add": { QuickAdd: "QuickAdd" },
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
+    "./week-strip": { WeekStrip: "WeekStrip" },
     "./food-editor": { FoodEditor: "FoodEditor" },
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
     "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },

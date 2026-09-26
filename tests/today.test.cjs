@@ -105,7 +105,7 @@ function diaryDatabase() {
       loggedTime: "08:00",
       ...nutrition.portionItem(item, "g", 50),
     });
-  return { sqlite, diary, fastLog };
+  return { sqlite, db, diary, fastLog };
 }
 
 // The compiled FastLogger with persistent hook slots. Effects run only when their
@@ -232,7 +232,12 @@ function loggerHarness(diary, fastLog, props = {}) {
 function nodes(tree) {
   if (!tree || typeof tree !== "object") return [];
   if (Array.isArray(tree)) return tree.flatMap(nodes);
-  return [tree, ...nodes(tree.props?.children), ...nodes(tree.props?.footer)];
+  return [
+    tree,
+    ...nodes(tree.props?.children),
+    ...nodes(tree.props?.footer),
+    ...nodes(tree.props?.header),
+  ];
 }
 /** An element's children in order, without empty slots, arrays or fragments. */
 function flat(children) {
@@ -458,7 +463,7 @@ test("compiled logger folds the day and time panel away so the search field stay
 
 // Home and Library with their sheets and child screens as plain elements. Hooks keep their
 // slots across renders; effects don't run.
-function screenHarness(diary, storeOverrides = {}) {
+function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const slots = [];
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
@@ -554,6 +559,7 @@ function screenHarness(diary, storeOverrides = {}) {
     "./fast-logger": element("FastLogger"),
     "./home-check-in": element("HomeCheckIn"),
     "./weigh-in-card": element("WeighInCard"),
+    "./week-strip": element("WeekStrip"),
     "./meal-editor": element("MealEditor"),
     "./recipe-editor": element("RecipeEditor"),
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
@@ -561,6 +567,7 @@ function screenHarness(diary, storeOverrides = {}) {
     "./amount-picker": element("AmountPicker"),
     "./time-field": element("TimeField"),
     "./photo-capture": element("PhotoCapture"),
+    ...extraDependencies,
   };
   const store = {
     diaryLayout: "timeline",
@@ -787,5 +794,304 @@ test("compiled Home and Library rows lead with the food's icon", () => {
   const row = rows.render(FoodRow, { food: pizza, onPress: () => {} })[0];
   assert.equal(row.props.accessibilityLabel, "Log Chicken pizza");
   assert.equal(iconIn(row), "🍕");
+  sqlite.close();
+});
+
+/** A food with round numbers per serving, logged once at a time of day. */
+function logMacros(diary, day, time, name, [calories, protein, fat, carbs], meal = "Lunch") {
+  return diary.saveEntry({
+    day,
+    meal,
+    loggedTime: time,
+    food: {
+      ...food,
+      id: `custom:${name}`,
+      name,
+      basis: "serving",
+      nutrients: { calories, protein, carbs, fat, fiber: null, sodium: null },
+      portions: [{ label: "1 serving", amount: 1 }],
+    },
+    amount: 1,
+    portionLabel: "30 g",
+  }).inserted[0];
+}
+/** A group's heading, whose first child is its title. */
+const heading = (tree, title) =>
+  tree.find(
+    (node) =>
+      node.type === "Text" &&
+      node.props.accessibilityRole === "header" &&
+      node.props.children?.[0] === title
+  );
+const logger = (tree) => tree.find((node) => node.type === "FastLogger");
+
+test("compiled Home heads each hour with its totals and a + that logs into it", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 13, 5, 0) });
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  logMacros(diary, today, "12:00", "Pepperoni", [151, 6, 14, 0]);
+  logMacros(diary, today, "12:20", "Cheddar", [85, 5, 7, 1]);
+  logMacros(diary, today, "08:00", "Oats", [300, 10, 5, 50], "Breakfast");
+  const clock = (time) => foodTime.formatClock(time, "en");
+  const noon = clock("12:00");
+  const home = screenHarness(diary);
+  const { TodayScreen } = home.load("src/components/nutrition/today-screen.tsx");
+  let tree = home.render(TodayScreen);
+  const lunch = heading(tree, noon);
+  assert.equal(lunch.props.children[1].props.children, " · 236 kcal · 11P 21F 1C");
+  assert.equal(
+    lunch.props.accessibilityLabel,
+    `${noon}, 236 kcal, protein 11 g, fat 21 g, carbs 1 g`
+  );
+  assert.equal(heading(tree, clock("08:00")).props.children[1].props.children.at(-1), "C");
+  // Only hours with food while empty hours are hidden, each with its own +.
+  const pluses = (tree) =>
+    tree.filter(
+      (node) => node.type === "IconButton" && /^Log food at /.test(node.props.accessibilityLabel)
+    );
+  assert.equal(pluses(tree).length, 2);
+
+  // The + logs into the hour, at its latest food so a forgotten item joins the meal.
+  find(tree, "IconButton", `Log food at ${noon}`).props.onPress();
+  tree = home.render(TodayScreen);
+  assert.deepEqual(
+    [logger(tree).props.initialDay, logger(tree).props.initialTime, logger(tree).props.initialMeal],
+    [today, "12:20", "Lunch"]
+  );
+  logger(tree).props.close();
+  // The hour's menu keeps the rest; adding lives on the +.
+  assert.deepEqual(
+    find(
+      home.render(TodayScreen),
+      "ActionMenu",
+      `Options for ${noon}`
+    ).props.sections[0].actions.map((action) => action.key),
+    ["save", "move", "select"]
+  );
+
+  // Shown empty hours each have a + at o'clock, with no totals or menu.
+  const all = screenHarness(diary, { hideEmptyHours: false });
+  const Shown = all.load("src/components/nutrition/today-screen.tsx").TodayScreen;
+  tree = all.render(Shown);
+  assert.equal(pluses(tree).length, 24);
+  const three = clock("15:00");
+  assert.deepEqual(heading(tree, three).props.children, [three, false]);
+  assert.equal(find(tree, "ActionMenu", `Options for ${three}`), undefined);
+  find(tree, "IconButton", `Log food at ${three}`).props.onPress();
+  tree = all.render(Shown);
+  assert.deepEqual(
+    [logger(tree).props.initialTime, logger(tree).props.initialMeal],
+    ["15:00", "Lunch"]
+  );
+
+  // In the meal layout a + adds to that meal, eaten now.
+  const classic = screenHarness(diary, { diaryLayout: "meals" });
+  const Meals = classic.load("src/components/nutrition/today-screen.tsx").TodayScreen;
+  tree = classic.render(Meals);
+  assert.equal(
+    heading(tree, "Breakfast").props.children[1].props.children,
+    " · 300 kcal · 10P 5F 50C"
+  );
+  find(tree, "IconButton", "Log food to Breakfast").props.onPress();
+  tree = classic.render(Meals);
+  assert.deepEqual(
+    [logger(tree).props.initialTime, logger(tree).props.initialMeal],
+    ["13:05", "Breakfast"]
+  );
+  sqlite.close();
+});
+
+test("compiled Home rows put calories and macros between the name and the portion", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 13, 5, 0) });
+  const { diary, sqlite } = diaryDatabase();
+  logMacros(diary, metrics.localDay(), "12:00", "Pepperoni", [151, 6, 14, 0]);
+  const home = screenHarness(diary);
+  const tree = home.render(home.load("src/components/nutrition/today-screen.tsx").TodayScreen);
+  const row = find(tree, "Button", "Edit Pepperoni");
+  // Nothing trails the text, so long names get the width.
+  const [icon, text] = flat(row.props.children);
+  assert.deepEqual(
+    [icon.type, text.type, flat(row.props.children).length],
+    ["FoodIcon", "View", 2]
+  );
+  const [name, numbers, portion] = flat(text.props.children);
+  assert.equal(name.props.children, "Pepperoni");
+  assert.deepEqual(numbers.props.children[0].props.children, ["151", " kcal"]);
+  assert.equal(numbers.props.children[1], " · 6P 14F 0C");
+  assert.deepEqual(portion.props.children, [`${foodTime.formatClock("12:00", "en")} · `, "30 g"]);
+  sqlite.close();
+});
+
+test("compiled Home keeps the week strip under the date and opens the day it picks", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 13, 5, 0) });
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay(),
+    yesterday = nutrition.shiftDay(today, -1);
+  const home = screenHarness(diary);
+  const { TodayScreen } = home.load("src/components/nutrition/today-screen.tsx");
+  const root = home.render(TodayScreen);
+  const screen = root.find((node) => node.type === "Screen");
+  const top = nodes(screen.props.header);
+  const strip = top.find((node) => node.type === "WeekStrip");
+  assert.ok(strip, "fixed with the header, not scrolled away");
+  assert.ok(top.findIndex((node) => node.type === "DayPicker") < top.indexOf(strip));
+  assert.deepEqual([strip.props.day, strip.props.today], [today, today]);
+  strip.props.onChange(yesterday);
+  const tree = home.render(TodayScreen);
+  assert.equal(tree.find((node) => node.type === "DayPicker").props.value, yesterday);
+  assert.equal(tree.find((node) => node.type === "WeekStrip").props.day, yesterday);
+  assert.ok(find(tree, "Button", `Edit ${food.name}`), "yesterday's food is listed");
+  sqlite.close();
+});
+
+/** The compiled week strip against the real diary, with a swipe that tests can finish. */
+function stripHarness(diary, db, firstWeekday = 2) {
+  const insights = load("src/lib/insights.ts", {
+    "@/db": { db, ...schema },
+    "./coaching-store": {},
+    "./metrics": metrics,
+    "./nutrition": nutrition,
+    "./program": {},
+  });
+  const pan = () => {
+    const gesture = { handlers: {} };
+    for (const name of ["runOnJS", "activeOffsetX", "failOffsetY"]) gesture[name] = () => gesture;
+    gesture.onEnd = (handler) => {
+      gesture.handlers.onEnd = handler;
+      return gesture;
+    };
+    return gesture;
+  };
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "react-native": { View: "View", Pressable: "Pressable" },
+      "expo-localization": { useCalendars: () => [{ firstWeekday }] },
+      "react-native-gesture-handler": { Gesture: { Pan: pan }, GestureDetector: "GestureDetector" },
+      "@/lib/insights": insights,
+      "./amount-picker": { Ring: "Ring" },
+    }
+  );
+  const { WeekStrip } = harness.load("src/components/nutrition/week-strip.tsx");
+  return { harness, render: (props) => harness.render(WeekStrip, props) };
+}
+const cells = (tree) => tree.filter((node) => node.type === "Pressable");
+const swipe = (tree, translationX, velocityX = 0, success = true) =>
+  tree
+    .find((node) => node.type === "GestureDetector")
+    .props.gesture.handlers.onEnd({ translationX, velocityX }, success);
+
+test("compiled week strip rings each day's calories against its target", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 12, 0, 0) });
+  // The harness logs 180 kcal yesterday, Jan 9.
+  const { diary, db, sqlite } = diaryDatabase();
+  diary.saveTargets("2024-01-01", { calories: 2000, protein: 100, carbs: 250, fat: 60 });
+  logMacros(diary, "2024-01-07", "08:00", "Sunday", [1500, 0, 0, 0]);
+  logMacros(diary, "2024-01-08", "08:00", "Monday", [1000, 0, 0, 0]);
+  logMacros(diary, "2024-01-09", "12:00", "Tuesday", [2320, 0, 0, 0]);
+  logMacros(diary, "2024-01-10", "08:00", "Today", [500, 0, 0, 0]);
+  const strip = stripHarness(diary, db);
+  const picked = [];
+  const props = { day: "2024-01-10", today: "2024-01-10", onChange: (day) => picked.push(day) };
+  let tree = strip.render(props);
+  // Monday first where the calendar says so; days ahead can't be opened.
+  assert.deepEqual(
+    cells(tree).map((cell) => cell.props.accessibilityLabel),
+    [
+      "Mon, Jan 8: 1000 of 2000 kcal",
+      "Tue, Jan 9: 2500 of 2000 kcal",
+      "Wed, Jan 10, today: 500 of 2000 kcal",
+      "Thu, Jan 11: upcoming",
+      "Fri, Jan 12: upcoming",
+      "Sat, Jan 13: upcoming",
+      "Sun, Jan 14: upcoming",
+    ]
+  );
+  const rings = tree.filter((node) => node.type === "Ring");
+  assert.deepEqual(
+    rings.map((ring) => ring.props.value),
+    [0.5, 1.25, 0.25, 0, 0, 0, 0]
+  );
+  assert.deepEqual(
+    rings.map((ring) => ring.props.children.props.children),
+    [8, 9, 10, 11, 12, 13, 14]
+  );
+  assert.equal(flat(cells(tree)[0].props.children)[0].props.children, "M");
+  assert.deepEqual(
+    cells(tree).map((cell) => [cell.props.accessibilityState.selected, !!cell.props.disabled]),
+    [
+      [false, false],
+      [false, false],
+      [true, false],
+      [false, true],
+      [false, true],
+      [false, true],
+      [false, true],
+    ]
+  );
+  cells(tree)[1].props.onPress();
+  assert.deepEqual(picked, ["2024-01-09"]);
+
+  // Sunday first where the calendar says so.
+  const sunday = stripHarness(diary, db, 1);
+  tree = sunday.render({ ...props, day: "2024-01-07" });
+  assert.equal(cells(tree)[0].props.accessibilityLabel, "Sun, Jan 7: 1500 of 2000 kcal");
+  assert.equal(cells(tree).at(-1).props.accessibilityLabel, "Sat, Jan 13: upcoming");
+  // Days without a target show calories alone and an empty ring.
+  const early = stripHarness(diary, db);
+  tree = early.render({ ...props, day: "2023-12-27" });
+  assert.equal(cells(tree)[0].props.accessibilityLabel, "Mon, Dec 25: 0 kcal");
+  assert.equal(tree.find((node) => node.type === "Ring").props.value, 0);
+  sqlite.close();
+});
+
+test("compiled week strip swipes a week at a time, stopping at today, and reads once per week", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 12, 0, 0) });
+  const { diary, db, sqlite } = diaryDatabase();
+  const strip = stripHarness(diary, db);
+  const picked = [];
+  const props = { day: "2024-01-10", today: "2024-01-10", onChange: (day) => picked.push(day) };
+  let tree = strip.render(props);
+  // No week after this one; short, slow or cancelled drags do nothing.
+  swipe(tree, -80);
+  swipe(tree, 10, 50);
+  swipe(tree, 80, 0, false);
+  assert.deepEqual(picked, []);
+  // Right goes back a week to the same weekday, a quick flick too.
+  swipe(tree, 80);
+  swipe(tree, -5, 900);
+  assert.deepEqual(picked.splice(0), ["2024-01-03", "2024-01-03"]);
+  // Left from last week keeps the weekday, or stops at today.
+  tree = strip.render({ ...props, day: "2024-01-02" });
+  swipe(tree, -80);
+  tree = strip.render({ ...props, day: "2024-01-05" });
+  swipe(tree, -80);
+  assert.deepEqual(picked.splice(0), ["2024-01-09", "2024-01-10"]);
+  // Screen readers move weeks from any day.
+  const actions = cells(tree)[3].props;
+  assert.deepEqual(
+    actions.accessibilityActions.map((action) => action.label),
+    ["Previous week", "Next week"]
+  );
+  actions.onAccessibilityAction({ nativeEvent: { actionName: "previous" } });
+  actions.onAccessibilityAction({ nativeEvent: { actionName: "next" } });
+  assert.deepEqual(picked.splice(0), ["2023-12-29", "2024-01-10"]);
+
+  // Another day in the same week reuses the read; a write refreshes it.
+  let reads = 0;
+  const prepare = sqlite.prepare;
+  sqlite.prepare = function (sql) {
+    reads++;
+    return prepare.call(this, sql);
+  };
+  strip.render({ ...props, day: "2024-01-03" });
+  assert.equal(reads, 0);
+  logMacros(diary, "2024-01-04", "08:00", "Thursday", [700, 0, 0, 0]);
+  strip.harness.context.refresh();
+  reads = 0;
+  tree = strip.render({ ...props, day: "2024-01-03" });
+  assert.ok(reads > 0);
+  assert.equal(cells(tree)[3].props.accessibilityLabel, "Thu, Jan 4: 700 kcal");
   sqlite.close();
 });

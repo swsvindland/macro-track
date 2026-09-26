@@ -46,6 +46,7 @@ import {
   totalNutrients,
   type DayState,
   type Meal,
+  type Nutrients,
 } from "@/lib/nutrition";
 import {
   currentFoodTime,
@@ -68,6 +69,7 @@ import { MealEditor } from "./meal-editor";
 import { PhotoLogger, photoLoggingOffered } from "./photo-logger";
 import { CopyDay, MoveEntries } from "./copy-day";
 import { WeighInCard } from "./weigh-in-card";
+import { WeekStrip } from "./week-strip";
 
 const statusLabels: Record<DayState, string> = {
   "in-progress": "In progress",
@@ -300,7 +302,25 @@ export function TodayScreen() {
           time: "",
           entries: entries.filter((entry) => entry.meal === meal),
         }))
-  ).filter((group) => group.entries.length || !hideEmptyHours);
+  )
+    .filter((group) => group.entries.length || !hideEmptyHours)
+    .map((group) => ({
+      ...group,
+      sum: totalNutrients(group.entries.map((entry) => entry.nutrients)),
+    }));
+  // "45P 24F 50C", in the order the list shows them, and the same spelled out for screen readers.
+  const macros = (value: Nutrients) =>
+    `${number(value.protein, 0)}P ${number(value.fat, 0)}F ${number(value.carbs, 0)}C`;
+  const spoken = (value: Nutrients) =>
+    `${number(value.calories, 0)} kcal, protein ${number(value.protein, 0)} g, fat ${number(value.fat, 0)} g, carbs ${number(value.carbs, 0)} g`;
+  /** Opens the logger on a group: an hour at its latest food (or o'clock), a meal now. */
+  function addTo(group: (typeof groups)[number]) {
+    const hour = !!group.group && group.group !== "untimed";
+    setLogger({
+      meal: group.meal,
+      time: hour ? (group.entries.at(-1)?.loggedTime ?? group.time) : currentFoodTime(),
+    });
+  }
 
   function label(value: string) {
     if (value === today) return "Today";
@@ -698,7 +718,12 @@ export function TodayScreen() {
         title="Today"
         compact
         scrollRef={scrollRef}
-        header={header}
+        header={
+          <>
+            {header}
+            <WeekStrip day={day} today={today} onChange={go} />
+          </>
+        }
         footer={footer || undefined}
       >
         <SystemPanel className="p-4">
@@ -873,59 +898,68 @@ export function TodayScreen() {
                 {groups.map((group, index) => (
                   <View key={group.key} className={index ? "border-t border-separator" : ""}>
                     <View className="flex-row items-center pl-4 pr-1">
-                      <Text className="flex-1 text-sm font-semibold text-muted tabular-nums">
-                        {group.title} ·{" "}
-                        {number(
-                          totalNutrients(group.entries.map((entry) => entry.nutrients)).calories,
-                          0
-                        )}{" "}
-                        kcal
+                      <Text
+                        accessibilityRole="header"
+                        accessibilityLabel={
+                          group.entries.length
+                            ? `${group.title}, ${spoken(group.sum)}`
+                            : group.title
+                        }
+                        className="flex-1 text-sm font-semibold text-muted tabular-nums"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.85}
+                      >
+                        {group.title}
+                        {!!group.entries.length && (
+                          <Text className="text-sm font-normal text-muted tabular-nums">
+                            {` · ${number(group.sum.calories, 0)} kcal · ${macros(group.sum)}`}
+                          </Text>
+                        )}
                       </Text>
-                      <ActionMenu
-                        accessibilityLabel={`Options for ${group.title}`}
-                        sections={[
-                          {
-                            actions: [
-                              {
-                                key: "add",
-                                label: "Add food here",
-                                icon: "add",
-                                onPress: () =>
-                                  setLogger({
-                                    meal: group.meal,
-                                    time: group.time || currentFoodTime(),
-                                  }),
-                              },
-                              ...(group.entries.length
-                                ? [
-                                    {
-                                      key: "save",
-                                      label: "Save or copy this meal",
-                                      icon: "bookmark-outline" as const,
-                                      onPress: () =>
-                                        setMealEditor({
-                                          source: { day, meal: group.meal, group: group.group },
-                                          meal: group.meal,
-                                        }),
-                                    },
-                                    {
-                                      key: "move",
-                                      label: "Move all to…",
-                                      icon: "arrow-redo-outline" as const,
-                                      onPress: () => setMoving(group.entries),
-                                    },
-                                    {
-                                      key: "select",
-                                      label: "Select these foods",
-                                      icon: "checkmark-circle-outline" as const,
-                                      onPress: () =>
-                                        setSelected(group.entries.map((entry) => entry.id)),
-                                    },
-                                  ]
-                                : []),
-                            ],
-                          },
-                        ]}
+                      {!!group.entries.length && (
+                        <ActionMenu
+                          accessibilityLabel={`Options for ${group.title}`}
+                          sections={[
+                            {
+                              actions: [
+                                {
+                                  key: "save",
+                                  label: "Save or copy this meal",
+                                  icon: "bookmark-outline",
+                                  onPress: () =>
+                                    setMealEditor({
+                                      source: { day, meal: group.meal, group: group.group },
+                                      meal: group.meal,
+                                    }),
+                                },
+                                {
+                                  key: "move",
+                                  label: "Move all to…",
+                                  icon: "arrow-redo-outline",
+                                  onPress: () => setMoving(group.entries),
+                                },
+                                {
+                                  key: "select",
+                                  label: "Select these foods",
+                                  icon: "checkmark-circle-outline",
+                                  onPress: () =>
+                                    setSelected(group.entries.map((entry) => entry.id)),
+                                },
+                              ],
+                            },
+                          ]}
+                        />
+                      )}
+                      <SystemIconButton
+                        icon="add"
+                        color="accent-soft-foreground"
+                        accessibilityLabel={
+                          group.group && group.group !== "untimed"
+                            ? `Log food at ${group.title}`
+                            : `Log food to ${group.meal}`
+                        }
+                        onPress={() => addTo(group)}
                       />
                     </View>
                     {group.entries.map((entry) => {
@@ -976,6 +1010,12 @@ export function TodayScreen() {
                             <FoodIcon icon={foodIcon(entry.food)} />
                             <View className="flex-1 gap-0.5">
                               <Text numberOfLines={1}>{entry.food.name}</Text>
+                              <Text numberOfLines={1} className="text-sm text-muted tabular-nums">
+                                <Text className="text-sm font-medium tabular-nums">
+                                  {number(entry.nutrients.calories, 0)} kcal
+                                </Text>
+                                {` · ${macros(entry.nutrients)}`}
+                              </Text>
                               <Text numberOfLines={1} className="text-sm text-muted">
                                 {entry.loggedTime
                                   ? `${formatClock(entry.loggedTime, locale)} · `
@@ -983,9 +1023,6 @@ export function TodayScreen() {
                                 {entry.portionLabel}
                               </Text>
                             </View>
-                            <Text className="tabular-nums">
-                              {number(entry.nutrients.calories, 0)}
-                            </Text>
                           </SystemButton>
                         </SwipeRow>
                       );

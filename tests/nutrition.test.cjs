@@ -148,6 +148,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
     "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
+    "./week-strip": { WeekStrip: "WeekStrip" },
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./amount-picker": {
@@ -1259,9 +1260,8 @@ test("compiled timeline moves an edited entry between hours without changing the
   assert.ok(tree.some((node) => node.props.children?.[0] === five));
   assert.ok(!tree.some((node) => node.props.children?.[0] === eight));
   assert.equal(tree.filter((node) => node.props.accessibilityLabel === "Edit Test food").length, 1);
-  const menu = tree.find((node) => node.props.accessibilityLabel === `Options for ${five}`);
-  menu.props.sections[0].actions.find((action) => action.key === "add").onPress();
-  assert.equal(render().find((node) => node.type === "FastLogger").props.initialTime, "17:00");
+  tree.find((node) => node.props.accessibilityLabel === `Log food at ${five}`).props.onPress();
+  assert.equal(render().find((node) => node.type === "FastLogger").props.initialTime, "17:25");
   sqlite.close();
 });
 
