@@ -109,24 +109,61 @@ function isTopping(name: string) {
   const list = words(name).filter((word) => !countWords.test(word));
   return list.length > 0 && list.every((word) => toppingWords.has(word));
 }
+const toppingUnits = new Set(
+  "slice strip leaf leave tbsp tsp pinch dash sprinkle dollop drizzle pat".split(" ")
+);
+/** A topping word in a topping's amount; a real side (a banana, beans and rice) weighs more. */
+const isOnDish = (food: SeenFood) =>
+  isTopping(food.name) &&
+  ((food.grams !== null && food.grams <= 40) || toppingUnits.has(unitKey(food.unit)));
 
 const isPart = (name: string) =>
-  isTopping(name) || /\b(?:buns?|rolls?|bread|patty|patties|tortilla|crust)\b/i.test(name);
+  isTopping(name) ||
+  /\b(?:buns?|rolls?|bread|patty|patties|tortilla|crust|muffins?|biscuits?|eggs?|sauces?)\b/i.test(
+    name
+  );
 
-/** The dish a description names, without the chain or chatter: "big mac from mcdonalds" is "big mac". */
-function dishFrom(description: string) {
-  const said = findChain(description);
-  const parts = description.replace(/[\u2018\u2019]/g, "'").split(/,|\band\b|\bwith\b|\bplus\b/i);
-  const part = parts.find((text) => wholeDish.test(text)) ?? parts[0] ?? "";
-  return part
-    .replace(said?.pattern ?? /$^/, " ")
-    .replace(/\b(?:i|had|ate|got|some|my|a|an|the|from|at|of|for|lunch|dinner|breakfast)\b/gi, " ")
-    .replace(/\d+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .slice(0, 6)
-    .join(" ");
+/**
+ * The dish a description names, without the chain or chatter ("big mac from mcdonalds" is
+ * "big mac"), and the stems of everything else it names.
+ */
+function dishFrom(said: { pattern: RegExp; plain: string }) {
+  const clean = (text: string) =>
+    text
+      .replace(said.pattern, " ")
+      .replace(
+        /\b(?:i|had|ate|got|some|my|a|an|the|from|at|of|for|lunch|dinner|breakfast)\b/gi,
+        " "
+      )
+      .replace(/\d+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  // Separators stay at odd indexes.
+  const pieces = said.plain.split(/(,|\band\b|\bwith\b|\bplus\b)/i);
+  const find = (test: (text: string) => boolean) =>
+    pieces.findIndex((text, i) => i % 2 === 0 && test(text));
+  // A whole dish, else the item the chain names ("a starbucks latte", not "fries from
+  // mcdonalds"), else the first thing named.
+  const via = new RegExp(`\\b(?:from|at|by)\\s+(?:${said.pattern.source})`, "i");
+  let at = find((text) => wholeDish.test(text));
+  if (at < 0) at = find((text) => said.pattern.test(text) && !via.test(text) && !!clean(text));
+  if (at < 0) at = find((text) => !!clean(text));
+  const start = Math.max(0, at);
+  let end = start;
+  // Menu items name their egg or cheese: "sausage mcmuffin with egg".
+  while (
+    /^with$/i.test(pieces[end + 1] ?? "") &&
+    /^\s*(?:eggs?|cheese)\s*$/i.test(pieces[end + 2] ?? "")
+  )
+    end += 2;
+  const rest = pieces.filter((_, i) => i % 2 === 0 && (i < start || i > end));
+  return {
+    dish: clean(pieces.slice(start, end + 1).join(" "))
+      .split(" ")
+      .slice(0, 6)
+      .join(" "),
+    others: new Set(words(rest.map(clean).join(" ")).map(stem)),
+  };
 }
 
 /** Chains whose menu items are catalogued whole. Small models often write the chain into the name. */
@@ -198,14 +235,15 @@ export function readSeenFoods(reply: unknown, description = ""): SeenFood[] {
     if (!name) continue;
     const quantity = Number(value.quantity);
     const grams = Number(value.grams);
+    // "1 slice" in the unit field would otherwise double the count.
+    const unit = text(value.unit).replace(/^[\d./\s]+/, "") || "serving";
     const key = `${brand}|${name}`.toLowerCase();
     if (seen.has(key)) continue;
     seen.set(key, {
       name,
       brand,
-      quantity: Number.isFinite(quantity) && quantity > 0 && quantity <= 50 ? quantity : 1,
-      // "1 slice" in the unit field would otherwise double the count.
-      unit: text(value.unit).replace(/^[\d./\s]+/, "") || "serving",
+      quantity: Number.isFinite(quantity) && quantity > 0 && quantity <= most(unit) ? quantity : 1,
+      unit,
       grams: Number.isFinite(grams) && grams >= 1 && grams <= 3000 ? grams : null,
     });
   }
@@ -216,17 +254,46 @@ export function readSeenFoods(reply: unknown, description = ""): SeenFood[] {
       foods.find((food) => wholeDish.test(food.name)) ?? (foods.length === 1 ? foods[0] : null);
     if (dish) dish.brand = said.brand;
   }
-  // "big mac from mcdonalds" split into bun, patties and toppings is still one Big Mac.
-  const parts = foods.filter((food) => isPart(food.name));
-  const dish = said ? dishFrom(description) : "";
-  if (said && dish && parts.length > 1 && !foods.some((food) => wholeDish.test(food.name)))
-    foods = [
-      { name: dish, brand: said.brand, quantity: 1, unit: "serving", grams: null },
-      ...foods.filter((food) => !parts.includes(food)),
-    ];
+  // "big mac from mcdonalds" split into bun, patties and toppings is still one Big Mac. Foods the
+  // description names on their own ("and a banana") are not its parts, and a dish that is
+  // already listed ("blueberry muffin", "chicken nuggets" for "mcnuggets") is not rebuilt.
+  if (said) {
+    const { dish, others } = dishFrom(said);
+    const named = words(dish)
+      .filter((word) => !countWords.test(word))
+      .map(stem);
+    const parts = foods.filter(
+      (food) => isPart(food.name) && !nameWords(food).some((word) => others.has(stem(word)))
+    );
+    const listed = (food: SeenFood) => {
+      const own = nameWords(food).map(stem);
+      return (
+        wholeDish.test(food.name) ||
+        named.every((word) => own.includes(word)) ||
+        (!parts.includes(food) &&
+          own.some((word) =>
+            named.some(
+              (dishWord) => dishWord === word || (word.length > 3 && dishWord.endsWith(word))
+            )
+          ))
+      );
+    };
+    if (named.length && parts.length > 1 && !foods.some(listed))
+      foods = [
+        { name: dish, brand: said.brand, quantity: 1, unit: "serving", grams: null },
+        ...foods.filter((food) => !parts.includes(food)),
+      ];
+  }
   // A chain's pizza or burger already includes its toppings, which small models still list.
   const whole = foods.some((food) => food.brand && wholeDish.test(food.name));
-  return foods.filter((food) => !whole || food.brand || !isTopping(food.name)).slice(0, 12);
+  return foods.filter((food) => !whole || food.brand || !isOnDish(food)).slice(0, 12);
+}
+
+/** Counts above 50 are a generation loop, but 200 g is an ordinary weight. */
+function most(unit: string) {
+  const key = unitKey(unit);
+  const size = weights[key] ?? volumes[key];
+  return size ? Math.max(50, 3000 / size) : 50;
 }
 
 // --- Matching seen foods to catalog foods ---
@@ -489,22 +556,33 @@ export function readPicks(reply: unknown, pools: Food[][], asked: number[]): num
 
 const measures = new Set(
   (
-    "cup tbsp tablespoon tsp teaspoon oz ounce lb pound g gram kg ml fl liter package pkg " +
-    "container can bottle jar box bag scoop stick pat serving order portion cubic inch unit yield onz"
+    "cup tbsp tablespoon tsp teaspoon oz ounce lb pound g gram kg ml fl floz l liter pint " +
+    "quart gallon package pkg container can bottle jar box bag scoop stick pat serving order " +
+    "portion cubic inch unit yield onz"
   ).split(" ")
 );
+// stem() leaves words of three letters alone, so short plurals are listed too.
 const unitNames: Record<string, string> = {
   tablespoon: "tbsp",
+  tbs: "tbsp",
   teaspoon: "tsp",
   ounce: "oz",
+  ozs: "oz",
   pound: "lb",
+  lbs: "lb",
   gram: "g",
   grams: "g",
+  gms: "g",
   kilogram: "kg",
+  kilo: "kg",
+  kgs: "kg",
   milliliter: "ml",
+  mls: "ml",
   millilitre: "ml",
   liter: "l",
   litre: "l",
+  qt: "quart",
+  gal: "gallon",
   portion: "serving",
   order: "serving",
   plate: "serving",
@@ -519,24 +597,62 @@ const unitNames: Record<string, string> = {
   onz: "oz",
 };
 const weights: Record<string, number> = { g: 1, oz: 28.35, lb: 453.6, kg: 1000 };
-const volumes: Record<string, number> = { ml: 1, l: 1000, cup: 240, tbsp: 15, tsp: 5, floz: 29.57 };
+const volumes: Record<string, number> = {
+  ml: 1,
+  l: 1000,
+  cup: 240,
+  tbsp: 15,
+  tsp: 5,
+  floz: 29.57,
+  pint: 473,
+  quart: 946,
+  gallon: 3785,
+};
 const sizes = new Set(["small", "medium", "large", "regular", "extra", "jumbo", "whole", "kid"]);
 
 export function unitKey(unit: string) {
-  const list = words(unit.replace(/fl\.?\s*oz/i, "floz"));
+  const list = words(unit.replace(/\bfl(?:uid)?\.?\s*(?:oz|ounces?)\b/i, "floz"));
   const word = stem(list[0] ?? "piece");
   return unitNames[word] ?? unitNames[list[0] ?? ""] ?? word;
+}
+
+/** "1/2", ".5" and the mixed "1 1/2". */
+const fraction = (value: string) =>
+  value
+    .trim()
+    .split(/\s+/)
+    .reduce(
+      (sum, part) =>
+        sum +
+        (part.includes("/")
+          ? Number(part.split("/")[0]) / Number(part.split("/")[1])
+          : Number(part)),
+      0
+    );
+
+/**
+ * A per-serving food's serving weight and volume, when its label gives them: "1 serving (30 g)",
+ * "1 serving (2 tbsp (32g))".
+ */
+function servingSize(food: Food) {
+  const size: { weight?: number; volume?: number } = {};
+  for (const portion of food.portions)
+    for (const [, count, name] of portion.label.matchAll(
+      /(\d+\s+\d+\/\d+|\d+\/\d+|\d*\.\d+|\d+)\s*(fl(?:uid)?\.?\s*(?:oz|ounces?)\b|[a-z]+)/gi
+    )) {
+      const unit = unitKey(name);
+      const kind = weights[unit] ? "weight" : "volume";
+      const amount = (fraction(count) * (weights[unit] ?? volumes[unit] ?? 0)) / portion.amount;
+      if (amount > 0 && Number.isFinite(amount)) size[kind] ??= amount;
+    }
+  return size;
 }
 
 /** `noun` is what one portion counts: "slice" in "1 slice, medium", "serving" in "1 large serving". */
 type Portion = { perUnit: number; name: string; words: string[]; noun: string };
 function parsePortion(portion: Food["portions"][number]): Portion | null {
   const match = /^\s*(\d+(?:\.\d+)?|\d+\/\d+)\s+(.+)$/.exec(portion.label);
-  const count = match
-    ? match[1].includes("/")
-      ? Number(match[1].split("/")[0]) / Number(match[1].split("/")[1])
-      : Number(match[1])
-    : 1;
+  const count = match ? fraction(match[1]) : 1;
   // "1 roll 1 serving" and "1 cup, chopped (1/2\" pieces)" are shown as "roll" and "cup".
   const name = (match?.[2] ?? portion.label)
     .split(/[,(]|\s\d/)[0]
@@ -583,15 +699,25 @@ export function resolveAmount(
         food.basis === "serving" ? `≈ ${shown}` : `≈ ${shown} · ${Math.round(value)} ${food.basis}`,
     };
   };
-  if (food.basis === "serving")
+  const shown = unit === "floz" ? "fl oz" : unit;
+  const measured = weights[unit] ?? volumes[unit];
+  if (food.basis === "serving") {
+    const serving = food.portions[0]?.label.replace(/^1\s+/, "") || "serving";
+    if (!measured) return done(quantity, countLabel(quantity, serving));
+    // "30 g" is 30 g worth of servings, not 30 of them. Without a serving weight it is one
+    // serving, which the "≈" marks as a guess.
+    const size = servingSize(food)[weights[unit] ? "weight" : "volume"];
+    if (!size) return done(1, countLabel(1, serving));
+    const servings = Number(((quantity * measured) / size).toFixed(2));
     return done(
-      quantity,
-      countLabel(quantity, food.portions[0]?.label.replace(/^1\s+/, "") || "serving")
+      servings,
+      `${countLabel(quantity, shown)} · ${servings} serving${servings === 1 ? "" : "s"}`
     );
+  }
   if (food.basis === "g" && weights[unit])
-    return done(quantity * weights[unit], countLabel(quantity, unit));
+    return done(quantity * weights[unit], countLabel(quantity, shown));
   if (food.basis === "ml" && volumes[unit])
-    return done(quantity * volumes[unit], countLabel(quantity, unit));
+    return done(quantity * volumes[unit], countLabel(quantity, shown));
   const portions = food.portions.map(parsePortion).filter((p): p is Portion => !!p);
   const pick = (list: Portion[]) =>
     list.find((p) => /\b(?:medium|regular)\b/.test(p.name)) ?? list[0];
@@ -599,6 +725,16 @@ export function resolveAmount(
   if (named.length) {
     const portion = pick(named);
     return done(quantity * portion.perUnit, countLabel(quantity, portion.name));
+  }
+  // "250 ml" of milk goes through its own "1 fl oz" of 30.5 g; without one, or for a drink logged
+  // by weight, the model's weight or water's density.
+  const across = food.basis === "g" ? volumes[unit] : weights[unit];
+  if (across) {
+    const own = food.basis === "g" ? portions.find((p) => volumes[unitKey(p.name)]) : undefined;
+    if (own || !seen.grams) {
+      const density = own ? own.perUnit / volumes[unitKey(own.name)] : 1;
+      return done(quantity * across * density, countLabel(quantity, shown));
+    }
   }
   // "1 piece" of a food means its natural unit: a chicken breast's "breast", an egg's "large".
   // That guess is checked against the model's weight, so a lettuce "piece" never becomes a head.
