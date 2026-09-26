@@ -129,12 +129,14 @@ function bundledCatalog() {
 function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const slots = [];
   const alerts = [];
+  // The latest render's effects; they run only when a test calls runEffects().
+  const effects = [];
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
   const react = {
     createContext: () => ({}),
     useContext: () => context,
-    useEffect: () => {},
+    useEffect: (effect, deps) => effects.push({ slot: cursor++, effect, deps }),
     useState(initial) {
       const slot = cursor++;
       if (!(slot in slots)) slots[slot] = typeof initial === "function" ? initial() : initial;
@@ -244,7 +246,17 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     load: (file) => load(file, dependencies, true),
     render(Component, props) {
       cursor = 0;
+      effects.length = 0;
       return Component(props);
+    },
+    /** Runs the latest render's effects whose deps changed, as React would after a commit. */
+    runEffects() {
+      for (const { slot, effect, deps } of effects.splice(0)) {
+        const previous = slots[slot];
+        if (previous && deps?.every((value, i) => Object.is(value, previous.deps[i]))) continue;
+        previous?.cleanup?.();
+        slots[slot] = { deps, cleanup: effect() };
+      }
     },
   };
 }
@@ -823,8 +835,12 @@ test("compiled entry delete needs no confirmation and hands Home an undoable rec
   sqlite.close();
 });
 
-function homeScreen(diary) {
-  const harness = screenHarness(diary, { diaryLayout: "timeline", hideEmptyHours: true });
+function homeScreen(diary, storeOverrides = {}, extraDependencies = {}) {
+  const harness = screenHarness(
+    diary,
+    { diaryLayout: "timeline", hideEmptyHours: true, ...storeOverrides },
+    extraDependencies
+  );
   const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
   const render = () => nodes(harness.render(TodayScreen));
   const row = (tree, name) =>
@@ -845,7 +861,7 @@ function homeScreen(diary) {
         typeof node.props.children === "string" &&
         pattern.test(node.props.children)
     );
-  return { render, row, swipe, says };
+  return { harness, render, row, swipe, says };
 }
 
 test("compiled Home deletes with a swipe, logs again with the other and undoes both", (t) => {
@@ -1146,4 +1162,184 @@ test("compiled copy-day and reuse sheets hand Home an undoable receipt", () => {
   diary.undoReceipt(receipt);
   assert.equal(diary.entriesForDay(today).length, 0);
   sqlite.close();
+});
+
+// B7: a yesterday logged in full counts as complete without the morning question.
+function eatAt(t, diary, day, loggedTime, calories, createdAt = `${day}T${loggedTime}:00`) {
+  t.mock.timers.setTime(new Date(createdAt).getTime());
+  return diary.saveEntry({
+    day,
+    meal: foodTime.mealAtTime(loggedTime),
+    loggedTime,
+    food: {
+      ...food,
+      id: `custom:${calories}`,
+      name: `${calories} kcal`,
+      basis: "serving",
+      nutrients: { ...food.nutrients, calories },
+    },
+    amount: 1,
+    portionLabel: "1 serving",
+  }).inserted[0];
+}
+const today = "2024-01-10",
+  yesterday = "2024-01-09";
+/** Yesterday with a 2000 kcal target and `meals` ([time, kcal, created?]), at `now` today. */
+function loggedYesterday(t, meals, now = "07:00") {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(`${yesterday}T06:00:00`) });
+  const { diary, db, sqlite } = diaryDatabase();
+  diary.saveTargets("2024-01-01", { calories: 2000, protein: 100, carbs: 250, fat: 60 });
+  for (const [time, calories, created] of meals)
+    eatAt(t, diary, yesterday, time, calories, created);
+  t.mock.timers.setTime(new Date(`${today}T${now}:00`).getTime());
+  return { diary, db, sqlite };
+}
+const fullDay = [
+  ["08:00", 500],
+  ["12:30", 500],
+  ["19:00", 400],
+];
+
+test("yesterday logged in full counts as complete after 04:00, once, and Undo reopens it", (t) => {
+  const { diary, sqlite } = loggedYesterday(t, fullDay, "03:59");
+  assert.equal(diary.countableDay(), null, "a late snack can still land on yesterday");
+  assert.equal(diary.countLoggedDay(), null);
+  t.mock.timers.setTime(new Date(`${today}T04:00:00`).getTime());
+  assert.equal(diary.countableDay(), yesterday);
+  const receipt = diary.countLoggedDay();
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  assert.equal(receipt.days[yesterday].before, "in-progress");
+  assert.equal(diary.dayToConfirm(today), null, "nothing left to ask");
+  assert.equal(diary.countLoggedDay(), null);
+
+  diary.undoReceipt(receipt);
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  assert.equal(diary.countableDay(), null, "a day is counted once");
+  assert.equal(diary.countLoggedDay(), null);
+  assert.equal(diary.dayToConfirm(today).day, yesterday, "so Home asks about it instead");
+  sqlite.close();
+});
+
+test("days that look short or were filled in later still get the question", (t) => {
+  const [breakfast, lunch] = fullDay;
+  const cases = [
+    ["two entries", [breakfast, ["19:00", 1000]], null],
+    ["under 70% of target", [breakfast, lunch, ["19:00", 399]], null],
+    ["a snack logged at 01:30", [breakfast, lunch, ["23:30", 400, `${today}T01:30`]], yesterday],
+    ["a food added the next morning", [breakfast, lunch, ["19:00", 400, `${today}T06:30`]], null],
+  ];
+  for (const [name, meals, expected] of cases) {
+    const { diary, sqlite } = loggedYesterday(t, meals);
+    assert.equal(diary.countableDay(), expected, name);
+    assert.equal(!!diary.countLoggedDay(), !!expected, name);
+    assert.equal(diary.dayStatus(yesterday), expected ? "complete" : "in-progress", name);
+    assert.equal(diary.dayToConfirm(today)?.day ?? null, expected ? null : yesterday, name);
+    sqlite.close();
+    t.mock.timers.reset();
+  }
+
+  // No target: nothing to measure against, and nothing to ask either.
+  const { diary, db, sqlite } = loggedYesterday(t, fullDay);
+  db.delete(schema.nutritionTargets).run();
+  diary.saveTargets(today, { calories: 2000, protein: 100, carbs: 250, fat: 60 });
+  assert.equal(diary.countLoggedDay(), null);
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  assert.equal(diary.dayToConfirm(today), null);
+  sqlite.close();
+});
+
+test("an answered day is never changed, and the setting turns counting off", (t) => {
+  // "In progress" chosen from the day menu is an answer too.
+  for (const answers of [["partial"], ["complete"], ["complete", "in-progress"]]) {
+    const { diary, sqlite } = loggedYesterday(t, fullDay);
+    for (const answer of answers) diary.setDayStatus(yesterday, answer);
+    assert.equal(diary.countLoggedDay(), null, answers.join());
+    assert.equal(diary.dayStatus(yesterday), answers.at(-1));
+    sqlite.close();
+    t.mock.timers.reset();
+  }
+
+  const { diary, db, sqlite } = loggedYesterday(t, fullDay);
+  const setting = (value) =>
+    db
+      .insert(schema.preferences)
+      .values({ key: "countLoggedDays", value })
+      .onConflictDoUpdate({ target: schema.preferences.key, set: { value } })
+      .run();
+  setting("false");
+  assert.equal(diary.countableDay(), null);
+  assert.equal(diary.countLoggedDay(), null);
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  setting("true");
+  assert.ok(diary.countLoggedDay());
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  sqlite.close();
+});
+
+function countingHome(diary, store = {}) {
+  return homeScreen(
+    diary,
+    { countLoggedDays: true, ...store },
+    {
+      "react-native": {
+        View: "View",
+        Platform: { OS: "ios" },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
+        // The Undo message's 8 s timeout isn't under test here.
+        AccessibilityInfo: {
+          announceForAccessibility: () => {},
+          isScreenReaderEnabled: () => new Promise(() => {}),
+        },
+      },
+    }
+  );
+}
+const asks = (tree) => !!button(tree, "Yes, complete");
+
+test("compiled Home counts a full yesterday with Undo and asks about a short one", (t) => {
+  const { diary, sqlite } = loggedYesterday(t, fullDay);
+  const { harness, render, says } = countingHome(diary);
+  let tree = render();
+  assert.ok(!asks(tree), "the card doesn't flash while yesterday is being counted");
+  harness.runEffects();
+  t.mock.timers.tick(1);
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  tree = render();
+  harness.runEffects();
+  assert.ok(says(tree, /^Yesterday counted as complete\.$/));
+  assert.ok(!asks(tree));
+  assert.ok(
+    tree.some((node) => node.type === "HomeCheckIn"),
+    "the check-in no longer waits"
+  );
+
+  button(tree, "Undo").props.onPress();
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  tree = render();
+  harness.runEffects();
+  t.mock.timers.tick(1);
+  assert.ok(says(tree, /^Change undone\.$/));
+  assert.ok(asks(tree), "Undo hands the question back");
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  button(tree, "Yes, complete").props.onPress();
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  sqlite.close();
+  t.mock.timers.reset();
+
+  for (const [meals, store] of [
+    [fullDay.slice(0, 2), {}],
+    [fullDay, { countLoggedDays: false }],
+  ]) {
+    const { diary, sqlite } = loggedYesterday(t, meals);
+    const { harness, render, says } = countingHome(diary, store);
+    assert.ok(asks(render()));
+    harness.runEffects();
+    t.mock.timers.tick(1);
+    tree = render();
+    assert.ok(asks(tree));
+    assert.ok(!says(tree, /counted/));
+    assert.equal(diary.dayStatus(yesterday), "in-progress");
+    sqlite.close();
+    t.mock.timers.reset();
+  }
 });

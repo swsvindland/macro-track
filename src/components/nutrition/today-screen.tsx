@@ -14,6 +14,8 @@ import {
 import { ActionMenu, DayPicker, Screen, SwipeRow } from "@/components/ui";
 import {
   copyEntries,
+  countableDay,
+  countLoggedDay,
   dayStatus,
   dayToConfirm,
   deleteEntries,
@@ -92,7 +94,7 @@ function HomeWeightSheet({ ref }: { ref: Ref<WeightSheet> }) {
 /** Home: how today is going, one-tap repeats and the day's food, in that order. */
 export function TodayScreen() {
   const store = useStore();
-  const { number, diaryLayout, hideEmptyHours, language } = store;
+  const { number, diaryLayout, hideEmptyHours, countLoggedDays, language } = store;
   const locale = language === "zh" ? "zh-CN" : language;
   const { refresh } = useNutrition();
   const weightSheet = useRef<WeightSheet>(null);
@@ -218,6 +220,13 @@ export function TodayScreen() {
     now: clock,
   });
   const askConfirm = Number(clock.slice(0, 2)) >= 4;
+  // A yesterday logged in full counts as complete without asking (below); the card
+  // only asks about days that look short.
+  const countable = useNutritionQuery(
+    () =>
+      askConfirm && countLoggedDays && confirm?.day === shiftDay(day, -1) ? countableDay() : null,
+    [confirm, day, askConfirm, countLoggedDays]
+  );
   const weighIn = live && weighInDue(store, today, Number(clock.slice(0, 2)), coached);
   const totals = totalNutrients(entries.map((entry) => entry.nutrients));
   const groups = (
@@ -370,6 +379,29 @@ export function TodayScreen() {
   function answer(target: string, value: "complete" | "partial") {
     if (!locked()) mark(target, value);
   }
+  // Written just after the first paint, like the catalog warm-up; the card stays hidden
+  // meanwhile, so it never flashes.
+  useEffect(() => {
+    if (!countable) return;
+    const timer = setTimeout(() => {
+      try {
+        const receipt = countLoggedDay();
+        refresh();
+        if (receipt)
+          setToast({
+            message: "Yesterday counted as complete.",
+            undo: () => {
+              undoReceipt(receipt);
+              refresh();
+              return "Change undone.";
+            },
+          });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not update yesterday.");
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [countable, refresh]);
 
   const hero =
     projection.status === "over"
@@ -722,7 +754,8 @@ export function TodayScreen() {
               }
             />
           ) : confirm ? (
-            askConfirm && (
+            askConfirm &&
+            !countable && (
               <SystemPanel className="p-4">
                 <SystemPanel.Body className="gap-3">
                   <SystemLabel className="text-accent-soft-foreground">

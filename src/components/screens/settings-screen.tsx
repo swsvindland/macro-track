@@ -15,6 +15,7 @@ export function SettingsScreen() {
     units,
     diaryLayout,
     hideEmptyHours,
+    countLoggedDays,
     languagePreference,
     theme,
     healthSyncEnabled,
@@ -159,6 +160,20 @@ export function SettingsScreen() {
             onChange={(value) => preference("hideEmptyHours", String(value === "hidden"))}
             label={(value) => (value === "hidden" ? "Hide empty hours" : "Show all 24 hours")}
           />
+          <View className="flex-row items-center justify-between gap-4 pt-2">
+            <View className="flex-1 gap-0.5">
+              <Text className="font-semibold">Count logged days as complete</Text>
+              <Text className="text-sm text-muted">
+                After 04:00, yesterday counts as complete without asking when 3 or more foods logged
+                as you ate reach 70% of its target.
+              </Text>
+            </View>
+            <Switch
+              accessibilityLabel="Count logged days as complete"
+              isSelected={countLoggedDays}
+              onSelectedChange={(value) => preference("countLoggedDays", String(value))}
+            />
+          </View>
         </SystemPanel.Body>
       </SystemPanel>
       <BackupPanel />

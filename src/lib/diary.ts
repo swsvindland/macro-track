@@ -7,12 +7,13 @@ import {
   diaryDays,
   foodEntries,
   nutritionTargets,
+  preferences,
   savedFoods,
   savedMeals,
   recipes,
   type FoodEntry,
 } from "@/db";
-import { validDay } from "./metrics";
+import { localDay, validDay } from "./metrics";
 import {
   shiftDay,
   dayStates,
@@ -59,10 +60,14 @@ export function setDayStatus(day: string, status: DayState) {
     throw new Error("A fasting day cannot contain food entries.");
   if (status === "complete" && !entriesForDay(day).length)
     throw new Error("Log your food first, or mark this as a fasting day.");
-  db.insert(diaryDays)
-    .values({ day, status })
-    .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
-    .run();
+  db.transaction((tx) => {
+    tx.insert(diaryDays)
+      .values({ day, status })
+      .onConflictDoUpdate({ target: diaryDays.day, set: { status } })
+      .run();
+    // Any answer about yesterday, "In progress" included, is never counted over.
+    if (day === shiftDay(localDay(), -1)) settle(tx, day);
+  });
 }
 /** What a diary write changed, so Undo can put exactly that back. */
 export type DiaryReceipt = {
@@ -73,6 +78,13 @@ export type DiaryReceipt = {
   days: Record<string, { before: DayState | null; after: DayState; rows: string }>;
 };
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+/** Yesterday was counted or answered, so `countableDay` leaves it alone. */
+function settle(tx: Transaction, day: string) {
+  tx.insert(preferences)
+    .values({ key: "settledDay", value: day })
+    .onConflictDoUpdate({ target: preferences.key, set: { value: day } })
+    .run();
+}
 
 /**
  * Reopens each day a write touched, keeping a day answered "partial" as it is, and
@@ -529,6 +541,11 @@ export function copyDay(sourceDay: string, destination: string): DiaryReceipt {
 }
 
 type TimedCalories = { loggedTime: string; calories: number }[];
+/** Logged in real time: every entry has a time and was created by 04:00 the next morning. */
+function loggedLive(day: string, rows: { loggedTime: string | null; createdAt: number }[]) {
+  const cutoff = new Date(`${shiftDay(day, 1)}T04:00:00`).getTime();
+  return rows.every((row) => row.loggedTime && row.createdAt <= cutoff);
+}
 /**
  * Up to 14 recent complete days from the previous 28, read once so the clock can
  * move the cutoff without touching the database. Only days logged in real time
@@ -564,9 +581,7 @@ export function typicalDays(day: string): TimedCalories[] {
   const days: TimedCalories[] = [];
   for (const date of complete) {
     const entries = rows.filter((row) => row.day === date);
-    const lateCutoff = new Date(`${shiftDay(date, 1)}T04:00:00`).getTime();
-    if (!entries.length || entries.some((row) => !row.loggedTime || row.createdAt > lateCutoff))
-      continue;
+    if (!entries.length || !loggedLive(date, entries)) continue;
     days.push(
       entries.map((row) => ({ loggedTime: row.loggedTime!, calories: row.nutrients.calories }))
     );
@@ -611,6 +626,40 @@ export function dayToConfirm(today: string): { day: string; calories: number } |
       return { day, calories: entries.reduce((sum, row) => sum + row.nutrients.calories, 0) };
   }
   return null;
+}
+
+const preference = (key: string) =>
+  db.select().from(preferences).where(eq(preferences.key, key)).get()?.value;
+/**
+ * Yesterday, when it can count as complete without asking: it is after 04:00, the
+ * setting is on, the day still waits for an answer, and it was clearly logged in full,
+ * with 3 or more entries logged in real time reaching 70% of its target. A day is
+ * counted once, so after Undo Home asks about it instead, and never after an answer.
+ */
+export function countableDay(now = new Date()): string | null {
+  const day = shiftDay(localDay(now), -1);
+  if (
+    now.getHours() < 4 ||
+    preference("countLoggedDays") === "false" ||
+    preference("settledDay") === day ||
+    dayStatus(day) !== "in-progress"
+  )
+    return null;
+  const entries = entriesForDay(day),
+    target = targetsForDay(day)?.calories;
+  const calories = entries.reduce((sum, row) => sum + row.nutrients.calories, 0);
+  return target && entries.length >= 3 && loggedLive(day, entries) && calories >= target * 0.7
+    ? day
+    : null;
+}
+/** Marks the `countableDay` complete, returning what Undo needs, or null when there is none. */
+export function countLoggedDay(now = new Date()): DiaryReceipt | null {
+  return db.transaction((tx) => {
+    const day = countableDay(now);
+    if (!day) return null;
+    settle(tx, day);
+    return { inserted: [], deleted: [], moved: [], days: touchDays(tx, [day], "complete") };
+  });
 }
 
 /** Whether a Cut/Bulk/Maintain program is running (manual targets don't check in). */
