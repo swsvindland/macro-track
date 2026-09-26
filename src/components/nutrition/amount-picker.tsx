@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from "react";
-import { Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Pressable, ScrollView, TextInput, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { useThemeColor } from "heroui-native";
 import { twMerge } from "tailwind-merge";
@@ -12,7 +12,6 @@ import {
 } from "@/components/system";
 import {
   convertCount,
-  countLike,
   editAmount,
   formatCount,
   parseAmount,
@@ -56,9 +55,9 @@ function UnitChip({
 
 /**
  * Amount entry on the system keyboard, which opens with the sheet: the field, ± steppers, the
- * food's units and the screen's actions above the keyboard. Counted units get a keyboard with
- * "/" and space for "1 1/2". Typing a number and then a unit keeps the number; a prefilled or
- * stepped amount converts to the new unit instead, and stays selected so typing replaces it.
+ * food's units and the screen's actions above the decimal pad, the same one for every unit. Typing
+ * a number and then a unit keeps the number; a prefilled or stepped amount converts to the new
+ * unit instead, and stays selected so typing replaces it.
  */
 export function AmountPicker({
   units,
@@ -89,7 +88,6 @@ export function AmountPicker({
     const converted = convertCount(units, unit.key, count, next.key);
     set(converted > 0 ? converted : unitStep(next) === 10 ? 100 : 1, next);
   };
-  const fractions = countLike(unit);
   const measures = units.filter((row) => row.kind === "mass" || row.kind === "volume");
   const own = units.filter((row) => row.kind === "count" || row.kind === "energy");
   const chip = (row: PortionUnit) => (
@@ -129,14 +127,7 @@ export function AmountPicker({
             onChangeText={(next) =>
               onChange({ ...value, text: editAmount(value.text, next), fresh: false })
             }
-            keyboardType={
-              !fractions
-                ? "decimal-pad"
-                : Platform.OS === "ios"
-                  ? "numbers-and-punctuation"
-                  : "default"
-            }
-            returnKeyType="done"
+            keyboardType="decimal-pad"
             autoCorrect={false}
             autoComplete="off"
           />
