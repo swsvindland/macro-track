@@ -95,7 +95,7 @@ export function Dashboard({ weightOnly = false }: { weightOnly?: boolean }) {
   const fat = bodyFat(bodyEntry?.values, height, formula);
   const { bmi, ffmi } = composition(latest?.trend, height, fat);
   const [width, setWidth] = useState(0);
-  const accent = String(useThemeColor("accent"));
+  const trendColor = String(useThemeColor("accent-soft-foreground"));
   const muted = String(useThemeColor("muted"));
   const border = String(useThemeColor("separator"));
   const visible = trend.filter(
@@ -171,11 +171,11 @@ export function Dashboard({ weightOnly = false }: { weightOnly?: boolean }) {
                     d={visible
                       .map((p, i) => `${i ? "L" : "M"} ${x(p.day)} ${y(p.trend)}`)
                       .join(" ")}
-                    stroke={accent}
+                    stroke={trendColor}
                     strokeWidth={2}
                     fill="none"
                   />
-                  <Circle cx={x(latest.day)} cy={y(latest.trend)} r={4} fill={accent} />
+                  <Circle cx={x(latest.day)} cy={y(latest.trend)} r={4} fill={trendColor} />
                 </Svg>
               )}
             </View>
@@ -188,7 +188,7 @@ export function Dashboard({ weightOnly = false }: { weightOnly?: boolean }) {
           )}
           <View className="flex-row flex-wrap gap-4 border-t border-separator pt-3">
             <Text className="text-xs text-muted">● {t("weight")}</Text>
-            <Text className="text-xs text-link">— {t("trend")}</Text>
+            <Text className="text-xs text-accent-soft-foreground">— {t("trend")}</Text>
           </View>
         </SystemPanel.Body>
       </SystemPanel>

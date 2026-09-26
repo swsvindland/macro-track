@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import type { Targets } from "@/lib/nutrition";
 import { CoachingPanel } from "./coaching-panel";
 import { useState } from "react";
-import { View } from "react-native";
+import { AccessibilityInfo, Platform, View } from "react-native";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { ErrorText, Field, Screen } from "@/components/ui";
 import { targetsForDay, saveTargets } from "@/lib/diary";
@@ -11,37 +11,43 @@ import { localDay, parseNumber } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 
+type TargetValues = Record<keyof Targets, string>;
+
+const targetValues = (targets: Targets | null): TargetValues => ({
+  calories: targets ? String(targets.calories) : "",
+  protein: targets ? String(targets.protein) : "",
+  carbs: targets ? String(targets.carbs) : "",
+  fat: targets ? String(targets.fat) : "",
+});
+const savedMessage = "Targets saved. You’re ready to log.";
+
 export function PlanScreen() {
   const targets = useNutritionQuery(() => targetsForDay(localDay()));
-  return <PlanContent key={JSON.stringify(targets)} targets={targets} />;
-}
-function PlanContent({ targets }: { targets: Targets | null }) {
   const goal = useNutritionQuery(currentGoal);
   const { refresh } = useNutrition();
   const { number } = useStore();
-  const [values, setValues] = useState(() => ({
-    calories: targets ? String(targets.calories) : "",
-    protein: targets ? String(targets.protein) : "",
-    carbs: targets ? String(targets.carbs) : "",
-    fat: targets ? String(targets.fat) : "",
-  }));
+  const current = JSON.stringify(targets);
+  // Edits belong to the targets they started from, so new targets reseed the form in place
+  // instead of remounting the screen, which would scroll to the top and drop focus.
+  const [draft, setDraft] = useState<{ from: string; values: TargetValues } | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+  const values = draft?.from === current ? draft.values : targetValues(targets);
+  const edit = (key: keyof TargetValues) => (value: string) => {
+    setDraft((old) => ({
+      from: current,
+      values: { ...(old?.from === current ? old.values : values), [key]: value },
+    }));
+    setSaved(null);
+  };
   const macroCalories =
     parseNumber(values.protein) * 4 + parseNumber(values.carbs) * 4 + parseNumber(values.fat) * 9;
   return (
     <Screen title="Plan">
       <CoachingPanel
         onTargetsChanged={() => {
-          const next = targetsForDay(localDay());
-          if (next)
-            setValues({
-              calories: String(next.calories),
-              protein: String(next.protein),
-              carbs: String(next.carbs),
-              fat: String(next.fat),
-            });
-          setSaved(false);
+          setDraft(null);
+          setSaved(null);
         }}
       />
       {!goal?.program && (
@@ -52,10 +58,7 @@ function PlanContent({ targets }: { targets: Targets | null }) {
               label="Calories (kcal)"
               value={values.calories}
               numeric
-              onChange={(value) => {
-                setValues((old) => ({ ...old, calories: value }));
-                setSaved(false);
-              }}
+              onChange={edit("calories")}
             />
             <View className="gap-4">
               {(["protein", "carbs", "fat"] as const).map((key) => (
@@ -64,10 +67,7 @@ function PlanContent({ targets }: { targets: Targets | null }) {
                   label={`${key[0].toUpperCase() + key.slice(1)} (g)`}
                   value={values[key]}
                   numeric
-                  onChange={(value) => {
-                    setValues((old) => ({ ...old, [key]: value }));
-                    setSaved(false);
-                  }}
+                  onChange={edit(key)}
                 />
               ))}
             </View>
@@ -77,9 +77,9 @@ function PlanContent({ targets }: { targets: Targets | null }) {
               </Text>
             )}
             <ErrorText message={error} />
-            {saved && (
+            {saved === current && (
               <Text className="text-success" accessibilityLiveRegion="polite">
-                Targets saved. You’re ready to log.
+                {savedMessage}
               </Text>
             )}
             <SystemButton
@@ -91,9 +91,12 @@ function PlanContent({ targets }: { targets: Targets | null }) {
                     carbs: parseNumber(values.carbs),
                     fat: parseNumber(values.fat),
                   });
+                  setDraft(null);
+                  setSaved(JSON.stringify(targetsForDay(localDay())));
                   refresh();
                   setError("");
-                  setSaved(true);
+                  if (Platform.OS === "ios")
+                    AccessibilityInfo.announceForAccessibility(savedMessage);
                 } catch (e) {
                   setError(e instanceof Error ? e.message : "Couldn't save your targets.");
                 }

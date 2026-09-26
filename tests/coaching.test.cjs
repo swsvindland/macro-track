@@ -667,7 +667,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
       return slots[slot].value;
     },
   };
-  const jsx = (type, props) => ({ type, props });
+  const jsx = (type, props, key) => ({ type, props, key });
   const store = {
     number: (value, digits = 1) => value.toFixed(digits),
     date: (day) => day,
@@ -776,4 +776,127 @@ test("compiled check-in shows usable days against the twelve it needs", () => {
   assert.ok(shown(tree, "Text", "10/12 usable days · 21 weigh-in days"));
   assert.equal(store.coverage(store.currentReview()), "10/12");
   data.sqlite.close();
+});
+
+test("compiled Plan confirms saved targets in place on first setup and after they change", () => {
+  const data = coachingDatabase("2024-02-01");
+  const announced = [];
+  const screen = screenHarness({
+    "@/lib/coaching-store": data.store,
+    "@/lib/diary": data.diary,
+    "@/lib/metrics": data.fakeMetrics,
+    "./metrics": data.fakeMetrics,
+    "@/components/ui": { ErrorText: "Error", Field: "Field", Screen: "Screen" },
+    "./coaching-panel": { CoachingPanel: "CoachingPanel" },
+    "expo-router": { router: {} },
+    "react-native": {
+      View: "View",
+      Platform: { OS: "ios" },
+      AccessibilityInfo: { announceForAccessibility: (message) => announced.push(message) },
+    },
+  });
+  const { PlanScreen } = screen.load("src/components/nutrition/plan-screen.tsx");
+  // One persistent harness: a key tied to the targets would remount the scroll view on save.
+  const render = () => {
+    const tree = nodes(screen.render(PlanScreen, {}));
+    assert.deepEqual(
+      tree.filter((node) => node.key != null).map((node) => node.key),
+      ["protein", "carbs", "fat"]
+    );
+    return tree;
+  };
+  const field = (tree, label) =>
+    tree.find((node) => node.type === "Field" && node.props.label === label);
+  const confirmation = "Targets saved. You\u2019re ready to log.";
+
+  let tree = render();
+  assert.equal(field(tree, "Calories (kcal)").props.value, "");
+  for (const [label, value] of [
+    ["Calories (kcal)", "2100"],
+    ["Protein (g)", "150"],
+    ["Carbs (g)", "220"],
+    ["Fat (g)", "70"],
+  ])
+    field(tree, label).props.onChange(value);
+  tree = render();
+  assert.equal(shown(tree, "Text", confirmation), undefined);
+  shown(tree, "Button", "Save targets").props.onPress();
+  tree = render();
+  assert.deepEqual(data.diary.targetsForDay("2024-02-01"), {
+    calories: 2100,
+    protein: 150,
+    carbs: 220,
+    fat: 70,
+  });
+  assert.ok(shown(tree, "Text", confirmation), "shown on first setup");
+  assert.deepEqual(announced, [confirmation]);
+
+  field(tree, "Calories (kcal)").props.onChange("2000");
+  tree = render();
+  assert.equal(shown(tree, "Text", confirmation), undefined, "editing clears it");
+  shown(tree, "Button", "Save targets").props.onPress();
+  tree = render();
+  assert.equal(data.diary.targetsForDay("2024-02-01").calories, 2000);
+  assert.equal(field(tree, "Calories (kcal)").props.value, "2000");
+  assert.ok(shown(tree, "Text", confirmation), "shown after the targets change");
+  shown(tree, "Button", "Save targets").props.onPress();
+  assert.ok(shown(render(), "Text", confirmation), "shown when saving unchanged targets");
+
+  field(render(), "Carbs (g)").props.onChange("999");
+  data.diary.saveTargets("2024-02-01", { calories: 1900, protein: 150, carbs: 200, fat: 70 });
+  screen.context.refresh();
+  tree = render();
+  assert.equal(field(tree, "Calories (kcal)").props.value, "1900");
+  assert.equal(field(tree, "Carbs (g)").props.value, "200", "new targets replace a stale draft");
+  assert.equal(shown(tree, "Text", confirmation), undefined, "not for targets changed elsewhere");
+
+  field(tree, "Fat (g)").props.onChange("80");
+  tree.find((node) => node.type === "CoachingPanel").props.onTargetsChanged();
+  assert.equal(field(render(), "Fat (g)").props.value, "70", "an accepted check-in reseeds");
+  assert.equal(announced.length, 3);
+  data.sqlite.close();
+});
+
+/** WCAG relative luminance contrast between two #rrggbb colors. */
+function contrast(a, b) {
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
+test("light-mode accent text, links and focus rings keep AA contrast on every surface", () => {
+  const css = readFileSync("src/global.css", "utf8");
+  const theme = (variant) => {
+    const block = css.slice(css.indexOf(`@variant ${variant}`)).split("}")[0];
+    return Object.fromEntries(
+      [...block.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)].map(([, name, value]) => [name, value])
+    );
+  };
+  const light = theme("light");
+  const surfaces = [
+    "background",
+    "surface",
+    "surface-secondary",
+    "surface-tertiary",
+    "accent-soft",
+  ];
+  for (const token of ["link", "accent-soft-foreground"])
+    for (const surface of surfaces)
+      assert.ok(
+        contrast(light[token], light[surface]) >= 4.5,
+        `${token} on ${surface}: ${contrast(light[token], light[surface]).toFixed(2)}`
+      );
+  for (const surface of ["field-background", "background", "surface-secondary"])
+    assert.ok(contrast(light.focus, light[surface]) >= 3, `focus on ${surface}`);
+  assert.ok(contrast(light["accent-foreground"], light.accent) >= 4.5, "primary button label");
+
+  const dark = theme("dark");
+  for (const token of ["link", "accent-soft-foreground", "focus"])
+    assert.ok(contrast(dark[token], dark.surface) >= 4.5, `dark ${token}`);
 });
