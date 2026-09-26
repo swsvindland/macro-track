@@ -1,3 +1,110 @@
+/**
+ * The nutrients beyond calories and macros: what each is called, its unit and its Daily Value.
+ * Fiber and sodium are always present on a food, as a value or null; the rest are optional and a
+ * missing one is unknown, never zero. scripts/build-food-catalog.py fills the same keys in the same
+ * units from USDA and Open Food Facts.
+ */
+
+export const microKeys = [
+  "sugar",
+  "addedSugar",
+  "saturatedFat",
+  "transFat",
+  "monounsaturatedFat",
+  "polyunsaturatedFat",
+  "omega3",
+  "omega6",
+  "cholesterol",
+  "potassium",
+  "calcium",
+  "iron",
+  "magnesium",
+  "phosphorus",
+  "zinc",
+  "copper",
+  "manganese",
+  "selenium",
+  "vitaminA",
+  "vitaminC",
+  "vitaminD",
+  "vitaminE",
+  "vitaminK",
+  "thiamin",
+  "riboflavin",
+  "niacin",
+  "pantothenicAcid",
+  "vitaminB6",
+  "folate",
+  "vitaminB12",
+  "choline",
+  "caffeine",
+] as const;
+export type Micro = (typeof microKeys)[number];
+export type Micros = { [key in Micro]?: number };
+
+/** Every nutrient a day or a food can show beyond calories, protein, carbs and fat. */
+export type Detail = "fiber" | "sodium" | Micro;
+export type NutrientGroup = "Carbohydrates" | "Fats" | "Minerals" | "Vitamins" | "Other";
+export type NutrientInfo = {
+  label: string;
+  unit: "g" | "mg" | "mcg";
+  group: NutrientGroup;
+  /** The FDA's Daily Value for adults, in `unit`, when it has one. */
+  daily?: number;
+  /** Listed under another nutrient on a label: "Saturated Fat" under "Total Fat". */
+  indent?: boolean;
+};
+
+export const nutrientInfo: Record<Detail, NutrientInfo> = {
+  fiber: { label: "Fiber", unit: "g", group: "Carbohydrates", daily: 28, indent: true },
+  sugar: { label: "Sugars", unit: "g", group: "Carbohydrates", indent: true },
+  addedSugar: { label: "Added sugars", unit: "g", group: "Carbohydrates", daily: 50, indent: true },
+  saturatedFat: { label: "Saturated fat", unit: "g", group: "Fats", daily: 20, indent: true },
+  transFat: { label: "Trans fat", unit: "g", group: "Fats", indent: true },
+  monounsaturatedFat: { label: "Monounsaturated fat", unit: "g", group: "Fats", indent: true },
+  polyunsaturatedFat: { label: "Polyunsaturated fat", unit: "g", group: "Fats", indent: true },
+  omega3: { label: "Omega-3", unit: "g", group: "Fats", indent: true },
+  omega6: { label: "Omega-6", unit: "g", group: "Fats", indent: true },
+  cholesterol: { label: "Cholesterol", unit: "mg", group: "Fats", daily: 300 },
+  sodium: { label: "Sodium", unit: "mg", group: "Minerals", daily: 2300 },
+  potassium: { label: "Potassium", unit: "mg", group: "Minerals", daily: 4700 },
+  calcium: { label: "Calcium", unit: "mg", group: "Minerals", daily: 1300 },
+  iron: { label: "Iron", unit: "mg", group: "Minerals", daily: 18 },
+  magnesium: { label: "Magnesium", unit: "mg", group: "Minerals", daily: 420 },
+  phosphorus: { label: "Phosphorus", unit: "mg", group: "Minerals", daily: 1250 },
+  zinc: { label: "Zinc", unit: "mg", group: "Minerals", daily: 11 },
+  copper: { label: "Copper", unit: "mg", group: "Minerals", daily: 0.9 },
+  manganese: { label: "Manganese", unit: "mg", group: "Minerals", daily: 2.3 },
+  selenium: { label: "Selenium", unit: "mcg", group: "Minerals", daily: 55 },
+  vitaminA: { label: "Vitamin A", unit: "mcg", group: "Vitamins", daily: 900 },
+  vitaminC: { label: "Vitamin C", unit: "mg", group: "Vitamins", daily: 90 },
+  vitaminD: { label: "Vitamin D", unit: "mcg", group: "Vitamins", daily: 20 },
+  vitaminE: { label: "Vitamin E", unit: "mg", group: "Vitamins", daily: 15 },
+  vitaminK: { label: "Vitamin K", unit: "mcg", group: "Vitamins", daily: 120 },
+  thiamin: { label: "Thiamin (B1)", unit: "mg", group: "Vitamins", daily: 1.2 },
+  riboflavin: { label: "Riboflavin (B2)", unit: "mg", group: "Vitamins", daily: 1.3 },
+  niacin: { label: "Niacin (B3)", unit: "mg", group: "Vitamins", daily: 16 },
+  pantothenicAcid: { label: "Pantothenic acid (B5)", unit: "mg", group: "Vitamins", daily: 5 },
+  vitaminB6: { label: "Vitamin B6", unit: "mg", group: "Vitamins", daily: 1.7 },
+  folate: { label: "Folate", unit: "mcg", group: "Vitamins", daily: 400 },
+  vitaminB12: { label: "Vitamin B12", unit: "mcg", group: "Vitamins", daily: 2.4 },
+  choline: { label: "Choline", unit: "mg", group: "Vitamins", daily: 550 },
+  caffeine: { label: "Caffeine", unit: "mg", group: "Other" },
+};
+
+export const nutrientGroups: { group: NutrientGroup; keys: Detail[] }[] = (
+  ["Carbohydrates", "Fats", "Minerals", "Vitamins", "Other"] as const
+).map((group) => ({
+  group,
+  keys: (["fiber", "sodium", ...microKeys] as Detail[]).filter(
+    (key) => nutrientInfo[key].group === group
+  ),
+}));
+
+/** Micrograms read as "mcg" on US labels; the screen shows the symbol. */
+export const unitLabel = (unit: NutrientInfo["unit"]) => (unit === "mcg" ? "µg" : unit);
+
+/** Per 100 g or ml, per serving, or eaten. Micronutrients are optional; a missing one is unknown. */
 export type Nutrients = {
   calories: number;
   protein: number;
@@ -5,7 +112,7 @@ export type Nutrients = {
   fat: number;
   fiber: number | null;
   sodium: number | null;
-};
+} & Micros;
 export type Food = {
   id: string;
   name: string;
@@ -85,16 +192,33 @@ export function scaleNutrients(food: Food, amount: number): Nutrients {
   ) as Nutrients;
 }
 
+/** The sum of `items`. A micronutrient is summed only when every item has it, like a recipe label. */
 export function totalNutrients(items: Nutrients[]): Nutrients {
   const total: Nutrients = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0 };
   for (const item of items) {
-    for (const key of Object.keys(total) as (keyof Nutrients)[]) {
+    for (const key of ["calories", "protein", "carbs", "fat", "fiber", "sodium"] as const) {
       if (key === "fiber" || key === "sodium")
         total[key] = total[key] === null || item[key] === null ? null : total[key]! + item[key]!;
       else total[key] += item[key];
     }
   }
+  for (const key of microKeys)
+    if (items.length && items.every((item) => item[key] != null))
+      total[key] = items.reduce((sum, item) => sum + item[key]!, 0);
   return total;
+}
+
+/**
+ * A day's fiber, sodium and micronutrients as far as they are known: the sum of the entries that
+ * have each, and how many of `items` that is.
+ */
+export function knownTotals(items: Nutrients[]) {
+  const totals = {} as Record<Detail, { amount: number; known: number }>;
+  for (const key of ["fiber", "sodium", ...microKeys] as Detail[]) {
+    const values = items.flatMap((item) => (item[key] == null ? [] : [item[key]!]));
+    totals[key] = { amount: values.reduce((sum, value) => sum + value, 0), known: values.length };
+  }
+  return totals;
 }
 
 export function validateFood(food: Food): void {
@@ -107,13 +231,15 @@ export function validateFood(food: Food): void {
     if (!Number.isFinite(value) || value < 0 || value > 10000)
       throw new Error("Enter valid, non-negative nutrition values.");
   }
-  for (const key of ["fiber", "sodium"] as const) {
+  for (const key of ["fiber", "sodium", ...microKeys] as const) {
     const value = food.nutrients[key];
-    if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100000))
+    if (value != null && (!Number.isFinite(value) || value < 0 || value > 100000))
       throw new Error("Enter valid nutrient values.");
   }
   if (food.barcode && !normalizeBarcode(food.barcode)) throw new Error("Check the barcode digits.");
 }
+
+const core = new Set(["calories", "protein", "carbs", "fat", "fiber", "sodium"]);
 
 export type CustomFoodInput = {
   name: string;
@@ -146,14 +272,14 @@ export function customFood(
     brand: input.brand.trim(),
     barcode: input.barcode,
     basis: byWeight ? input.serving!.unit : input.basis,
-    nutrients: byWeight
-      ? (Object.fromEntries(
-          Object.entries(input.nutrients).map(([key, value]) => [
-            key,
-            value === null ? null : (value * 100) / weight!,
-          ])
-        ) as Nutrients)
-      : input.nutrients,
+    // A micronutrient left blank is unknown, so it isn't kept at all.
+    nutrients: Object.fromEntries(
+      Object.entries(input.nutrients).flatMap(([key, value]) =>
+        value == null && !core.has(key)
+          ? []
+          : [[key, value === null || !byWeight ? value : (value * 100) / weight!]]
+      )
+    ) as Nutrients,
     portions: byWeight
       ? [{ label: servingName, amount: weight! }]
       : input.basis === "serving" && measure

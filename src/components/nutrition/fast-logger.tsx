@@ -12,9 +12,9 @@ import { Choices, Editor, ErrorText, SearchInput } from "@/components/ui";
 import { entriesForDay, targetsForDay, toggleFavorite } from "@/lib/diary";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { logBatch, loggingChoices, type LogChoice, type LogReceipt } from "@/lib/fast-log";
-import { searchFoods } from "@/lib/food-catalog";
+import { searchCatalog } from "@/lib/food-catalog";
 import { foodIcon, mealIcon } from "@/lib/food-icons";
-import { matchesQuery, rankSearch } from "@/lib/food-rank";
+import { matchesQuery, rankSearch, type Fixes } from "@/lib/food-rank";
 import {
   countText,
   formatCount,
@@ -138,9 +138,12 @@ export function FastLogger({
   // From the search bar the keyboard is up on opening, not again each time the list comes back.
   const [typing, setTyping] = useState(start === "typing");
   const list = useRef<ScrollView>(null);
-  const [results, setResults] = useState<{ query: string; foods: Food[]; error: string } | null>(
-    null
-  );
+  const [results, setResults] = useState<{
+    query: string;
+    foods: Food[];
+    fixes: Fixes;
+    error: string;
+  } | null>(null);
   const [cart, setCart] = useState<LogChoice[]>([]),
     [error, setError] = useState("");
   const [reviewing, setReviewing] = useState(false);
@@ -180,15 +183,16 @@ export function FastLogger({
     if (!trimmed) return;
     let active = true;
     const timer = setTimeout(() => {
-      void searchFoods(trimmed, known)
-        .then((foods) => {
-          if (active) setResults({ query: trimmed, foods, error: "" });
+      void searchCatalog(trimmed, known)
+        .then(({ foods, fixes }) => {
+          if (active) setResults({ query: trimmed, foods, fixes, error: "" });
         })
         .catch(() => {
           if (active)
             setResults({
               query: trimmed,
               foods: [],
+              fixes: {},
               error: "Catalog unavailable. Your own foods still work.",
             });
         });
@@ -200,9 +204,11 @@ export function FastLogger({
   }, [trimmed, known]);
   // Foods eaten beyond Log again's top ones are read only when a search names them, and catalog
   // results reuse the last portion of any the person has eaten.
+  // Once the catalog answers, a typo it corrected ("chiken") finds the person's own foods too.
+  const fixes = results?.query === trimmed ? results.fixes : undefined;
   const recalled = useMemo(
-    () => (trimmed ? data.recall((food) => matchesQuery(trimmed, food)) : []),
-    [data, trimmed]
+    () => (trimmed ? data.recall((food) => matchesQuery(trimmed, food, fixes)) : []),
+    [data, trimmed, fixes]
   );
   const found = useMemo(() => (results ? data.choose(results.foods) : []), [data, results]);
   // The person's own foods come first, ranked like the catalog below them, so rows already on
@@ -212,8 +218,11 @@ export function FastLogger({
   const own = trimmed
     ? rankSearch(
         trimmed,
-        pool.map((choice) => choice.items[0].food).filter((food) => matchesQuery(trimmed, food)),
-        known
+        pool
+          .map((choice) => choice.items[0].food)
+          .filter((food) => matchesQuery(trimmed, food, fixes)),
+        known,
+        { fixes }
       ).map((food) => byKey.get(`food:${food.id}`)!)
     : [];
   const listed = new Set(own.map((choice) => choice.key));
@@ -225,7 +234,9 @@ export function FastLogger({
         ...data.choices.filter((choice) => !inRow.has(choice.key)).slice(0, 14),
       ]
     : [
-        ...data.meals.filter((choice) => matchesQuery(trimmed, { name: choice.title, brand: "" })),
+        ...data.meals.filter((choice) =>
+          matchesQuery(trimmed, { name: choice.title, brand: "" }, fixes)
+        ),
         ...own,
         ...(results?.query === trimmed ? found : []).filter((choice) => !listed.has(choice.key)),
       ].slice(0, 40);

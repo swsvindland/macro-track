@@ -21,7 +21,7 @@ import {
   type DiaryReceipt,
 } from "@/lib/diary";
 import { portionFor } from "@/lib/fast-log";
-import { lookupBarcode, searchFoods } from "@/lib/food-catalog";
+import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
 import { foodIcon } from "@/lib/food-icons";
 import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
@@ -488,10 +488,18 @@ export function FoodEditor({
         mine.filter((item) => matchesQuery(query, item)),
         known
       );
-      const shown = new Set(own.map((item) => item.id));
-      searchFoods(query, known)
-        .then((foods) => {
-          if (active) setResults([...own, ...foods.filter((food) => !shown.has(food.id))]);
+      searchCatalog(query, known)
+        .then(({ foods, fixes }) => {
+          if (!active) return;
+          // A typo the catalog corrected ("chiken") finds the person's own foods too.
+          const matched = rankSearch(
+            query,
+            mine.filter((item) => matchesQuery(query, item, fixes)),
+            known,
+            { fixes }
+          );
+          const shown = new Set(matched.map((item) => item.id));
+          setResults([...matched, ...foods.filter((food) => !shown.has(food.id))]);
         })
         .catch(() => {
           if (active) {

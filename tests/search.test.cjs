@@ -340,6 +340,52 @@ test("search waits for a second letter and falls back to the food's own name", a
   assert.deepEqual(await catalog.searchFoods("qqqzzz"), []);
 });
 
+test("typos and joined words still find the food that was meant", async () => {
+  for (const [query, expected] of [
+    ["chiken breast", /^Chicken, broilers or fryers, breast, /],
+    ["chikc", /^Chicken, /],
+    ["bananna", /^Bananas, raw/],
+    ["brocoli", /^Broccoli, raw/],
+    ["avacado", /^Avocados, raw/],
+    ["straberries", /^Strawberries, raw/],
+    ["yogrt", /^Yogurt, /],
+    ["greek yougurt", /^Yogurt, Greek, plain/],
+    ["mozerella", /^Cheese, mozzarella/],
+    ["cheeze", /^Cheese, cheddar/],
+    ["salmen", /^Fish, salmon, .*cooked/],
+    ["quinao", /^Quinoa, cooked/],
+    ["cofee", /^Beverages, coffee, brewed/],
+    ["peanutbutter", /^Peanut butter, /],
+    ["icecream", /^Ice creams, /],
+    ["protien bar", /protein bar/i],
+  ])
+    assert.match((await top(query))[0], expected, query);
+  const { fixes } = await catalog.searchCatalog("chiken brest");
+  assert.deepEqual(fixes.chiken, ["chicken"]);
+  assert.equal(fixes.brest[0], "breast");
+  // Real words stay as typed, including rare ones a typo from a common one.
+  for (const query of ["beet", "kale", "chicken", "oreo", "hummus", "lasagne"])
+    assert.deepEqual((await catalog.searchCatalog(query)).fixes, {}, query);
+  assert.match((await top("teff"))[0], /^Teff, /);
+  assert.match((await top("beet"))[0], /^Beets, raw/);
+  // A word typed as spelled on a label ranks before the correction of it.
+  assert.match((await top("brest"))[0], /breast/i);
+});
+
+test("the person's own foods match a corrected search", async () => {
+  const { fixes } = await catalog.searchCatalog("chiken");
+  const own = { name: "Chicken thigh", brand: "" };
+  assert.ok(!rank.matchesQuery("chiken", own));
+  assert.ok(rank.matchesQuery("chiken", own, fixes));
+  assert.ok(!rank.matchesQuery("chiken", { name: "Beef thigh", brand: "" }, fixes));
+});
+
+test("packaged foods people scan more come first among a brand's products", async () => {
+  const cola = await catalog.searchFoods("coca cola");
+  assert.match(cola[0].name, /^coca.cola$/i);
+  assert.ok((await top("kind bar")).some((name) => /^kind bar$/i.test(name)));
+});
+
 test("a keystroke search with reranking stays within its budget", async () => {
   await catalog.searchFoods("warm");
   for (const query of ["ch", "co", "ba", "sa", "po", "chicken", "cheese", "2% milk", "2 eggs"]) {

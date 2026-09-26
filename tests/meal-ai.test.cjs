@@ -31,11 +31,17 @@ const search = async (expression) =>
   catalogs.flatMap((database, i) =>
     database
       .prepare(
-        `SELECT foods.data FROM food_search JOIN foods ON foods.rowid = food_search.rowid
+        `SELECT foods.id, foods.name, foods.brand, foods.barcode, foods.data FROM food_search
+         JOIN foods ON foods.rowid = food_search.rowid
          WHERE food_search MATCH ? ORDER BY bm25(food_search, 3.0, 1.0) LIMIT ?`
       )
       .all(expression, i === 0 ? 100 : 30)
-      .map((row) => JSON.parse(row.data))
+      .map(({ data, ...row }) => ({
+        ...row,
+        ...JSON.parse(data),
+        source: i === 0 ? "usda" : "off",
+        sourceVersion: "test",
+      }))
   );
 const seen = (name, extra = {}) => ({
   name,

@@ -189,7 +189,7 @@ function loggerHarness(diary, fastLog, props = {}) {
     "@/lib/nutrition": nutrition,
     "@/lib/food-time": foodTime,
     "@/lib/fast-log": fastLog,
-    "@/lib/food-catalog": { searchFoods: async () => [] },
+    "@/lib/food-catalog": { searchCatalog: async () => ({ foods: [], fixes: {} }) },
     "@/lib/food-rank": rank,
     "@/lib/food-icons": foodIcons,
     "./food-icon": { FoodIcon: "FoodIcon" },

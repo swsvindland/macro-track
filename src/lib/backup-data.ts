@@ -16,7 +16,7 @@ import {
   checkIns,
 } from "@/db";
 import { localDay } from "./metrics";
-import { recipeFood, shiftDay, validateFood, type Food, type Recipe } from "./nutrition";
+import { microKeys, recipeFood, shiftDay, validateFood, type Food, type Recipe } from "./nutrition";
 
 export const MAX_BACKUP_TEXT = 20 * 1024 * 1024;
 const text = z.string().max(20000);
@@ -37,6 +37,9 @@ const nutrients = z.strictObject({
   fat: z.number().finite().min(0).max(1e12),
   fiber: z.number().finite().min(0).max(1e12).nullable(),
   sodium: z.number().finite().min(0).max(1e12).nullable(),
+  ...Object.fromEntries(
+    microKeys.map((key) => [key, z.number().finite().min(0).max(1e12).optional()])
+  ),
 });
 const food = z
   .strictObject({

@@ -436,15 +436,36 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       database.prepare("SELECT count(*) AS n FROM foods").get().n,
       manifest[source].included
     );
-    for (const row of database.prepare("SELECT data FROM foods").iterate()) {
-      const food = JSON.parse(row.data);
+    const micros = new Set(nutrition.microKeys);
+    let withMicros = 0;
+    for (const { data, ...row } of database
+      .prepare("SELECT id, name, brand, barcode, data FROM foods")
+      .iterate()) {
+      const food = { ...row, ...JSON.parse(data), source, sourceVersion: manifest[source].version };
       assert.doesNotThrow(() => nutrition.validateFood(food), food.id);
       assert.ok(food.nutrients.fiber === null || food.nutrients.fiber <= 100, food.id);
+      // Micronutrients are known values in the app's units; a missing one is left out.
+      for (const [key, value] of Object.entries(food.nutrients))
+        if (!["calories", "protein", "carbs", "fat", "fiber", "sodium"].includes(key)) {
+          assert.ok(micros.has(key), `${food.id} ${key}`);
+          assert.ok(Number.isFinite(value) && value >= 0, `${food.id} ${key}`);
+        }
+      const { saturatedFat, sugar } = food.nutrients;
+      assert.ok(saturatedFat == null || saturatedFat <= food.nutrients.fat * 1.05 + 0.5, food.id);
+      assert.ok(sugar == null || sugar <= food.nutrients.carbs * 1.05 + 0.5, food.id);
+      if (Object.keys(food.nutrients).length > 6) withMicros++;
     }
-    assert.equal(
-      database.prepare("SELECT value FROM catalog_meta WHERE key='version'").get().value,
-      manifest[source].version
+    assert.equal(withMicros, manifest[source].withMicros);
+    const meta = Object.fromEntries(
+      database
+        .prepare("SELECT key, value FROM catalog_meta")
+        .all()
+        .map((row) => [row.key, row.value])
     );
+    assert.equal(meta.version, manifest[source].version);
+    // The license travels with the database file, not only with the app's screens.
+    assert.equal(meta.license, manifest[source].license);
+    if (source === "off") assert.match(meta.attribution, /Open Database License.*ODbL/);
     for (const query of ["chicken breast", '" OR - NEAR ( *', "crème", "rice"]) {
       const expression = rank.searchExpression(query);
       if (expression)
@@ -2167,7 +2188,9 @@ test("search finds foods eaten beyond the top 40 with their last portion at any 
     {},
     {
       "@/lib/fast-log": fastLog,
-      "@/lib/food-catalog": { searchFoods: async () => [strawberry, yogurt] },
+      "@/lib/food-catalog": {
+        searchCatalog: async () => ({ foods: [strawberry, yogurt], fixes: {} }),
+      },
     }
   );
   const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
@@ -2965,9 +2988,9 @@ test("compiled fast logger search finds eaten foods by word and names each brand
     {
       "@/lib/fast-log": fastLog,
       "@/lib/food-catalog": {
-        searchFoods: async (query, known) => {
+        searchCatalog: async (query, known) => {
           searches.push({ query, known });
-          return [egg, branded];
+          return { foods: [egg, branded], fixes: {} };
         },
       },
     }
@@ -3055,7 +3078,7 @@ test("compiled food search lists the person's matching foods first, then the cat
     diary,
     {},
     {
-      "@/lib/food-catalog": { searchFoods: async () => [branded, egg] },
+      "@/lib/food-catalog": { searchCatalog: async () => ({ foods: [branded, egg], fixes: {} }) },
     }
   );
   const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
