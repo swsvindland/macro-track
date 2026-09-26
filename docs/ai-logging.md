@@ -4,13 +4,13 @@ September 25, 2026. Take a photo of a meal, describe it, or both; the phone's ow
 
 ## Using it
 
-Home shows **Photo** next to Log food and Scan when this phone can run the model (**Describe** where only text is supported). It is also in the food logger's row of shortcuts, where the foods join the meal being built.
+The quick-log bar above the tab bar (Today, Progress and Plan) shows a sparkle beside the search when this phone can run the model; it opens the photo logger, or description logging where only text is supported. It is also in the food logger's row of shortcuts, where the foods join the meal being built.
 
 1. Take a photo (or choose one) and analysis starts at once, with any description already typed, such as “large pepperoni from Domino's, ate 3 slices”. The description stays editable while the model looks and on the draft; after a change, **Update with description** runs the analysis again, and the draft stays as it was if that finds nothing, fails or is cancelled. A description alone also works: tap **Find foods**, or press return where only descriptions are supported.
 2. The draft lists each food with its catalog match, an estimated amount (marked **≈**) and calories. Tap a food to change the amount, pick another match, search the full list or remove it. Foods without a confident match say **No match yet** and are skipped unless you choose one.
 3. **Log** saves the whole meal at once, with the usual Undo on Home.
 
-From Home a photographed meal is 3 taps: **Photo**, the shutter and **Log**. Home loads the model in the background when it is available, and again when you come back to the app at most every 10 minutes, so analysis doesn't wait for it.
+From the bar a photographed meal is 3 taps: the sparkle, the shutter and **Log**. Home loads the model in the background when it is available, and again when you come back to the app at most every 10 minutes, so analysis doesn't wait for it.
 
 Branded menu items and packaged foods are logged whole: a Domino's pizza is one entry counted in slices, a Big Mac is one entry. Unbranded dishes are split into components: a homemade burger becomes bun, patty, cheese, lettuce, tomato and sauce, plus the fries. Brands are rarely readable from logos alone, so naming the restaurant in the description is the reliable way to get the chain's own nutrition.
 

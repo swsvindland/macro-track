@@ -67,6 +67,7 @@ import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
 import { PhotoLogger, photoLoggingOffered } from "./photo-logger";
+import { QuickLogBar } from "./quick-log-bar";
 import { CopyDay, MoveEntries } from "./copy-day";
 import { WeighInCard } from "./weigh-in-card";
 import { WeekStrip } from "./week-strip";
@@ -120,7 +121,7 @@ export function TodayScreen() {
   const [logger, setLogger] = useState<{
     time?: string;
     meal?: Meal;
-    start?: "search" | "barcode";
+    start?: "typing" | "barcode";
   } | null>(null);
   const [copying, setCopying] = useState(false);
   const [photoLog, setPhotoLog] = useState(false);
@@ -209,6 +210,7 @@ export function TodayScreen() {
       opening = setTimeout(() => {
         const action = takeAppAction();
         if (action === "log") setLogger({});
+        else if (action === "search") setLogger({ start: "typing" });
         else if (action === "scan") setLogger({ start: "barcode" });
         else if (action === "weigh-in") weightSheet.current?.open();
         else if (action === "photo")
@@ -568,45 +570,6 @@ export function TodayScreen() {
     </View>
   );
 
-  const actions = (
-    <View className="gap-2">
-      <View className="flex-row gap-2">
-        <SystemButton
-          className="min-h-12 flex-1"
-          icon="search"
-          labelClassName="text-base font-semibold"
-          onPress={() => setLogger({})}
-        >
-          {live ? "Log food" : `Log to ${label(day)}`}
-        </SystemButton>
-        {photoLoggingOffered(ai) && (
-          <SystemButton
-            variant="secondary"
-            className="min-h-12"
-            icon={ai?.vision ? "camera-outline" : "chatbox-ellipses-outline"}
-            labelClassName="text-base font-semibold"
-            accessibilityLabel={
-              ai?.vision ? "Log a meal from a photo" : "Describe a meal to log it"
-            }
-            onPress={() => setPhotoLog(true)}
-          >
-            {ai?.vision ? "Photo" : "Describe"}
-          </SystemButton>
-        )}
-        <SystemButton
-          variant="secondary"
-          className="min-h-12"
-          icon="barcode-outline"
-          labelClassName="text-base font-semibold"
-          accessibilityLabel="Scan barcode"
-          onPress={() => setLogger({ start: "barcode" })}
-        >
-          Scan
-        </SystemButton>
-      </View>
-    </View>
-  );
-
   const chosen = entries.filter((entry) => selected?.includes(entry.id));
   function selectionAction(key: (typeof selectionActions)[number]["key"]) {
     if (key === "move") return setMoving(chosen);
@@ -627,8 +590,8 @@ export function TodayScreen() {
     if (key === "copy") again(chosen);
     else remove(chosen);
   }
-  // Pinned above the tab bar, so it stays in reach wherever the list is scrolled.
-  const footer = (toast || error || selected) && (
+  // Pinned above the tab bar, so logging and Undo stay in reach wherever the list is scrolled.
+  const footer = (
     <View className="gap-2">
       {!!error && (
         <View className="flex-row items-center gap-2 rounded-2xl border border-border bg-overlay py-1 pl-4 pr-1 shadow-overlay">
@@ -668,7 +631,7 @@ export function TodayScreen() {
           )}
         </View>
       )}
-      {selected && (
+      {selected ? (
         <View className="gap-1 rounded-3xl border border-border bg-overlay p-2 shadow-overlay">
           <View className="flex-row items-center pl-3">
             <Text className="flex-1 font-semibold" accessibilityLiveRegion="polite">
@@ -708,6 +671,16 @@ export function TodayScreen() {
             ))}
           </View>
         </View>
+      ) : (
+        <QuickLogBar
+          label={live ? undefined : `Log to ${label(day)}`}
+          ai={ai}
+          onAction={(action) => {
+            if (action === "photo") setPhotoLog(true);
+            else if (action === "log") setLogger({});
+            else setLogger({ start: action === "scan" ? "barcode" : "typing" });
+          }}
+        />
       )}
     </View>
   );
@@ -724,7 +697,7 @@ export function TodayScreen() {
             <WeekStrip day={day} today={today} onChange={go} />
           </>
         }
-        footer={footer || undefined}
+        footer={footer}
       >
         <SystemPanel className="p-4">
           <SystemPanel.Body className="gap-3">
@@ -879,8 +852,6 @@ export function TodayScreen() {
               onReviewLogs={go}
             />
           ))}
-
-        {actions}
 
         <View className="gap-2">
           <View className="flex-row items-center justify-between gap-2 px-1">

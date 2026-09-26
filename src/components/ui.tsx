@@ -47,6 +47,9 @@ const SafeAreaView = withUniwind(NativeSafeAreaView);
 
 const EditorPortalContext = createContext<string | undefined>(undefined);
 
+/** The footer for Screens inside that pass none, e.g. a tab's quick-log bar. */
+export const ScreenFooter = createContext<ReactNode>(null);
+
 export function Screen({
   title,
   subtitle,
@@ -72,6 +75,8 @@ export function Screen({
 }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const shared = useContext(ScreenFooter);
+  const floating = footer ?? shared;
   return (
     <SafeAreaView
       className="flex-1 bg-background"
@@ -86,7 +91,7 @@ export function Screen({
         contentContainerStyle={{
           padding: width < 600 ? 16 : width < 1024 ? 24 : 32,
           paddingTop: header ? 4 : compact ? 12 : 24,
-          paddingBottom: footer ? 160 : 40,
+          paddingBottom: floating ? 160 : 40,
           gap: compact ? 16 : 20,
           width: "100%",
           maxWidth: 1440,
@@ -109,14 +114,14 @@ export function Screen({
         )}
         {children}
       </ScrollView>
-      {footer && (
+      {floating && (
         <View
           pointerEvents="box-none"
           className="absolute inset-x-0 items-center px-4"
           // On iOS the tab bar floats over the screen and is part of its safe area.
           style={{ bottom: (Platform.OS === "ios" ? insets.bottom : 0) + 8 }}
         >
-          <View className="w-full max-w-xl">{footer}</View>
+          <View className="w-full max-w-xl">{floating}</View>
         </View>
       )}
     </SafeAreaView>

@@ -149,6 +149,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
     "./week-strip": { WeekStrip: "WeekStrip" },
+    "./quick-log-bar": { QuickLogBar: "QuickLogBar" },
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./amount-picker": {
@@ -2373,15 +2374,12 @@ test("compiled Home opens the logger in place, refreshes totals and offers safe 
   const harness = screenHarness(diary, { diaryLayout: "timeline" }, { "@/lib/fast-log": fastLog });
   const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
   const render = () => nodes(harness.render(TodayScreen));
-  render()
-    .find((node) => node.type === "Button" && node.props.children === "Log food")
-    .props.onPress();
+  const bar = () => render().find((node) => node.type === "QuickLogBar").props;
+  bar().onAction("search");
   let logger = render().find((node) => node.type === "FastLogger");
-  assert.equal(logger.props.start, undefined);
+  assert.equal(logger.props.start, "typing");
   logger.props.close();
-  render()
-    .find((node) => node.props.accessibilityLabel === "Scan barcode")
-    .props.onPress();
+  bar().onAction("scan");
   logger = render().find((node) => node.type === "FastLogger");
   assert.equal(logger.props.start, "barcode");
   const receipt = fastLog.logBatch([fastLog.portionFor(food)], { time: "12:00" });
@@ -2476,8 +2474,8 @@ test("compiled Home reads the diary once per write; re-renders and the clock reu
   assert.ok(text(tree, "On pace for ~1800"), "the usual 1300 kcal after 12:00");
 
   render()
-    .find((node) => node.type === "Button" && node.props.children === "Log food")
-    .props.onPress();
+    .find((node) => node.type === "QuickLogBar")
+    .props.onAction("search");
   render()
     .find((node) => node.type === "FastLogger")
     .props.close();
@@ -3808,14 +3806,14 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
   harness.context.refresh();
   tree = render();
   assert.ok(tree.some((node) => node.type === "HomeCheckIn"));
-  assert.ok(tree.some((node) => node.type === "Button" && node.props.children === "Log food"));
+  const bar = (tree) => tree.find((node) => node.type === "QuickLogBar").props;
+  assert.equal(bar(tree).label, undefined);
   tree.find((node) => node.props.accessibilityLabel === "Previous day").props.onPress();
   tree = render();
   assert.ok(!tree.some((node) => node.type === "HomeCheckIn"));
   assert.ok(tree.some((node) => node.props.accessibilityLabel === "Edit Test food"));
-  tree
-    .find((node) => node.type === "Button" && node.props.children === "Log to Yesterday")
-    .props.onPress();
+  assert.equal(bar(tree).label, "Log to Yesterday");
+  bar(tree).onAction("search");
   assert.equal(render().find((node) => node.type === "FastLogger").props.initialDay, yesterday);
   sqlite.close();
 });

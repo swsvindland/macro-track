@@ -107,8 +107,11 @@ export function FastLogger({
   initialDay: string;
   initialTime?: string;
   initialMeal?: Meal;
-  /** "meals" is kept for older callers; saved meals are now part of the search list. */
-  start?: "search" | "barcode" | "meals";
+  /**
+   * "typing" focuses the search so the keyboard is up. "meals" is kept for older callers; saved
+   * meals are now part of the search list.
+   */
+  start?: "search" | "typing" | "barcode" | "meals";
   /** Offers the on-device photo/description logger when this phone can run it. */
   photoLogging?: boolean;
   close: () => void;
@@ -123,7 +126,9 @@ export function FastLogger({
   const [query, setQuery] = useState("");
   // Once the search is used, the shortcuts shrink to icons so results get the screen; they stay
   // that way when the keyboard hides, so the list doesn't jump under the finger.
-  const [searched, setSearched] = useState(false);
+  const [searched, setSearched] = useState(start === "typing");
+  // From the search bar the keyboard is up on opening, not again each time the list comes back.
+  const [typing, setTyping] = useState(start === "typing");
   const list = useRef<ScrollView>(null);
   const [results, setResults] = useState<{ query: string; foods: Food[]; error: string } | null>(
     null
@@ -230,6 +235,7 @@ export function FastLogger({
   // field and the results, never the panel with the field under the keyboard.
   function openSearch() {
     setSearched(true);
+    setTyping(false);
     if (!when) return;
     setWhen(false);
     list.current?.scrollTo({ y: 0, animated: false });
@@ -574,6 +580,7 @@ export function FastLogger({
         }}
         placeholder="Search foods and meals"
         accessibilityLabel="Search foods and meals"
+        autoFocus={typing}
         onFocus={openSearch}
       />
       {!searched && (

@@ -333,6 +333,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
     "./week-strip": { WeekStrip: "WeekStrip" },
+    "./quick-log-bar": { QuickLogBar: "QuickLogBar" },
     "./food-editor": { FoodEditor: "FoodEditor" },
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
     "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },
@@ -1688,7 +1689,7 @@ test("compiled Home opens a link's sheet once, on today, from a cold start or wh
   tree = render();
   assert.equal(sheet(tree, "FastLogger").props.start, undefined);
   assert.equal(sheet(tree, "FastLogger").props.initialDay, today);
-  assert.ok(button(tree, "Log food"), "back on today");
+  assert.equal(sheet(tree, "QuickLogBar").props.label, undefined, "back on today");
 
   // A photo link opens the photo logger when the model can run, the logger otherwise.
   actions.requestAppAction("photo");

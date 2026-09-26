@@ -462,15 +462,17 @@ test("compiled logger folds the day and time panel away so the search field stay
 });
 
 // Home and Library with their sheets and child screens as plain elements. Hooks keep their
-// slots across renders; effects don't run.
+// slots across renders; effects run only when a test runs them.
 function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const slots = [];
+  // The latest render's effects.
+  const effects = [];
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
   const react = {
     createContext: () => ({}),
     useContext: () => context,
-    useEffect: () => {},
+    useEffect: (effect) => effects.push(effect),
     useState(initial) {
       const slot = cursor++;
       if (!(slot in slots)) slots[slot] = typeof initial === "function" ? initial() : initial;
@@ -560,6 +562,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./home-check-in": element("HomeCheckIn"),
     "./weigh-in-card": element("WeighInCard"),
     "./week-strip": element("WeekStrip"),
+    "./quick-log-bar": element("QuickLogBar"),
     "./meal-editor": element("MealEditor"),
     "./recipe-editor": element("RecipeEditor"),
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
@@ -581,10 +584,16 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,
+    effects,
     load: (file) => load(file, dependencies, true),
     render(Component, props) {
       cursor = 0;
+      effects.length = 0;
       return nodes(Component(props));
+    },
+    /** Forgets every hook's state, as a fresh mount would. */
+    remount() {
+      slots.length = 0;
     },
   };
 }
@@ -1094,4 +1103,383 @@ test("compiled week strip swipes a week at a time, stopping at today, and reads 
   assert.ok(reads > 0);
   assert.equal(cells(tree)[3].props.accessibilityLabel, "Thu, Jan 4: 700 kcal");
   sqlite.close();
+});
+
+/** The compiled quick-log bar with a keyboard, app state and router that tests can drive. */
+function barHarness({ os = "ios", keyboardUp = false, status = null } = {}) {
+  const keyboard = { visible: keyboardUp, listeners: {} };
+  const appState = [];
+  const routes = [];
+  const reads = { count: 0 };
+  const actions = load("src/lib/app-actions.ts");
+  const harness = screenHarness(
+    {},
+    {},
+    {
+      "react-native": {
+        View: "View",
+        Platform: { OS: os },
+        AppState: {
+          addEventListener: (_, listener) => {
+            appState.push(listener);
+            return { remove: () => appState.splice(appState.indexOf(listener), 1) };
+          },
+        },
+        Keyboard: {
+          isVisible: () => keyboard.visible,
+          addListener: (name, listener) => {
+            keyboard.listeners[name] = listener;
+            return { remove: () => delete keyboard.listeners[name] };
+          },
+        },
+      },
+      "expo-router": { router: { navigate: (href) => routes.push(href) } },
+      "@/lib/app-actions": actions,
+      "@/lib/local-ai": {
+        modelStatus: async () => {
+          reads.count++;
+          return status;
+        },
+      },
+      "./photo-logger": {
+        photoLoggingOffered: (value) =>
+          !!value && (value.state !== "unavailable" || value.reason === "disabled"),
+      },
+    }
+  );
+  const bar = harness.load("src/components/nutrition/quick-log-bar.tsx");
+  return { harness, bar, keyboard, appState, routes, reads, actions };
+}
+const available = { state: "available", engine: "apple", vision: true };
+
+test("compiled quick-log bar searches, scans, logs keyboard down, and offers AI only where the model runs", () => {
+  const { harness, bar, keyboard } = barHarness();
+  const pressed = [];
+  const render = (props) =>
+    harness.render(bar.QuickLogBar, {
+      ai: null,
+      onAction: (action) => pressed.push(action),
+      ...props,
+    });
+  let tree = render();
+  harness.effects.forEach((effect) => effect());
+  // The pill names what it does; the barcode sits inside it, like the search it replaces.
+  const pill = find(tree, "Button", "Search for a food");
+  assert.equal(
+    nodes(pill.props.children).find((node) => node.type === "Text").props.children,
+    "Search for a food"
+  );
+  pill.props.onPress();
+  find(tree, "IconButton", "Scan barcode").props.onPress();
+  // + opens the logger with the keyboard down, so Log again isn't hidden behind it.
+  const add = find(tree, "IconButton", "Log food");
+  assert.equal(add.props.icon, "add");
+  add.props.onPress();
+  assert.deepEqual(pressed.splice(0), ["search", "scan", "log"]);
+  const sparkle = (tree) => tree.find((node) => node.props?.icon === "sparkles");
+  assert.equal(sparkle(tree), undefined, "no model, no sparkle");
+  tree = render({ ai: { state: "unavailable", engine: "none", vision: false, reason: "device" } });
+  assert.equal(sparkle(tree), undefined);
+  assert.ok(find(tree, "IconButton", "Log food"));
+
+  // A photo where the model sees, a description where it only reads; turned off, it explains.
+  tree = render({ ai: available });
+  find(tree, "IconButton", "Log a meal from a photo").props.onPress();
+  tree = render({ ai: { ...available, vision: false } });
+  find(tree, "IconButton", "Describe a meal to log it").props.onPress();
+  tree = render({
+    ai: { state: "unavailable", engine: "apple", vision: true, reason: "disabled" },
+  });
+  assert.ok(find(tree, "IconButton", "Log a meal from a photo"));
+  assert.deepEqual(pressed.splice(0), ["photo", "photo"]);
+  assert.equal(find(tree, "IconButton", "Log a meal from a photo").props.icon, "sparkles");
+
+  // Another day is named on the pill.
+  tree = render({ label: "Log to Yesterday" });
+  assert.ok(find(tree, "Button", "Log to Yesterday"));
+  assert.ok(find(tree, "IconButton", "Log food"));
+
+  // The keyboard hides it, so it never sits over the field being typed in.
+  keyboard.listeners.keyboardWillShow();
+  assert.deepEqual(render(), []);
+  keyboard.listeners.keyboardWillHide();
+  assert.ok(find(render(), "Button", "Search for a food"));
+
+  // Android lifts it above the keyboard, so it listens once the keyboard is up there too.
+  const android = barHarness({ os: "android", keyboardUp: true });
+  assert.deepEqual(
+    android.harness.render(android.bar.QuickLogBar, { ai: null, onAction() {} }),
+    []
+  );
+  android.harness.effects.forEach((effect) => effect());
+  assert.deepEqual(Object.keys(android.keyboard.listeners).sort(), [
+    "keyboardDidHide",
+    "keyboardDidShow",
+  ]);
+});
+
+test("compiled tab bar opens Today's sheets through the app action, with the model's status", async () => {
+  const { harness, bar, appState, routes, reads, actions } = barHarness({ status: available });
+  const heard = [];
+  const stop = actions.subscribeAppActions(() => heard.push(actions.pendingAppAction()));
+  const render = () => harness.render(bar.TabQuickLogBar);
+  let inner = render()[0];
+  assert.equal(inner.type, bar.QuickLogBar);
+  assert.equal(inner.props.ai, null);
+  const cleanups = harness.effects.map((effect) => effect());
+  await new Promise(setImmediate);
+  inner = render()[0];
+  assert.equal(inner.props.ai, available);
+
+  // Each button lands on Today first, where Home opens the sheet for today.
+  for (const action of ["log", "search", "scan", "photo"]) inner.props.onAction(action);
+  assert.deepEqual(routes, ["/", "/", "/", "/"]);
+  assert.deepEqual(heard, ["log", "search", "scan", "photo"]);
+  assert.equal(actions.takeAppAction(), "photo");
+  stop();
+
+  // Coming back to the app reads the status again; the other tab starts from it.
+  assert.equal(reads.count, 1);
+  appState.forEach((listener) => listener("background"));
+  appState.forEach((listener) => listener("active"));
+  assert.equal(reads.count, 2);
+  harness.remount();
+  assert.equal(render()[0].props.ai, available, "no reflow when the sparkle is known");
+  cleanups.forEach((cleanup) => cleanup?.());
+  assert.equal(appState.length, 0);
+});
+
+test("compiled Home pins the quick-log bar above the tab bar in place of its Log row", () => {
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay(),
+    yesterday = nutrition.shiftDay(today, -1);
+  const home = screenHarness(diary);
+  const { TodayScreen } = home.load("src/components/nutrition/today-screen.tsx");
+  const render = () => home.render(TodayScreen);
+  const screen = (tree) => tree.find((node) => node.type === "Screen");
+  const bar = (tree) =>
+    nodes(screen(tree).props.footer).find((node) => node.type === "QuickLogBar");
+  let tree = render();
+  // In the floating footer, not the scrolling page, and nothing else starts the logger there.
+  assert.ok(bar(tree));
+  assert.equal(
+    nodes(screen(tree).props.children).find((node) => node.type === "QuickLogBar"),
+    undefined
+  );
+  for (const label of ["Log food", "Scan", "Photo", "Describe"])
+    assert.equal(find(tree, "Button", label), undefined, label);
+  assert.equal(bar(tree).props.label, undefined);
+  assert.equal(bar(tree).props.ai, null);
+
+  bar(tree).props.onAction("search");
+  tree = render();
+  assert.deepEqual(
+    [logger(tree).props.start, logger(tree).props.initialDay],
+    ["typing", today],
+    "the keyboard is up in the logger"
+  );
+  logger(tree).props.close();
+  // A fresh day hides its empty hours, so no hour offers a +; the bar's + opens the logger with
+  // the keyboard down, now.
+  tree = render();
+  assert.ok(tree.some((node) => node.props?.children === "Nothing logged yet."));
+  assert.equal(
+    tree.find((node) => /^Log food (at|to) /.test(node.props?.accessibilityLabel ?? "")),
+    undefined
+  );
+  bar(tree).props.onAction("log");
+  tree = render();
+  assert.deepEqual(
+    [logger(tree).props.start, logger(tree).props.initialTime, logger(tree).props.initialDay],
+    [undefined, undefined, today]
+  );
+  logger(tree).props.close();
+  bar(render()).props.onAction("scan");
+  tree = render();
+  assert.equal(logger(tree).props.start, "barcode");
+  logger(tree).props.close();
+  bar(render()).props.onAction("photo");
+  tree = render();
+  assert.equal(tree.find((node) => node.type === "PhotoLogger").props.initialDay, today);
+  tree.find((node) => node.type === "PhotoLogger").props.close();
+
+  // On another day the pill says so, and logs there.
+  find(render(), "IconButton", "Previous day").props.onPress();
+  tree = render();
+  assert.equal(bar(tree).props.label, "Log to Yesterday");
+  bar(tree).props.onAction("search");
+  assert.equal(logger(render()).props.initialDay, yesterday);
+  logger(render()).props.close();
+  bar(render()).props.onAction("log");
+  assert.deepEqual(
+    [logger(render()).props.start, logger(render()).props.initialDay],
+    [undefined, yesterday]
+  );
+  logger(render()).props.close();
+
+  // Choosing foods puts the selection bar in its place; Cancel brings it back.
+  find(render(), "Button", `Edit ${food.name}`).props.onLongPress();
+  tree = render();
+  assert.equal(bar(tree), undefined);
+  assert.ok(find(tree, "Button", "Cancel"));
+  find(tree, "Button", "Cancel").props.onPress();
+  assert.ok(bar(render()));
+  sqlite.close();
+});
+
+test("compiled Home opens the logger ready to type from a search link", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  const actions = load("src/lib/app-actions.ts");
+  assert.equal(actions.parseAppAction("macrotrack://search"), "search");
+  assert.equal(actions.parseAppAction("macrotrack://search/?from=shortcut"), "search");
+  const home = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/app-actions": actions,
+      "@/lib/food-catalog": { openCatalogs: async () => {} },
+      "@/lib/local-ai": { modelStatus: async () => available, prewarmModel: () => {} },
+      "react-native": {
+        View: "View",
+        Platform: { OS: "ios" },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
+        AccessibilityInfo: {
+          announceForAccessibility: () => {},
+          isScreenReaderEnabled: () => new Promise(() => {}),
+        },
+      },
+    }
+  );
+  const { TodayScreen } = home.load("src/components/nutrition/today-screen.tsx");
+  // From Progress or Plan: the bar asks before Home has taken anything.
+  actions.requestAppAction("search");
+  home.render(TodayScreen);
+  const stop = home.effects[0]();
+  t.mock.timers.tick(1);
+  const tree = home.render(TodayScreen);
+  assert.deepEqual(
+    [logger(tree).props.start, logger(tree).props.initialDay],
+    ["typing", metrics.localDay()]
+  );
+  assert.equal(actions.pendingAppAction(), null);
+  stop();
+  sqlite.close();
+  t.mock.timers.reset();
+});
+
+test("compiled logger opened from the bar has the search focused and the shortcuts as icons", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const typing = loggerHarness(diary, fastLog, { start: "typing" });
+  let tree = typing.render();
+  assert.equal(search(tree).autoFocus, true);
+  assert.equal(find(tree, "Button", "Scan"), undefined, "results get the room at once");
+  assert.deepEqual(tools(tree, "Log again"), ["Scan barcode", "Quick add", "New food"]);
+  // Focused once: coming back to the list from a portion doesn't raise the keyboard again.
+  search(tree).onFocus();
+  tree = typing.render();
+  assert.equal(search(tree).autoFocus, false);
+  find(tree, "Button", `Adjust ${food.name}`).props.onPress();
+  editor(typing.render()).close();
+  assert.equal(search(typing.render()).autoFocus, false);
+
+  // Log food, an hour's + and links still open on the list, keyboard down.
+  const list = loggerHarness(diary, fastLog);
+  tree = list.render();
+  assert.equal(search(tree).autoFocus, false);
+  assert.ok(find(tree, "Button", "Scan"));
+  typing.unmount();
+  list.unmount();
+  sqlite.close();
+});
+
+/** Screen from ui.tsx, uncompiled, with a footer the tab may provide. */
+function loadScreen(provided) {
+  const react = {
+    createContext: (value) => ({ value }),
+    useContext: (context) => (context === ui.ScreenFooter ? provided : context.value),
+    useId: () => "id",
+    useRef: (current) => ({ current }),
+    useState: (initial) => [initial, () => {}],
+  };
+  const ui = load("src/components/ui.tsx", {
+    react,
+    "react/jsx-runtime": {
+      jsx: (type, props) => ({ type, props }),
+      jsxs: (type, props) => ({ type, props }),
+    },
+    "react-native": {
+      Platform: { OS: "ios" },
+      ScrollView: "ScrollView",
+      View: "View",
+      useWindowDimensions: () => ({ width: 390 }),
+    },
+    "react-native-safe-area-context": {
+      SafeAreaView: "SafeAreaView",
+      useSafeAreaInsets: () => ({ top: 47, bottom: 83 }),
+    },
+    uniwind: { withUniwind: (component) => component },
+    "heroui-native": {},
+    "heroui-native/portal": {},
+    "heroui-native-pro": {},
+    "react-native-gesture-handler": {},
+    "react-native-gesture-handler/ReanimatedSwipeable": { __esModule: true },
+    "./system": { SystemText: "Text" },
+    "@/lib/app-actions": load("src/lib/app-actions.ts"),
+    "@/lib/metrics": metrics,
+    "@/lib/store": { useStore: () => ({ t: (key) => key }) },
+  });
+  return ui;
+}
+
+test("Screen floats a tab's footer above the tab bar and keeps the page clear of it", () => {
+  const bar = { type: "TabQuickLogBar", props: {} };
+  const render = (provided, footer) =>
+    nodes(loadScreen(provided).Screen({ title: "Plan", children: "Plan", footer }));
+  const padding = (tree) =>
+    tree.find((node) => node.type === "ScrollView").props.contentContainerStyle.paddingBottom;
+  const floating = (tree) => {
+    const view = tree.find(
+      (node) => node.type === "View" && node.props.style?.bottom !== undefined
+    );
+    return view && { bottom: view.props.style.bottom, content: view.props.children.props.children };
+  };
+  let tree = render(null);
+  assert.equal(padding(tree), 40);
+  assert.equal(floating(tree), undefined);
+  tree = render(bar);
+  // Above the floating tab bar, which is part of the safe area on iOS, with room to scroll past.
+  assert.deepEqual(floating(tree), { bottom: 83 + 8, content: bar });
+  assert.equal(padding(tree), 160);
+  // A screen's own footer, such as Today's, takes the place.
+  const own = { type: "Undo", props: {} };
+  assert.equal(floating(render(bar, own)).content, own);
+});
+
+test("Progress and Plan mount the tab bar; Library and Settings don't", () => {
+  const jsx = (type, props) => ({ type, props });
+  const route = (file, screen) =>
+    load(file, {
+      "react/jsx-runtime": { jsx, jsxs: jsx },
+      "@/components/deferred-tab": { DeferredTab: "DeferredTab" },
+      "@/components/nutrition/quick-log-bar": { TabQuickLogBar: "TabQuickLogBar" },
+      "@/components/ui": { ScreenFooter: "ScreenFooter" },
+      [screen[0]]: { [screen[1]]: screen[1] },
+    }).default();
+  for (const [file, screen] of [
+    ["src/app/(tabs)/progress.tsx", ["@/components/progress/progress-screen", "ProgressScreen"]],
+    ["src/app/(tabs)/plan.tsx", ["@/components/nutrition/plan-screen", "PlanScreen"]],
+  ]) {
+    const tab = route(file, screen);
+    assert.equal(tab.type, "DeferredTab", file);
+    const provider = tab.props.children;
+    assert.equal(provider.type, "ScreenFooter", file);
+    assert.equal(provider.props.value.type, "TabQuickLogBar", file);
+    assert.equal(provider.props.children.type, screen[1], file);
+  }
+  for (const [file, screen] of [
+    ["src/app/(tabs)/library.tsx", ["@/components/nutrition/library-screen", "LibraryScreen"]],
+    ["src/app/(tabs)/settings.tsx", ["@/components/screens/settings-screen", "SettingsScreen"]],
+  ])
+    assert.ok(!nodes(route(file, screen)).some((node) => node.type === "ScreenFooter"), file);
 });
