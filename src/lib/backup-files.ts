@@ -26,7 +26,7 @@ export async function shareBackupFile(uri: string) {
   await Sharing.shareAsync(uri, {
     mimeType: "application/json",
     UTI: "public.json",
-    dialogTitle: "Save encrypted Macro Track backup",
+    dialogTitle: "Save encrypted Vector Macros backup",
   });
 }
 export async function exportBackup(password: string) {

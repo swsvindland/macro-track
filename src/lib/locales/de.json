@@ -74,7 +74,7 @@
   "photoPermission": "Erlaube Fotozugriff in den Geräteeinstellungen.",
   "healthUnavailable": "Die Synchronisierung erfordert einen nativen Build und einen unterstützten Gesundheitsdienst.",
   "syncFailed": "Synchronisierung fehlgeschlagen. Berechtigungen prüfen und erneut versuchen.",
-  "healthWeightDenied": "Macro Track in den Gesundheitsberechtigungen das Lesen von Gewicht erlauben und erneut versuchen.",
+  "healthWeightDenied": "Macros in den Gesundheitsberechtigungen das Lesen von Gewicht erlauben und erneut versuchen.",
   "syncDone": "Synchronisierung abgeschlossen",
   "healthPrivacy": "Gewicht und Größe werden in beide Richtungen synchronisiert. Erfasstes Körperfett wird auf beiden Plattformen exportiert, der Taillenumfang auch zu Apple Health. Andere Maße und Schätzungen bleiben in der App.",
   "trendHelp": "Geglätteter Tagesmittelwert mit 7 Tagen Halbwertszeit. Frühe Trends sind vorläufig.",

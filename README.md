@@ -1,6 +1,6 @@
-# Macro Track
+# Vector Macros
 
-An offline nutrition tracker for iPhone and Android, forked from Vector Body. Public branding is still undecided. See [the product plan](docs/macro-track-plan.md).
+An offline nutrition tracker for iPhone and Android, forked from Vector Body. The home-screen label is **Macros**, since the full name is cut off under an icon; the internal project name, slug, `macrotrack://` scheme, database and backup identifiers stay `macro-track` so existing installs and backups keep working. See [the product plan](docs/macro-track-plan.md).
 
 ## Usable MVP
 
@@ -19,7 +19,7 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 - Readable food/weight/targets CSV exports and confirmed local personal-data erasure.
 - Inherited weight history, smoothed trend, and opt-in HealthKit / Health Connect integration.
 - Password-protected local backup and restore in Settings, with an automatic encrypted recovery copy before replacement. See [backup scope and recovery](docs/backups.md).
-- Distinct `dev.svindland.macrotrack` application IDs, `macrotrack://` scheme, private `macro_track.db`, and app icon.
+- Distinct `dev.svindland.vector.macro` application IDs, `macrotrack://` scheme, private `macro_track.db`, and app icon.
 
 A downloadable AI model for phones without Apple Intelligence or Gemini Nano and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
@@ -40,7 +40,7 @@ pnpm android
 
 Expo Go can preview the diary, food catalogs and weight screens. Health sync and photo logging require a native build; photo logging on the iOS simulator needs a Mac with Apple Intelligence turned on. Android builds pin Kotlin 2.2.21 (`plugins/with-kotlin-plugin-version.js`) for ML Kit GenAI. Camera scanning requires camera permission and a device with a usable camera. Food search does not call a remote API. Expo Go downloads development assets from Metro; production builds bundle them locally.
 
-The inherited EAS project ID has been removed deliberately. Link a **new Macro Track EAS project** before remote builds or submission. Do not reconnect the old Vector Body project. Generated native folders are ignored and regenerated from app configuration.
+The inherited EAS project ID has been removed deliberately. Link a **new Vector Macros EAS project** before remote builds or submission. Do not reconnect the old Vector Body project. Generated native folders are ignored and regenerated from app configuration.
 
 ## Food catalog builds
 
@@ -75,7 +75,7 @@ Tests use real SQLite with the production Drizzle driver and cover migrations, h
 
 The September 24, 2026 foundation passed all 21 automated tests, TypeScript and lint checks, iOS simulator compilation/installation, Android arm64 debug compilation, and production JavaScript/asset exports for both platforms. See [the milestone report](docs/foundation-validation.md) for catalog measurements and remaining QA.
 
-The documentation and store assets under `docs/app-store/` were inherited from Body Track and are reference material, not ready-to-submit Macro Track assets.
+The documentation and store assets under `docs/app-store/` were inherited from Body Track and are reference material, not ready-to-submit Vector Macros assets.
 
 See [MVP validation and release gates](docs/mvp-validation.md) for the latest verified scope.
 

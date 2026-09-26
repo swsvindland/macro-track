@@ -223,7 +223,7 @@ class LocalAIModule : Module() {
     val message =
       when (code) {
         "BUSY" -> "The on-device model is busy. Try again in a moment."
-        "BACKGROUND" -> "Keep Macro Track open while the photo is analyzed."
+        "BACKGROUND" -> "Keep Vector Macros open while the photo is analyzed."
         "QUOTA" -> "The on-device model has reached today's limit for this app."
         "TOO_LONG" -> "The description is too long."
         "DISK" -> "There isn't enough free storage for the on-device model."
