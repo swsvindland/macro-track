@@ -23,7 +23,7 @@ An offline nutrition tracker for iPhone and Android, forked from Vector Body. Pu
 
 A downloadable AI model for phones without Apple Intelligence or Gemini Nano and downloadable catalog updates are not implemented yet. Catalog refreshes ship through app updates. New nutrition screens currently use English; the inherited localization infrastructure remains available. Native camera/health behavior and the complete UI still need device QA before release.
 
-Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food from **Today**. Without Health weights, Today asks for a morning weigh-in; it also asks you to confirm recent days were fully logged, which weekly check-ins need, unless yesterday was clearly logged in full (Settings → **Count logged days as complete**). **Library** holds personal foods, saved meals and recipes. Due check-ins appear directly on Today (after the morning weigh-in and day confirmation) with Accept/Keep actions and expandable evidence; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
+Start with **Plan → Build my program**, then choose Cut, Bulk or Maintain. Log food from **Today**. Without Health weights, Today asks for a morning weigh-in; it also asks you to confirm recent days were fully logged, which weekly check-ins need, unless yesterday was clearly logged in full (Settings → **Count logged days as complete**). **Library** holds personal foods, saved meals and recipes. Due check-ins appear directly on Today (after the morning weigh-in and day confirmation) with Accept/Keep/Adjust actions and expandable evidence; **How check-ins work** is available offline in Plan. Settings contains encrypted backups, CSV exports and data erasure.
 
 Reload after pulling changes so all personal-database migrations run. The app copies the database before migrating and keeps the last two copies (see [backups](docs/backups.md#pre-migration-copies)). The native client must include the camera, document picker, sharing and crypto modules, and the local `modules/local-ai` module for photo logging (rebuild the dev client after pulling it). Guided programs generate provisional starting targets from your profile and refine them with normalized weight and food intake. Manual targets remain optional.
 
@@ -67,10 +67,11 @@ Catalog filenames include the source and build-recipe version, so an app update 
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:tz
 pnpm exec expo export --platform ios --platform android
 ```
 
-Tests use real SQLite with the production Drizzle driver and cover migrations, health sync, source catalog integrity, search, barcode normalization, quantity arithmetic, unknown nutrients, history snapshots, dated targets and logging completeness. These checks do not replace physical-device camera, Health permission or UI testing.
+Tests use real SQLite with the production Drizzle driver and cover migrations, health sync, source catalog integrity, search, barcode normalization, quantity arithmetic, unknown nutrients, history snapshots, dated targets and logging completeness. `pnpm test:tz` repeats them in Los Angeles, Auckland and London time. These checks do not replace physical-device camera, Health permission or UI testing.
 
 The September 24, 2026 foundation passed all 21 automated tests, TypeScript and lint checks, iOS simulator compilation/installation, Android arm64 debug compilation, and production JavaScript/asset exports for both platforms. See [the milestone report](docs/foundation-validation.md) for catalog measurements and remaining QA.
 

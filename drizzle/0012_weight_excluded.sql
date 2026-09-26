@@ -1,0 +1,1 @@
+ALTER TABLE `weight_entries` ADD `excluded` integer DEFAULT false NOT NULL;

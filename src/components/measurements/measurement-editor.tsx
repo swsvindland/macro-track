@@ -17,7 +17,7 @@ export function MeasurementEditor({
   valueFirst?: boolean;
 }) {
   const { t } = useStore();
-  const { editing, open, setOpen, busy, imported, day, setDay, error, save, remove } = log;
+  const { editing, open, setOpen, busy, imported, day, setDay, error, save, remove, exclude } = log;
   const date = <DateInput label={t("date")} value={day} onChange={setDay} disabled={imported} />;
   return (
     <Editor
@@ -38,6 +38,16 @@ export function MeasurementEditor({
       {children}
       {valueFirst && date}
       <ErrorText message={error} />
+      {editing && exclude && (
+        <SystemButton
+          variant="secondary"
+          isDisabled={busy}
+          accessibilityState={{ checked: !!editing.excluded }}
+          onPress={() => exclude(editing, !editing.excluded)}
+        >
+          {editing.excluded ? "Include in trend" : "Ignore in trend"}
+        </SystemButton>
+      )}
       {editing && (
         <SystemButton variant="danger-soft" isDisabled={busy} onPress={remove}>
           {t("delete")}

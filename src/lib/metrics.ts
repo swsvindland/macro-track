@@ -52,6 +52,33 @@ export function formatHeight(
   const { feet, inches } = heightParts(cm, 1);
   return `${number(feet, 0)}' ${number(inches, Number.isInteger(inches) ? 0 : 1)}"`;
 }
+const weightDigits = (units: Units) => (units === "stone" ? 2 : 1);
+export function formatWeight(
+  kg: number,
+  units: Units,
+  number: (value: number, digits?: number) => string
+): string {
+  return `${number(fromKg(kg, units), weightDigits(units))} ${weightUnit(units)}`;
+}
+/** "−0.4 kg/wk". A pace that rounds to zero has no sign, so it never reads "−0.0". */
+export function formatPace(
+  kg: number,
+  units: Units,
+  number: (value: number, digits?: number) => string
+): string {
+  const digits = weightDigits(units),
+    shown = number(Math.abs(fromKg(kg, units)), digits);
+  const sign = shown === number(0, digits) ? "" : kg < 0 ? "−" : "+";
+  return `${sign}${shown} ${weightUnit(units)}/wk`;
+}
+/** "Sep 24", or "Tue, Sep 30" with the weekday; the store's date() always adds the year. */
+export function shortDay(day: string, language: string, weekday = false) {
+  return new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
+    ...(weekday ? { weekday: "short" as const } : {}),
+    month: "short",
+    day: "numeric",
+  });
+}
 export function localDay(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -69,10 +96,13 @@ export function dayOf(timestamp: string): string {
   return timestamp.length === 10 ? timestamp : localDay(new Date(timestamp));
 }
 export type TrendPoint = { day: string; raw: number; trend: number };
-export function weightTrend(entries: { measuredAt: string; weightKg: number }[]): TrendPoint[] {
+/** Daily averages smoothed with a seven-day half-life. Ignored readings are left out. */
+export function weightTrend(
+  entries: { measuredAt: string; weightKg: number; excluded?: boolean | null }[]
+): TrendPoint[] {
   const days = new Map<string, number[]>();
   for (const entry of entries) {
-    if (!Number.isFinite(entry.weightKg) || entry.weightKg <= 0) continue;
+    if (entry.excluded || !Number.isFinite(entry.weightKg) || entry.weightKg <= 0) continue;
     const day = dayOf(entry.measuredAt);
     days.set(day, [...(days.get(day) ?? []), entry.weightKg]);
   }

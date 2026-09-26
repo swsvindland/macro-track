@@ -4,9 +4,8 @@ import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import { entriesForDay, dayStatus } from "@/lib/diary";
 import { currentGoal, nextCheckInDay } from "@/lib/coaching-store";
-import { localDay } from "@/lib/metrics";
+import { localDay, shortDay } from "@/lib/metrics";
 import { shiftDay, totalNutrients } from "@/lib/nutrition";
-import { shortDay } from "./coaching-panel";
 
 export function IntakeSummary() {
   const { number, language } = useStore();

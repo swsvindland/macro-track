@@ -7,10 +7,14 @@ export type HealthRecord = {
   clientId?: string;
 };
 export type HealthWrite = Omit<HealthRecord, "id"> & { clientId: string; version: number };
+// Kinds the user granted. Only reading weight is required; everything else is optional.
+export type HealthAccess = {
+  read: readonly ("weight" | "height")[];
+  write: readonly HealthKind[];
+};
 export type HealthAdapter = {
-  bodyWriteKinds?: readonly ("waist" | "bodyFat")[];
-  authorize: (interactive?: boolean) => Promise<void>;
-  read: () => Promise<HealthRecord[]>;
+  authorize: (interactive?: boolean) => Promise<HealthAccess>;
+  read: (kinds: HealthAccess["read"]) => Promise<HealthRecord[]>;
   write: (record: HealthWrite) => Promise<string>;
   remove: (kind: HealthKind, id: string) => Promise<void>;
 };

@@ -6,7 +6,9 @@
 @source '../node_modules/heroui-native/lib';
 @source '../node_modules/heroui-native-pro/lib';
 
-/* Calm surfaces with a shared cyan accent in light and dark modes.
+/* Calm surfaces with a shared cyan accent in light and dark modes. In light mode the bright
+   accent sits behind dark text; text, links, focus rings and chart lines use the deeper
+   #007088, which keeps 4.5:1 on every light surface.
    HeroUI slots read --font-normal/medium/semibold/bold as family names. --font-normal
    stays in @theme because HeroUI text always carries font-normal and needs Inter from
    it; the others live with the theme variables so Tailwind's font-medium/semibold/bold
@@ -61,7 +63,7 @@
       --accent: #22d3ee;
       --accent-foreground: #071017;
       --accent-soft: #ecfeff;
-      --accent-soft-foreground: #007f9b;
+      --accent-soft-foreground: #007088;
       --field-background: #ffffff;
       --field-border: #d9e1e6;
       --success: #087c70;
@@ -79,8 +81,8 @@
       --segment: #ffffff;
       --border: #d9e1e6;
       --separator: #e9eef1;
-      --focus: #22d3ee;
-      --link: #22d3ee;
+      --focus: #007088;
+      --link: #007088;
       --surface-foreground: var(--foreground);
       --surface-secondary-foreground: var(--foreground);
       --surface-tertiary-foreground: var(--foreground);

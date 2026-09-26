@@ -31,12 +31,22 @@ export function ProgramEditor({ close }: { close: () => void }) {
   );
   const [formula, setFormula] = useState<Program["formula"] | "">(saved?.formula ?? "");
   const [activity, setActivity] = useState<Program["activity"]>(saved?.activity ?? "light");
-  const [protein, setProtein] = useState(String(saved?.protein ?? 1.6));
-  const [diet, setDiet] = useState<Program["diet"]>(saved?.diet ?? "balanced");
+  // Macros set at a check-in stay selected until another choice replaces them.
+  const custom = saved?.custom;
+  const [protein, setProtein] = useState(
+    custom?.proteinG !== undefined ? "custom" : String(saved?.protein ?? 1.6)
+  );
+  const [diet, setDiet] = useState<Program["diet"] | "custom">(
+    custom?.carbPct !== undefined ? "custom" : (saved?.diet ?? "balanced")
+  );
   const [checkDay, setCheckDay] = useState(String(saved?.checkInDay ?? 1));
   const [eligible, setEligible] = useState(false);
   const [error, setError] = useState("");
   const locked = useRef(false);
+  const kept = {
+    ...(protein === "custom" ? { proteinG: custom?.proteinG } : {}),
+    ...(diet === "custom" ? { carbPct: custom?.carbPct } : {}),
+  };
   const draft = {
     age: parseNumber(age),
     heightCm: parseNumber(height) * (units === "metric" ? 1 : 2.54),
@@ -44,9 +54,10 @@ export function ProgramEditor({ close }: { close: () => void }) {
     targetWeightKg: parseNumber(target) / factor,
     formula: formula as Program["formula"],
     activity,
-    protein: Number(protein),
-    diet,
+    protein: protein === "custom" ? (saved?.protein ?? 1.6) : Number(protein),
+    diet: diet === "custom" ? (saved?.diet ?? "balanced") : diet,
     checkInDay: Number(checkDay),
+    ...(Object.keys(kept).length ? { custom: kept } : {}),
   };
   const preview = useNutritionQuery(() => {
     try {
@@ -119,19 +130,29 @@ export function ProgramEditor({ close }: { close: () => void }) {
       )}
       <Text className="font-semibold">Macro preference</Text>
       <Choices
-        values={["balanced", "lower-fat", "lower-carb"] as const}
+        values={[
+          ...(custom?.carbPct !== undefined ? (["custom"] as const) : []),
+          ...(["balanced", "lower-fat", "lower-carb"] as const),
+        ]}
         value={diet}
         onChange={setDiet}
         label={(value) =>
-          ({ balanced: "Balanced", "lower-fat": "More carbs", "lower-carb": "More fat" })[value]
+          ({
+            custom: `Custom · ${number(custom?.carbPct ?? 0, 0)}% carbs`,
+            balanced: "Balanced",
+            "lower-fat": "More carbs",
+            "lower-carb": "More fat",
+          })[value]
         }
       />
       <Text className="font-semibold">Protein per kg of body weight</Text>
       <Choices
-        values={["1.4", "1.6", "2", "2.2"]}
+        values={[...(custom?.proteinG !== undefined ? ["custom"] : []), "1.4", "1.6", "2", "2.2"]}
         value={protein}
         onChange={setProtein}
-        label={(value) => `${value} g/kg`}
+        label={(value) =>
+          value === "custom" ? `Custom · ${number(custom?.proteinG ?? 0, 0)} g` : `${value} g/kg`
+        }
       />
       <Text className="font-semibold">Check-in day</Text>
       <Choices

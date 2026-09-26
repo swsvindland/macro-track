@@ -31,7 +31,8 @@ export async function syncHealthIfDue() {
     return true;
   } catch (error) {
     if (error instanceof Error && error.message === "syncing") return true;
-    set("healthSyncError", "syncFailed");
+    const denied = error instanceof Error && error.message === "healthWeightDenied";
+    set("healthSyncError", denied ? error.message : "syncFailed");
     return false;
   }
 }

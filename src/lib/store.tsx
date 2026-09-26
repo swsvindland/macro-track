@@ -78,6 +78,7 @@ const sameWeights = (a: WeightEntry[], b: WeightEntry[]) =>
       row.id === b[i].id &&
       row.weightKg === b[i].weightKg &&
       row.measuredAt === b[i].measuredAt &&
+      row.excluded === b[i].excluded &&
       row.updatedAt?.getTime() === b[i].updatedAt?.getTime()
   );
 const reread = (previous: Data) => {

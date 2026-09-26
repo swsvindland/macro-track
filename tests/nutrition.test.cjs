@@ -146,6 +146,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
     "./fast-logger": { FastLogger: "FastLogger" },
     "./home-check-in": { HomeCheckIn: "HomeCheckIn" },
+    "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "./weigh-in-card": { WeighInCard: "WeighInCard" },
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
@@ -3098,7 +3099,12 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
   const harness = screenHarness(
     diary,
     { diaryLayout: "timeline" },
-    { "@/lib/fast-log": fastLog, "@/lib/weigh-in": { weighInDue: () => due, undoWeight: () => {} } }
+    {
+      "@/lib/fast-log": fastLog,
+      "@/lib/weigh-in": { weighInDue: () => due, undoWeight: () => {} },
+      // Past 04:00, when Home starts asking about yesterday, whatever the real time.
+      "@/lib/food-time": { ...foodTime, currentFoodTime: () => "09:00" },
+    }
   );
   const { TodayScreen } = harness.load("src/components/nutrition/today-screen.tsx");
   const render = () => nodes(harness.render(TodayScreen));
@@ -3108,43 +3114,40 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
   assert.ok(!tree.some((node) => node.props.children === "Yes, complete"));
   due = false;
   tree = render();
-  const hour = new Date().getHours();
-  if (hour >= 4) {
-    const yes = tree.find((node) => node.props.children === "Yes, complete");
-    assert.ok(yes, "confirming yesterday comes before the check-in");
-    assert.ok(!tree.some((node) => node.type === "HomeCheckIn"));
-    yes.props.onPress();
-    yes.props.onPress();
-    assert.equal(diary.dayStatus(yesterday), "complete");
-    harness.context.refresh();
-    tree = render();
-    assert.ok(tree.some((node) => node.props.children === "Yesterday marked complete."));
-    tree.find((node) => node.props.children === "Undo").props.onPress();
-    assert.equal(diary.dayStatus(yesterday), "in-progress");
-    // A day that reopens later (a forgotten snack) can be answered again.
-    await new Promise((resolve) => setTimeout(resolve, 950));
-    harness.context.refresh();
-    render()
-      .find((node) => node.props.children === "Yes, complete")
-      .props.onPress();
-    assert.equal(diary.dayStatus(yesterday), "complete");
-    diary.saveEntry({
-      day: yesterday,
-      meal: "Snacks",
-      food,
-      amount: 10,
-      portionLabel: "10 g",
-      loggedTime: "21:00",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 950));
-    harness.context.refresh();
-    render()
-      .find((node) => node.props.children === "Yes, complete")
-      .props.onPress();
-    assert.equal(diary.dayStatus(yesterday), "complete");
-    harness.context.refresh();
-    tree = render();
-  }
+  const yes = tree.find((node) => node.props.children === "Yes, complete");
+  assert.ok(yes, "confirming yesterday comes before the check-in");
+  assert.ok(!tree.some((node) => node.type === "HomeCheckIn"));
+  yes.props.onPress();
+  yes.props.onPress();
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  harness.context.refresh();
+  tree = render();
+  assert.ok(tree.some((node) => node.props.children === "Yesterday marked complete."));
+  tree.find((node) => node.props.children === "Undo").props.onPress();
+  assert.equal(diary.dayStatus(yesterday), "in-progress");
+  // A day that reopens later (a forgotten snack) can be answered again.
+  await new Promise((resolve) => setTimeout(resolve, 950));
+  harness.context.refresh();
+  render()
+    .find((node) => node.props.children === "Yes, complete")
+    .props.onPress();
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  diary.saveEntry({
+    day: yesterday,
+    meal: "Snacks",
+    food,
+    amount: 10,
+    portionLabel: "10 g",
+    loggedTime: "21:00",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 950));
+  harness.context.refresh();
+  render()
+    .find((node) => node.props.children === "Yes, complete")
+    .props.onPress();
+  assert.equal(diary.dayStatus(yesterday), "complete");
+  harness.context.refresh();
+  tree = render();
   assert.ok(tree.some((node) => node.type === "HomeCheckIn"));
   assert.ok(tree.some((node) => node.type === "Button" && node.props.children === "Log food"));
   tree.find((node) => node.props.accessibilityLabel === "Previous day").props.onPress();

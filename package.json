@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "test": "node --test tests/*.test.cjs",
+    "test:tz": "TZ=America/Los_Angeles node --test tests/*.test.cjs && TZ=Pacific/Auckland node --test tests/*.test.cjs && TZ=Europe/London node --test tests/*.test.cjs",
     "catalog:build": "python3 scripts/build-food-catalog.py"
   },
   "dependencies": {

@@ -29,7 +29,10 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
     } catch {
       throw new Error("healthUnavailable");
     }
-    await provider.authorize(interactive);
+    const access = await provider.authorize(interactive);
+    if (!access.read.includes("weight")) throw new Error("healthWeightDenied");
+    // Denied kinds are skipped, not failed, so optional exports never block weight imports.
+    const writable = new Set<HealthKind>(access.write);
     let installation = db
       .select()
       .from(preferences)
@@ -79,7 +82,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
         .all()
         .filter((m) => m.kind === "body")
         .flatMap((m) =>
-          (provider.bodyWriteKinds ?? []).flatMap((kind) => {
+          (["waist", "bodyFat"] as const).flatMap((kind) => {
             const value = m.values[kind];
             return Number.isFinite(value) && value > 0 && value <= (kind === "bodyFat" ? 74.9 : 300)
               ? [{ id: m.id, kind, value, measuredAt: m.measuredAt, version: m.updatedAt }]
@@ -93,6 +96,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
     // Export before import. Persist each mapping immediately, so partial failures are safely retried.
     for (const record of localRecords()) {
       if (
+        !writable.has(record.kind) ||
         links.some(
           (l) => l.localKind === record.kind && l.localId === record.id && l.origin === "health"
         )
@@ -122,12 +126,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
     }
     const current = localRecords();
     for (const link of links.filter((l) => l.origin === "local" && l.fingerprint !== "deleted")) {
-      if (
-        link.localKind !== "weight" &&
-        link.localKind !== "height" &&
-        !provider.bodyWriteKinds?.includes(link.localKind as "waist" | "bodyFat")
-      )
-        continue;
+      if (!writable.has(link.localKind as HealthKind)) continue;
       if (!current.some((r) => r.kind === link.localKind && r.id === link.localId)) {
         await provider.remove(link.localKind as HealthKind, link.remoteId);
         db.update(healthLinks)
@@ -136,7 +135,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
           .run();
       }
     }
-    const external = await provider.read();
+    const external = await provider.read(access.read);
     for (const record of external) {
       // Body measurements are export-only; never turn them into height imports.
       if (record.kind !== "weight" && record.kind !== "height") continue;

@@ -6,8 +6,8 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
     !(await hc.initialize())
   )
     throw new Error("healthUnavailable");
+  const recordTypes = { weight: "Weight", height: "Height", bodyFat: "BodyFat" } as const;
   return {
-    bodyWriteKinds: ["bodyFat"],
     async authorize(interactive = true) {
       const permissions = ["Weight", "Height"].flatMap((recordType) =>
         ["read", "write"].map((accessType) => ({ recordType, accessType }))
@@ -26,23 +26,22 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
           /* Foreground sync is still available. */
         }
       }
-      if (
-        permissions.some(
-          (p) =>
-            !granted.some(
-              (g) =>
-                "recordType" in g && g.recordType === p.recordType && g.accessType === p.accessType
-            )
-        )
-      )
-        throw new Error("syncFailed");
+      const allowed = (kind: keyof typeof recordTypes, accessType: "read" | "write") =>
+        granted.some(
+          (g) =>
+            "recordType" in g && g.recordType === recordTypes[kind] && g.accessType === accessType
+        );
+      return {
+        read: (["weight", "height"] as const).filter((kind) => allowed(kind, "read")),
+        write: (["weight", "height", "bodyFat"] as const).filter((kind) => allowed(kind, "write")),
+      };
     },
-    async read() {
+    async read(kinds) {
       const records: HealthRecord[] = [];
       // Health Connect normally permits the 30 days before authorization; ask only for that window.
       const startTime = new Date(Date.now() - 29 * 86400000).toISOString();
       const endTime = new Date().toISOString();
-      for (const type of ["Weight", "Height"] as const) {
+      for (const kind of kinds) {
         let pageToken: string | undefined;
         do {
           const options = {
@@ -51,7 +50,7 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
             pageToken,
           };
           const result =
-            type === "Weight"
+            kind === "weight"
               ? await hc.readRecords("Weight", options)
               : await hc.readRecords("Height", options);
           for (const record of result.records) {

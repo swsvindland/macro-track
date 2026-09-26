@@ -26,6 +26,8 @@ export const weightEntries = sqliteTable(
     measuredAt: text("measured_at").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /** An ignored reading stays in history but is left out of the trend and check-ins. */
+    excluded: integer("excluded", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [index("weight_entries_measured_idx").on(table.measuredAt)]
 );
@@ -138,7 +140,7 @@ export const coachingGoals = sqliteTable("coaching_goals", {
 export const checkIns = sqliteTable("check_ins", {
   day: text("day").primaryKey(),
   goalId: integer("goal_id").notNull(),
-  decision: text("decision").$type<"accepted" | "kept">().notNull(),
+  decision: text("decision").$type<"accepted" | "kept" | "adjusted">().notNull(),
   review: text("review", { mode: "json" }).$type<import("@/lib/coaching").Review>().notNull(),
   targets: text("targets", { mode: "json" }).$type<Targets>().notNull(),
 });

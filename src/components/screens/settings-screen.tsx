@@ -51,7 +51,8 @@ export function SettingsScreen() {
       }
     } catch (error) {
       setError(
-        error instanceof Error && ["healthUnavailable", "syncing"].includes(error.message)
+        error instanceof Error &&
+          ["healthUnavailable", "healthWeightDenied", "syncing"].includes(error.message)
           ? error.message
           : "syncFailed"
       );

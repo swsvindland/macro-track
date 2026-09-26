@@ -9,7 +9,7 @@ import type { MeasurementLogState } from "./use-measurement-log";
 export function MeasurementHistory({ log }: { log: MeasurementLogState }) {
   const { t, date, number } = useStore();
   const foreground = useThemeColor("foreground");
-  const { rows, fields, format, limit, setLimit, launch } = log;
+  const { rows, fields, format, limit, setLimit, launch, exclude } = log;
 
   return (
     <>
@@ -25,9 +25,22 @@ export function MeasurementHistory({ log }: { log: MeasurementLogState }) {
               <Timeline.Rail />
               <Timeline.Content className="gap-3">
                 <View className="flex-row items-center justify-between gap-3">
-                  <Timeline.Title className="flex-1 font-mono text-sm">
+                  <Timeline.Title
+                    className={`flex-1 font-mono text-sm ${row.excluded ? "opacity-50" : ""}`}
+                  >
                     {date(row.measuredAt)}
                   </Timeline.Title>
+                  {row.excluded && exclude && (
+                    <SystemButton
+                      variant="ghost"
+                      className="px-3"
+                      labelClassName="text-accent-soft-foreground"
+                      accessibilityLabel={`Include ${date(row.measuredAt)} in your trend`}
+                      onPress={() => exclude(row, false)}
+                    >
+                      Include
+                    </SystemButton>
+                  )}
                   <SystemButton
                     isIconOnly
                     variant="ghost"
@@ -41,9 +54,18 @@ export function MeasurementHistory({ log }: { log: MeasurementLogState }) {
                 {fields
                   .filter((key) => row.values[key] !== undefined)
                   .map((key) => (
-                    <View key={key} className="flex-row flex-wrap justify-between gap-x-4 gap-y-1">
-                      <Timeline.Description className="text-sm">{t(key)}</Timeline.Description>
-                      <Text className="font-mono tabular-nums">{format(key, row.values[key])}</Text>
+                    <View
+                      key={key}
+                      className={`flex-row flex-wrap justify-between gap-x-4 gap-y-1 ${row.excluded ? "opacity-50" : ""}`}
+                    >
+                      <Timeline.Description className="text-sm">
+                        {row.excluded ? `${t(key)} · Ignored` : t(key)}
+                      </Timeline.Description>
+                      <Text
+                        className={`font-mono tabular-nums ${row.excluded ? "line-through" : ""}`}
+                      >
+                        {format(key, row.values[key])}
+                      </Text>
                     </View>
                   ))}
               </Timeline.Content>

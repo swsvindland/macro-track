@@ -23,6 +23,8 @@ export type Review = {
   weeklyKg: number | null;
   desiredWeeklyKg: number | null;
   proposed: Targets | null;
+  /** The reading behind a sharp jump that holds the review, so it can be ignored. */
+  outlier?: { day: string; kg: number; id?: number };
 };
 export function reviewWeek(input: {
   day: string;
