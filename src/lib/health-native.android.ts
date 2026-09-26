@@ -6,13 +6,24 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
     !(await hc.initialize())
   )
     throw new Error("healthUnavailable");
-  const recordTypes = { weight: "Weight", height: "Height", bodyFat: "BodyFat" } as const;
+  const recordTypes = {
+    weight: "Weight",
+    height: "Height",
+    bodyFat: "BodyFat",
+    food: "Nutrition",
+  } as const;
   return {
     async authorize(interactive = true) {
       const permissions = ["Weight", "Height"].flatMap((recordType) =>
         ["read", "write"].map((accessType) => ({ recordType, accessType }))
-      ) as { recordType: "Weight" | "Height" | "BodyFat"; accessType: "read" | "write" }[];
-      permissions.push({ recordType: "BodyFat", accessType: "write" });
+      ) as {
+        recordType: "Weight" | "Height" | "BodyFat" | "Nutrition";
+        accessType: "read" | "write";
+      }[];
+      permissions.push(
+        { recordType: "BodyFat", accessType: "write" },
+        { recordType: "Nutrition", accessType: "write" }
+      );
       const granted = interactive
         ? await hc.requestPermission(permissions)
         : await hc.getGrantedPermissions();
@@ -33,7 +44,9 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
         );
       return {
         read: (["weight", "height"] as const).filter((kind) => allowed(kind, "read")),
-        write: (["weight", "height", "bodyFat"] as const).filter((kind) => allowed(kind, "write")),
+        write: (["weight", "height", "bodyFat", "food"] as const).filter((kind) =>
+          allowed(kind, "write")
+        ),
       };
     },
     async read(kinds) {
@@ -107,6 +120,45 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
         [id],
         []
       );
+    },
+    async writeFood(food) {
+      const { calories, protein, carbs, fat, fiber, sodium } = food.nutrients;
+      const grams = (value: number | null) =>
+        value !== null && value > 0 ? { value, unit: "grams" as const } : undefined;
+      const start = new Date(food.eatenAt);
+      // Nutrition is an interval record; its end must come after its start.
+      const end = new Date(start.getTime() + 60000);
+      // Inserting under an existing clientRecordId with a higher version updates that record.
+      const ids = await hc.insertRecords([
+        {
+          recordType: "Nutrition",
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          name: food.name,
+          mealType: {
+            Breakfast: hc.MealType.BREAKFAST,
+            Lunch: hc.MealType.LUNCH,
+            Dinner: hc.MealType.DINNER,
+            Snacks: hc.MealType.SNACK,
+          }[food.meal],
+          energy: calories > 0 ? { value: calories, unit: "kilocalories" } : undefined,
+          protein: grams(protein),
+          totalCarbohydrate: grams(carbs),
+          totalFat: grams(fat),
+          dietaryFiber: grams(fiber),
+          sodium: sodium !== null && sodium > 0 ? { value: sodium, unit: "milligrams" } : undefined,
+          metadata: {
+            clientRecordId: food.clientId,
+            clientRecordVersion: food.version,
+            recordingMethod: hc.RecordingMethod.RECORDING_METHOD_MANUAL_ENTRY,
+          },
+        },
+      ]);
+      if (!ids[0]) throw new Error("syncFailed");
+      return ids[0];
+    },
+    async removeFood(clientId) {
+      await hc.deleteRecordsByUuids("Nutrition", [], [clientId]);
     },
   };
 }

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Uniwind } from "uniwind";
 import { AppState } from "react-native";
-import { configureHealthSchedule, syncHealthIfDue } from "./health-schedule";
+import { configureHealthSchedule, HEALTH_PERMISSIONS, syncHealthIfDue } from "./health-schedule";
 import { useLocales } from "expo-localization";
 import { and, desc, eq } from "drizzle-orm";
 import {
@@ -64,6 +64,16 @@ function read() {
       "dark" | "light" | "system",
     healthSyncEnabled,
     healthSyncError,
+    // Sync is on but hasn't yet asked for the data types added since it was turned on.
+    healthAccessOutdated: healthSyncEnabled && prefs.healthPermissions !== HEALTH_PERMISSIONS,
+    // From Health, for prefilling a new program.
+    healthProfile: {
+      birthDate: prefs.healthBirthDate || undefined,
+      sex:
+        prefs.healthSex === "male" || prefs.healthSex === "female"
+          ? (prefs.healthSex as "male" | "female")
+          : undefined,
+    },
     languagePreference: languagePreference(prefs.language),
     lastSync: prefs.lastSync,
   };

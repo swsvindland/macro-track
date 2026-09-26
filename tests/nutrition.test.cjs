@@ -192,6 +192,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     ...storeOverrides,
   };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
+  dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,
@@ -1307,7 +1308,7 @@ test("compiled guided setup previews generated targets and starts the program on
   });
   const harness = screenHarness(
     diary,
-    { weights: [], units: "metric" },
+    { weights: [], measurements: [], healthProfile: {}, units: "metric" },
     {
       "@/lib/coaching-store": store,
       "@/lib/program": program,

@@ -1,4 +1,5 @@
 import { AppState } from "react-native";
+import { syncHealthFood } from "./health-schedule";
 import { localDay } from "./metrics";
 import { useStore } from "./store";
 import {
@@ -32,6 +33,12 @@ export function NutritionProvider({ children }: { children: ReactNode }) {
       sub.remove();
     };
   }, []);
+  useEffect(() => {
+    if (!revision) return;
+    // Batches a burst of edits (multi-select, Undo) into one Health write.
+    const timer = setTimeout(() => void syncHealthFood(), 3000);
+    return () => clearTimeout(timer);
+  }, [revision]);
   return (
     <Context.Provider value={{ revision, refresh: () => setRevision((value) => value + 1) }}>
       {children}

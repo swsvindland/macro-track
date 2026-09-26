@@ -5,6 +5,7 @@ import * as BackgroundTask from "expo-background-task";
 import { eq } from "drizzle-orm";
 import { db, preferences } from "@/db";
 import { syncHealth } from "./health";
+export { HEALTH_PERMISSIONS } from "./health";
 
 const TASK = "macro-track-daily-health-sync";
 const DAY = 24 * 60 * 60 * 1000;
@@ -34,6 +35,19 @@ export async function syncHealthIfDue() {
     const denied = error instanceof Error && error.message === "healthWeightDenied";
     set("healthSyncError", denied ? error.message : "syncFailed");
     return false;
+  }
+}
+
+/** Writes diary changes to Health soon after they happen, without waiting for the daily sync. */
+export async function syncHealthFood() {
+  if (get("healthSyncEnabled") !== "true") return;
+  try {
+    await syncHealth(undefined, false, "food");
+    if (get("healthSyncError") === "syncFailed") set("healthSyncError", "");
+  } catch (error) {
+    // A running sync picks the change up when it ends.
+    if (error instanceof Error && error.message === "syncing") return;
+    set("healthSyncError", "syncFailed");
   }
 }
 

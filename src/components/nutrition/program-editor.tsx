@@ -12,7 +12,7 @@ import type { CalorieShift } from "@/lib/nutrition";
 import type { Goal } from "@/lib/coaching";
 
 export function ProgramEditor({ close }: { close: () => void }) {
-  const { weights, units, number } = useStore();
+  const { weights, measurements, healthProfile, units, number } = useStore();
   const { refresh } = useNutrition();
   const existing = useNutritionQuery(currentGoal);
   const saved = existing?.program;
@@ -21,10 +21,20 @@ export function ProgramEditor({ close }: { close: () => void }) {
     existing?.mode === "manual" ? "maintain" : (existing?.mode ?? "lose")
   );
   const [pace, setPace] = useState(String(existing?.pace || 0.25));
-  const [age, setAge] = useState(saved ? String(saved.age) : "");
-  const [height, setHeight] = useState(
-    saved ? String(saved.heightCm / (units === "metric" ? 1 : 2.54)) : ""
-  );
+  // A first program starts from what Health and the height log already know.
+  const [age, setAge] = useState(() => {
+    if (saved) return String(saved.age);
+    const birth = healthProfile.birthDate;
+    if (!birth) return "";
+    const today = localDay();
+    const years = Number(today.slice(0, 4)) - Number(birth.slice(0, 4));
+    return String(today.slice(5) < birth.slice(5) ? years - 1 : years);
+  });
+  const [height, setHeight] = useState(() => {
+    if (saved) return String(saved.heightCm / (units === "metric" ? 1 : 2.54));
+    const cm = measurements.find((m) => m.kind === "height")?.values.height;
+    return cm ? String(Number((cm / (units === "metric" ? 1 : 2.54)).toFixed(1))) : "";
+  });
   const [weight, setWeight] = useState(() => {
     const kg = weightTrend(weights).at(-1)?.trend ?? saved?.weightKg;
     return kg ? String(Number((kg * factor).toFixed(1))) : "";
@@ -32,7 +42,9 @@ export function ProgramEditor({ close }: { close: () => void }) {
   const [target, setTarget] = useState(
     saved ? String(Number((saved.targetWeightKg * factor).toFixed(1))) : ""
   );
-  const [formula, setFormula] = useState<Program["formula"] | "">(saved?.formula ?? "");
+  const [formula, setFormula] = useState<Program["formula"] | "">(
+    saved?.formula ?? healthProfile.sex ?? ""
+  );
   const [activity, setActivity] = useState<Program["activity"]>(saved?.activity ?? "light");
   // Macros set at a check-in stay selected until another choice replaces them.
   const custom = saved?.custom;

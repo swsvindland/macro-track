@@ -20,6 +20,7 @@ export function SettingsScreen() {
     theme,
     healthSyncEnabled,
     healthSyncError,
+    healthAccessOutdated,
     lastSync,
     setPreference,
     refresh,
@@ -129,6 +130,22 @@ export function SettingsScreen() {
               onSelectedChange={toggleSync}
             />
           </View>
+          {healthAccessOutdated && !busy && (
+            <View className="gap-2">
+              <Text className="text-sm">
+                Food you log can now be written to{" "}
+                {Platform.OS === "ios" ? "Apple Health" : "Health Connect"} as nutrition. Allow it
+                to start.
+              </Text>
+              <SystemButton
+                variant="secondary"
+                className="self-start"
+                onPress={() => void toggleSync(true)}
+              >
+                Allow nutrition
+              </SystemButton>
+            </View>
+          )}
           {message && (
             <Text accessibilityLiveRegion="polite" className="text-sm text-success">
               {t(message)}

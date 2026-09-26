@@ -33,6 +33,7 @@
         "android.permission.health.READ_HEIGHT",
         "android.permission.health.WRITE_HEIGHT",
         "android.permission.health.WRITE_BODY_FAT",
+        "android.permission.health.WRITE_NUTRITION",
         "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
         "android.permission.CAMERA"
       ],
@@ -71,8 +72,8 @@
         "@kingstinct/react-native-healthkit",
         {
           "background": false,
-          "NSHealthShareUsageDescription": "Import your weight and height into Vector Macros when you choose to sync.",
-          "NSHealthUpdateUsageDescription": "Save your Vector Macros weight, height, waist circumference and recorded body fat to Apple Health when you choose to sync."
+          "NSHealthShareUsageDescription": "Import your weight and height, and read your birthday and sex to fill in your program, when you choose to sync.",
+          "NSHealthUpdateUsageDescription": "Save the food you log in Vector Macros as calories, protein, carbs, fat, fiber and sodium, along with your weight, height, waist circumference and recorded body fat, to Apple Health when you choose to sync."
         }
       ],
       "react-native-health-connect",

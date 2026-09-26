@@ -1,12 +1,26 @@
 import Constants from "expo-constants";
-import { eq } from "drizzle-orm";
-import { db, healthLinks, measurements, preferences, weightEntries } from "@/db";
+import { eq, gte } from "drizzle-orm";
+import { db, foodEntries, healthLinks, measurements, preferences, weightEntries } from "@/db";
 import { getHealthAdapter } from "./health-native";
 import type { HealthAdapter, HealthKind, HealthRecord } from "./health-types";
-import { validDay, dayOf } from "./metrics";
+import { validDay, dayOf, localDay } from "./metrics";
+
+/** Bumped when sync asks for new data types, so Settings can offer to ask again. */
+export const HEALTH_PERMISSIONS = "2";
+// Untimed entries are written at a representative time for their meal.
+const mealTimes = { Breakfast: "08:00", Lunch: "12:00", Dinner: "18:00", Snacks: "15:00" };
 
 let running = false;
 let maintenance = false;
+let foodPending = false;
+const pref = (key: string) =>
+  db.select().from(preferences).where(eq(preferences.key, key)).get()?.value;
+const setPref = (key: string, value: string) => {
+  db.insert(preferences)
+    .values({ key, value })
+    .onConflictDoUpdate({ target: preferences.key, set: { value } })
+    .run();
+};
 export async function withHealthPaused<T>(work: () => Promise<T>): Promise<T> {
   if (running || maintenance)
     throw new Error("Wait for health sync to finish, then try restoring again.");
@@ -18,8 +32,20 @@ export async function withHealthPaused<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
-  if (running || maintenance) throw new Error("syncing");
+/**
+ * "food" only writes the diary, for running right after a diary change; "all" also exchanges
+ * body measurements and reads the profile.
+ */
+export async function syncHealth(
+  adapter?: HealthAdapter,
+  interactive = true,
+  scope: "all" | "food" = "all"
+) {
+  if (running || maintenance) {
+    // A diary change during a full sync is written as soon as that sync ends.
+    if (scope === "food") foodPending = true;
+    throw new Error("syncing");
+  }
   if (!adapter && Constants.appOwnership === "expo") throw new Error("healthUnavailable");
   running = true;
   try {
@@ -30,24 +56,20 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
       throw new Error("healthUnavailable");
     }
     const access = await provider.authorize(interactive);
-    if (!access.read.includes("weight")) throw new Error("healthWeightDenied");
-    // Denied kinds are skipped, not failed, so optional exports never block weight imports.
-    const writable = new Set<HealthKind>(access.write);
-    let installation = db
-      .select()
-      .from(preferences)
-      .where(eq(preferences.key, "installation"))
-      .get()?.value;
+    if (scope === "all" && !access.read.includes("weight")) throw new Error("healthWeightDenied");
+    if (interactive) setPref("healthPermissions", HEALTH_PERMISSIONS);
+    let installation = pref("installation");
     if (!installation) {
       installation = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      db.insert(preferences).values({ key: "installation", value: installation }).run();
+      setPref("installation", installation);
     }
     const prefix = `macro-track:${installation}:`;
-    const weightEpoch = db
-      .select()
-      .from(preferences)
-      .where(eq(preferences.key, "weightSyncEpoch"))
-      .get()?.value;
+    foodPending = false;
+    if (scope === "food")
+      return { imported: 0, exported: await exportFood(provider, access, prefix) };
+    // Denied kinds are skipped, not failed, so optional exports never block weight imports.
+    const writable = new Set(access.write);
+    const weightEpoch = pref("weightSyncEpoch");
     // Restored local IDs must never overwrite unrelated pre-restore health records.
     const weightPrefix = weightEpoch ? `${prefix}restored-${weightEpoch}:` : prefix;
     let imported = 0;
@@ -128,7 +150,7 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
     }
     const current = localRecords();
     for (const link of links.filter((l) => l.origin === "local" && l.fingerprint !== "deleted")) {
-      if (!writable.has(link.localKind as HealthKind)) continue;
+      if (link.localKind === "food" || !writable.has(link.localKind as HealthKind)) continue;
       if (!current.some((r) => r.kind === link.localKind && r.id === link.localId)) {
         await provider.remove(link.localKind as HealthKind, link.remoteId);
         db.update(healthLinks)
@@ -137,6 +159,8 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
           .run();
       }
     }
+    exported += await exportFood(provider, access, prefix);
+    await readProfile(provider);
     const external = await provider.read(access.read);
     for (const record of external) {
       // Body measurements are export-only; never turn them into height imports.
@@ -185,14 +209,93 @@ export async function syncHealth(adapter?: HealthAdapter, interactive = true) {
       });
       imported++;
     }
-    const value = new Date().toISOString();
-    db.insert(preferences)
-      .values({ key: "lastSync", value })
-      .onConflictDoUpdate({ target: preferences.key, set: { value } })
-      .run();
+    setPref("lastSync", new Date().toISOString());
     return { imported, exported };
   } finally {
     running = false;
+    if (foodPending && !maintenance) {
+      foodPending = false;
+      void syncHealth(adapter, false, "food").catch(() => {});
+    }
+  }
+}
+
+/**
+ * Writes diary entries from 30 days before the first food sync onward, rewrites edited or
+ * moved ones, and removes deleted ones. Each written entry is linked, so a retry resumes.
+ */
+async function exportFood(
+  provider: HealthAdapter,
+  access: { write: readonly string[] },
+  prefix: string
+) {
+  if (!access.write.includes("food") || !provider.writeFood || !provider.removeFood) return 0;
+  let since = pref("healthFoodSince");
+  if (!since) {
+    since = localDay(new Date(Date.now() - 30 * 86400000));
+    setPref("healthFoodSince", since);
+  }
+  const entries = db.select().from(foodEntries).where(gte(foodEntries.day, since)).all();
+  const links = db
+    .select()
+    .from(healthLinks)
+    .where(eq(healthLinks.localKind, "food"))
+    .all()
+    .filter((link) => link.key.startsWith(prefix));
+  let exported = 0;
+  for (const entry of entries) {
+    const key = `${prefix}food:${entry.id}`;
+    const link = links.find((l) => l.key === key);
+    const time = entry.loggedTime ?? mealTimes[entry.meal];
+    const food = {
+      name: entry.food.name,
+      meal: entry.meal,
+      eatenAt: new Date(`${entry.day}T${time}:00`).toISOString(),
+      nutrients: entry.nutrients,
+    };
+    const hash = JSON.stringify([food.name, food.meal, food.eatenAt, food.nutrients]);
+    if (link?.fingerprint === hash) continue;
+    const remoteId = await provider.writeFood({
+      ...food,
+      clientId: key,
+      version: Date.now(),
+      replacing: !!link && link.fingerprint !== "deleted",
+    });
+    db.insert(healthLinks)
+      .values({
+        key,
+        localKind: "food",
+        localId: entry.id,
+        remoteId,
+        fingerprint: hash,
+        origin: "local",
+      })
+      .onConflictDoUpdate({ target: healthLinks.key, set: { remoteId, fingerprint: hash } })
+      .run();
+    exported++;
+  }
+  // Moved before the window counts as gone, so Health mirrors exactly what is exported.
+  const current = new Set(entries.map((entry) => entry.id));
+  for (const link of links) {
+    if (link.fingerprint === "deleted" || current.has(link.localId)) continue;
+    await provider.removeFood(link.key, link.remoteId);
+    db.update(healthLinks)
+      .set({ fingerprint: "deleted" })
+      .where(eq(healthLinks.key, link.key))
+      .run();
+  }
+  return exported;
+}
+
+/** Keeps birth date and sex for prefilling the program; never fails a sync. */
+async function readProfile(provider: HealthAdapter) {
+  try {
+    const profile = await provider.profile?.();
+    if (profile?.birthDate && validDay(profile.birthDate))
+      setPref("healthBirthDate", profile.birthDate);
+    if (profile?.sex) setPref("healthSex", profile.sex);
+  } catch {
+    /* The profile is only a convenience. */
   }
 }
 export function validHealthRecord(record: HealthRecord) {

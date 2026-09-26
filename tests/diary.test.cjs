@@ -355,6 +355,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const store = { diaryLayout: "meals", number: (n) => String(n), date: (day) => day };
   Object.assign(store, storeOverrides);
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
+  dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,

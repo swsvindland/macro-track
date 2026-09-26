@@ -702,6 +702,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     "./store": { useStore: () => store },
     ...dependencies,
   };
+  all["./health-schedule"] ??= { syncHealthFood: async () => {} };
   all["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", all, true);
   return {
     context,

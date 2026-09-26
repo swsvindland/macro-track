@@ -205,6 +205,7 @@ function loggerHarness(diary, fastLog, props = {}) {
   };
   const store = { diaryLayout: "meals", number: (n) => String(n), date: (day) => day };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
+  dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   const { FastLogger } = load("src/components/nutrition/fast-logger.tsx", dependencies, true);
   return {
@@ -581,6 +582,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     ...storeOverrides,
   };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
+  dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,

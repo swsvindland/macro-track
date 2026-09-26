@@ -581,6 +581,8 @@ function screenHarness(dependencies, storeOverrides = {}) {
     units: "metric",
     language: "en",
     weights: [],
+    measurements: [],
+    healthProfile: {},
     ...storeOverrides,
   };
   const all = {
@@ -612,6 +614,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     "./store": { useStore: () => store },
     ...dependencies,
   };
+  all["./health-schedule"] ??= { syncHealthFood: async () => {} };
   all["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", all, true);
   return {
     context,
@@ -714,6 +717,44 @@ test("compiled shift picker toggles higher days from the locale's first weekday"
   );
   assert.equal(dayButtons(tree)[5].props.isDisabled, true, "Saturday");
   assert.equal(dayButtons(tree)[0].props.isDisabled, false);
+});
+
+test("a first program starts from Health's birthday and sex and the logged height", () => {
+  const data = coachingDatabase("2024-01-10");
+  const { diary, store, fakeMetrics, sqlite } = data;
+  const editorFor = (overrides) => {
+    const harness = screenHarness(
+      {
+        "@/lib/coaching-store": store,
+        "@/lib/diary": diary,
+        "@/lib/metrics": fakeMetrics,
+        "./metrics": fakeMetrics,
+        "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+      },
+      overrides
+    );
+    const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");
+    const tree = nodes(harness.render(ProgramEditor, { close() {} }));
+    const field = (label) =>
+      tree.find((node) => node.type === "Field" && node.props.label === label).props.value;
+    const sex = tree.find((node) => node.type === "Choices" && node.props.values.includes("female"))
+      .props.value;
+    return { field, sex };
+  };
+  // The birthday is still a day away, so 33 turns 34 tomorrow.
+  const known = editorFor({
+    healthProfile: { birthDate: "1990-01-11", sex: "female" },
+    measurements: [{ kind: "height", values: { height: 172.72 } }],
+    units: "imperial",
+  });
+  assert.equal(known.field("Age"), "33");
+  assert.equal(known.field("Height (total inches)"), "68");
+  assert.equal(known.sex, "female");
+  const unknown = editorFor({});
+  assert.equal(unknown.field("Age"), "");
+  assert.equal(unknown.field("Height (cm)"), "");
+  assert.equal(unknown.sex, "");
+  sqlite.close();
 });
 
 test("compiled program editor previews the budget and saves the shift with the program", () => {

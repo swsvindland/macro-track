@@ -456,6 +456,87 @@ test("health sync is repeatable, updates exports and never resurrects deleted im
   assert.equal(records.size, 1);
   sqlite.close();
 });
+test("diary entries sync to Health as food: once, again when edited, gone when deleted", async () => {
+  const { db, sqlite } = database();
+  const health = load("src/lib/health.ts", {
+    "expo-constants": { appOwnership: "standalone" },
+    "@/db": { db, ...schema },
+    "./health-native": {},
+    "./metrics": metrics,
+  });
+  const today = metrics.localDay();
+  const entry = (day, loggedTime, name, calories) =>
+    db
+      .insert(schema.foodEntries)
+      .values({
+        day,
+        meal: "Lunch",
+        loggedTime,
+        food: { name },
+        amount: 100,
+        portionLabel: "100 g",
+        nutrients: { calories, protein: 1, carbs: 2, fat: 3, fiber: null, sodium: null },
+        createdAt: Date.now(),
+      })
+      .returning()
+      .get();
+  const soup = entry(today, "12:30", "Soup", 200);
+  const bread = entry(today, null, "Bread", 100);
+  entry(metrics.localDay(new Date(Date.now() - 40 * 86400000)), "12:00", "Last month", 50);
+  const written = new Map();
+  const removed = [];
+  let release;
+  const adapter = {
+    authorize: async () => ({ read: ["weight"], write: ["food"] }),
+    read: async () => {
+      await new Promise((resolve) => (release ? (release = resolve) : resolve()));
+      return [];
+    },
+    write: async () => assert.fail("weights stay unwritten without permission"),
+    remove: async () => {},
+    writeFood: async (food) => {
+      written.set(food.name, food);
+      return `remote-${food.name}`;
+    },
+    removeFood: async (clientId) => {
+      removed.push(clientId);
+    },
+  };
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 2 });
+  assert.deepEqual([...written.keys()].sort(), ["Bread", "Soup"], "only the last 30 days");
+  assert.equal(written.get("Soup").eatenAt, new Date(`${today}T12:30:00`).toISOString());
+  assert.equal(written.get("Bread").eatenAt, new Date(`${today}T12:00:00`).toISOString());
+  assert.equal(written.get("Soup").replacing, false);
+  assert.deepEqual(await health.syncHealth(adapter), { imported: 0, exported: 0 });
+
+  db.update(schema.foodEntries)
+    .set({ nutrients: { ...soup.nutrients, calories: 250 } })
+    .where(eq(schema.foodEntries.id, soup.id))
+    .run();
+  assert.deepEqual(await health.syncHealth(adapter, false, "food"), { imported: 0, exported: 1 });
+  assert.equal(written.get("Soup").nutrients.calories, 250);
+  assert.equal(written.get("Soup").replacing, true);
+  assert.match(written.get("Soup").clientId, new RegExp(`^macro-track:.+:food:${soup.id}$`));
+
+  db.delete(schema.foodEntries).where(eq(schema.foodEntries.id, bread.id)).run();
+  await health.syncHealth(adapter, false, "food");
+  assert.deepEqual(removed, [written.get("Bread").clientId]);
+  await health.syncHealth(adapter, false, "food");
+  assert.equal(removed.length, 1, "a removal happens once");
+
+  // Logged while a full sync runs, an entry is written as soon as that sync ends.
+  release = true;
+  const full = health.syncHealth(adapter, false);
+  while (release === true) await new Promise((resolve) => setImmediate(resolve));
+  entry(today, "13:00", "Apple", 95);
+  await assert.rejects(health.syncHealth(adapter, false, "food"), /syncing/);
+  release();
+  await full;
+  for (let i = 0; i < 20 && !written.has("Apple"); i++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(written.has("Apple"));
+  sqlite.close();
+});
 test("an ignored weigh-in stays out of Health and is written again once included", async () => {
   const { db, sqlite } = database();
   const health = load("src/lib/health.ts", {
@@ -730,9 +811,18 @@ test("HealthKit exports waist in centimeters and body fat as a fraction", async 
     "@kingstinct/react-native-healthkit": hk,
   });
   const adapter = await getHealthAdapter();
-  assert.deepEqual(await adapter.authorize(), fullAccess);
+  assert.deepEqual(await adapter.authorize(), {
+    ...fullAccess,
+    write: [...fullAccess.write, "food"],
+  });
   assert.ok(permission.toShare.includes("HKQuantityTypeIdentifierWaistCircumference"));
-  assert.equal(permission.toRead.length, 2);
+  assert.ok(foodTypes.every((type) => permission.toShare.includes(type)));
+  assert.deepEqual(permission.toRead, [
+    mass,
+    heightType,
+    "HKCharacteristicTypeIdentifierDateOfBirth",
+    "HKCharacteristicTypeIdentifierBiologicalSex",
+  ]);
   for (const [kind, value] of [
     ["waist", 80],
     ["bodyFat", 20],
@@ -753,6 +843,112 @@ test("HealthKit exports waist in centimeters and body fat as a fraction", async 
   );
 });
 
+test("HealthKit writes a diary entry as named nutrient samples and removes stale ones", async () => {
+  const writes = [];
+  const deletes = [];
+  const hk = {
+    isHealthDataAvailable: () => true,
+    requestAuthorization: async () => true,
+    authorizationStatusFor: (type) => (type === foodTypes[5] ? 1 : 2),
+    AuthorizationStatus: { sharingAuthorized: 2 },
+    ComparisonPredicateOperator: { equalTo: 4 },
+    saveQuantitySample: async (...args) => {
+      writes.push(args);
+      return { uuid: `uuid-${writes.length}` };
+    },
+    // HealthKit errors when nothing matches; removal must shrug that off.
+    deleteObjects: async (type, filter) => {
+      deletes.push([type, filter.metadata.value]);
+      throw new Error("No data available for the specified predicate.");
+    },
+  };
+  const { getHealthAdapter } = load("src/lib/health-native.ios.ts", {
+    "@kingstinct/react-native-healthkit": hk,
+  });
+  const adapter = await getHealthAdapter();
+  await adapter.authorize(false);
+  const food = {
+    clientId: "macro-track:1:food:7",
+    version: 5,
+    name: "Greek yogurt",
+    meal: "Breakfast",
+    eatenAt: "2024-01-01T08:00:00.000Z",
+    nutrients: { calories: 150, protein: 15, carbs: 8, fat: 0, fiber: null, sodium: 60 },
+    replacing: false,
+  };
+  assert.equal(await adapter.writeFood(food), "uuid-1");
+  assert.deepEqual(
+    writes.map(([type, unit, value, , , metadata]) => [type, unit, value, metadata]),
+    [
+      [
+        foodTypes[0],
+        "kcal",
+        150,
+        {
+          HKSyncIdentifier: `${food.clientId}:calories`,
+          HKSyncVersion: 5,
+          HKFoodType: "Greek yogurt",
+        },
+      ],
+      [
+        foodTypes[1],
+        "g",
+        15,
+        {
+          HKSyncIdentifier: `${food.clientId}:protein`,
+          HKSyncVersion: 5,
+          HKFoodType: "Greek yogurt",
+        },
+      ],
+      [
+        foodTypes[2],
+        "g",
+        8,
+        {
+          HKSyncIdentifier: `${food.clientId}:carbs`,
+          HKSyncVersion: 5,
+          HKFoodType: "Greek yogurt",
+        },
+      ],
+    ],
+    "zero and unknown nutrients are skipped, and sodium isn't allowed"
+  );
+  assert.deepEqual(deletes, [], "a first write has nothing to clean up");
+  await adapter.writeFood({ ...food, replacing: true });
+  assert.deepEqual(deletes, [
+    [foodTypes[3], `${food.clientId}:fat`],
+    [foodTypes[4], `${food.clientId}:fiber`],
+  ]);
+  deletes.length = 0;
+  await adapter.removeFood(food.clientId, "uuid-1");
+  assert.deepEqual(
+    deletes.map(([type]) => type),
+    foodTypes.slice(0, 5)
+  );
+});
+
+test("HealthKit profile reads a local birthday and sex, skipping what isn't shared", async () => {
+  let sex = 1;
+  let birth = new Date(1990, 4, 17);
+  const hk = {
+    isHealthDataAvailable: () => true,
+    BiologicalSex: { notSet: 0, female: 1, male: 2, other: 3 },
+    getDateOfBirthAsync: async () => birth,
+    getBiologicalSexAsync: async () => sex,
+  };
+  const { getHealthAdapter } = load("src/lib/health-native.ios.ts", {
+    "@kingstinct/react-native-healthkit": hk,
+  });
+  const adapter = await getHealthAdapter();
+  assert.deepEqual(await adapter.profile(), { birthDate: "1990-05-17", sex: "female" });
+  sex = 3;
+  birth = undefined;
+  hk.getBiologicalSexAsync = async () => {
+    throw new Error("Authorization not determined");
+  };
+  assert.deepEqual(await adapter.profile(), { birthDate: undefined, sex: undefined });
+});
+
 test("Health Connect requests body-fat write permission and uses percentage points", async () => {
   let permissions;
   let saved;
@@ -765,9 +961,13 @@ test("Health Connect requests body-fat write permission and uses percentage poin
       return value;
     },
     RecordingMethod: { RECORDING_METHOD_MANUAL_ENTRY: 3 },
+    MealType: { BREAKFAST: 1, LUNCH: 2, DINNER: 3, SNACK: 4 },
     insertRecords: async (records) => {
       saved = records;
       return ["saved"];
+    },
+    deleteRecordsByUuids: async (...args) => {
+      saved = args;
     },
   };
   const { getHealthAdapter } = load("src/lib/health-native.android.ts", {
@@ -776,8 +976,38 @@ test("Health Connect requests body-fat write permission and uses percentage poin
   const adapter = await getHealthAdapter();
   assert.deepEqual(await adapter.authorize(), {
     read: ["weight", "height"],
-    write: ["weight", "height", "bodyFat"],
+    write: ["weight", "height", "bodyFat", "food"],
   });
+  assert.ok(permissions.some((p) => p.recordType === "Nutrition" && p.accessType === "write"));
+  await adapter.writeFood({
+    clientId: "macro-track:1:food:7",
+    version: 5,
+    name: "Rice",
+    meal: "Dinner",
+    eatenAt: "2024-01-01T18:00:00.000Z",
+    nutrients: { calories: 200, protein: 4, carbs: 44, fat: 0, fiber: null, sodium: 2 },
+    replacing: true,
+  });
+  assert.deepEqual(saved[0], {
+    recordType: "Nutrition",
+    startTime: "2024-01-01T18:00:00.000Z",
+    endTime: "2024-01-01T18:01:00.000Z",
+    name: "Rice",
+    mealType: 3,
+    energy: { value: 200, unit: "kilocalories" },
+    protein: { value: 4, unit: "grams" },
+    totalCarbohydrate: { value: 44, unit: "grams" },
+    totalFat: undefined,
+    dietaryFiber: undefined,
+    sodium: { value: 2, unit: "milligrams" },
+    metadata: {
+      clientRecordId: "macro-track:1:food:7",
+      clientRecordVersion: 5,
+      recordingMethod: 3,
+    },
+  });
+  await adapter.removeFood("macro-track:1:food:7", "saved");
+  assert.deepEqual(saved, ["Nutrition", [], ["macro-track:1:food:7"]]);
   assert.ok(permissions.some((p) => p.recordType === "BodyFat" && p.accessType === "write"));
   assert.ok(!permissions.some((p) => p.recordType === "BodyFat" && p.accessType === "read"));
   await adapter.write({
@@ -922,6 +1152,14 @@ const mass = "HKQuantityTypeIdentifierBodyMass";
 const heightType = "HKQuantityTypeIdentifierHeight";
 const waistType = "HKQuantityTypeIdentifierWaistCircumference";
 const fatType = "HKQuantityTypeIdentifierBodyFatPercentage";
+const foodTypes = [
+  "HKQuantityTypeIdentifierDietaryEnergyConsumed",
+  "HKQuantityTypeIdentifierDietaryProtein",
+  "HKQuantityTypeIdentifierDietaryCarbohydrates",
+  "HKQuantityTypeIdentifierDietaryFatTotal",
+  "HKQuantityTypeIdentifierDietaryFiber",
+  "HKQuantityTypeIdentifierDietarySodium",
+];
 
 test("HealthKit reports granted writes and reads only requested kinds", async () => {
   const samples = { [mass]: [] };
@@ -930,18 +1168,21 @@ test("HealthKit reports granted writes and reads only requested kinds", async ()
     "@kingstinct/react-native-healthkit": hk,
   });
   const adapter = await getHealthAdapter();
-  hk.denied = [waistType, fatType];
+  hk.denied = [waistType, fatType, ...foodTypes];
   assert.deepEqual(await adapter.authorize(false), {
     read: ["weight", "height"],
     write: ["weight", "height"],
   });
+  // Any one nutrient allowed is enough to write food.
+  hk.denied = [waistType, fatType, ...foodTypes.slice(1)];
+  assert.deepEqual((await adapter.authorize(false)).write, ["weight", "height", "food"]);
   // Weight write off alone still imports, even with nothing in Health yet.
   hk.denied = [mass];
   assert.deepEqual((await adapter.authorize(false)).read, ["weight", "height"]);
   assert.deepEqual(await adapter.read(["weight"]), []);
   assert.deepEqual(hk.queried, [mass]);
   // Every write off: only an outside weight tells an import-only grant from "Don't Allow".
-  hk.denied = [mass, heightType, waistType, fatType];
+  hk.denied = [mass, heightType, waistType, fatType, ...foodTypes];
   assert.deepEqual(await adapter.authorize(false), { read: ["weight", "height"], write: [] });
   await assert.rejects(adapter.read(["weight", "height"]), /^Error: healthWeightDenied$/);
   samples[mass] = [["own", 80, "2024-01-01T12:00:00Z", "macro-track:1:weight:1"]];
@@ -966,7 +1207,7 @@ test("HealthKit import-only grant imports weights; Don't Allow changes nothing",
     .run();
   const samples = {};
   const hk = healthKit(samples);
-  hk.denied = [mass, heightType, waistType, fatType];
+  hk.denied = [mass, heightType, waistType, fatType, ...foodTypes];
   const { getHealthAdapter } = load("src/lib/health-native.ios.ts", {
     "@kingstinct/react-native-healthkit": hk,
   });
