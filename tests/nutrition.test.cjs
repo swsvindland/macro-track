@@ -102,6 +102,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "react-native": {
       View: "View",
+      TextInput: "TextInput",
       AppState: {},
       Platform: { OS: "ios" },
       Alert: { alert: () => {} },
@@ -1582,22 +1583,14 @@ test("amounts take fractions and mixed numbers and convert between units", () =>
   for (const text of ["", "abc", "1/0", "1 1", "-2", "2/"])
     assert.ok(Number.isNaN(nutrition.parseAmount(text)), text);
   assert.ok(Number.isNaN(metrics.parseNumber("1/2")), "weigh-ins keep plain decimals");
-  // The keypad builds "1 1/2" over a selected amount and ignores keys that can't make one.
-  let text = "30";
-  for (const [key, fresh] of [
-    ["1", true],
-    [" ", false],
-    ["1", false],
-    ["/", false],
-    ["2", false],
-    ["/", false],
-    [".", false],
-  ])
-    text = nutrition.typeAmount(text, key, fresh);
+  // The keyboard types "1 1/2" one character at a time and can't type text that isn't an amount.
+  let text = "";
+  for (const next of ["1", "1 ", "1 1", "1 1/", "1 1/2", "1 1/2/", "1 1/2."])
+    text = nutrition.editAmount(text, next);
   assert.equal(text, "1 1/2");
-  assert.equal(nutrition.typeAmount("1½", "⌫"), "1");
-  assert.equal(nutrition.typeAmount("120", "⌫", true), "");
-  assert.equal(nutrition.typeAmount("0", "5"), "5");
+  assert.equal(nutrition.editAmount("1½", "1"), "1");
+  assert.equal(nutrition.editAmount("1", "1,5"), "1.5");
+  assert.equal(nutrition.editAmount("12", "12a"), "12");
   const units = nutrition.portionUnits(bread);
   const convert = (count, from, to) => nutrition.convertCount(units, from, count, to);
   assert.equal(convert(120, "g", "oz"), 4.2);
@@ -1829,6 +1822,14 @@ test("compiled entry editor keeps the amount and label when only the time change
   sqlite.close();
 });
 
+/** Types a keypad key into the amount field as the system keyboard would: a selected amount is replaced. */
+function typeKey(input, key) {
+  const { value, selection } = input.props;
+  const selected = !!selection && selection.end > selection.start;
+  input.props.onChangeText(
+    key === "⌫" ? (selected ? "" : value.slice(0, -1)) : (selected ? "" : value) + key
+  );
+}
 /** FastLogger with the real, compiled amount picker, whose keys and chips a test can press. */
 function keypadLogger(diary, fastLog) {
   const keypad = screenHarness(
@@ -1866,9 +1867,10 @@ function keypadLogger(diary, fastLog) {
     ring: () => props(picker.DayRing),
     press: (...keys) => {
       for (const key of keys)
-        pad()
-          .find((node) => node.props.value === key && node.props.onPress)
-          .props.onPress();
+        typeKey(
+          pad().find((node) => node.type === "TextInput"),
+          key
+        );
     },
     chip: (label) => pad().find((node) => node.props.unit?.label === label),
     button: (label) =>
@@ -1880,7 +1882,7 @@ function keypadLogger(diary, fastLog) {
   };
 }
 
-test("compiled keypad logs 1 1/2 slices, converts a prefilled amount and logs 300 kcal as grams", () => {
+test("compiled amount field logs 1 1/2 slices, converts a prefilled amount and logs 300 kcal as grams", () => {
   const { diary, sqlite, fastLog } = diaryDatabase();
   const day = metrics.localDay();
   diary.saveCustomFood(bread);
@@ -1948,54 +1950,6 @@ test("compiled keypad logs 1 1/2 slices, converts a prefilled amount and logs 30
     [entry.amount, entry.nutrients.calories, entry.portionLabel, entry.portionUnit],
     [120, 300, "300 kcal · 120 g", "kcal"]
   );
-  sqlite.close();
-});
-
-test("compiled amount picker steps aside while the system keyboard types another field", () => {
-  const { diary, sqlite } = diaryDatabase();
-  const listeners = {};
-  const harness = screenHarness(
-    diary,
-    {},
-    {
-      "react-native-svg": { __esModule: true, default: "Svg", Circle: "Circle" },
-      "heroui-native": { useThemeColor: () => "#000000" },
-      "react-native": {
-        View: "View",
-        Pressable: "Pressable",
-        ScrollView: "ScrollView",
-        Platform: { OS: "ios" },
-        Keyboard: {
-          addListener: (name, listener) => {
-            listeners[name] = listener;
-            return { remove: () => delete listeners[name] };
-          },
-        },
-      },
-    }
-  );
-  const { AmountPicker } = harness.load("src/components/nutrition/amount-picker.tsx");
-  const render = () =>
-    nodes(
-      harness.render(AmountPicker, {
-        units: nutrition.portionUnits(bread),
-        value: { unit: "g", text: "60", fresh: true },
-        onChange: () => {},
-        actions: [{ label: "Save changes", onPress: () => {} }],
-      })
-    );
-  const keys = () => render().filter((node) => node.props?.value === "1").length;
-  assert.equal(keys(), 1);
-  const stop = harness.effects[0]();
-  listeners.keyboardWillShow();
-  assert.equal(keys(), 0);
-  assert.ok(
-    render().some((node) => node.type === "Button" && node.props.children === "Save changes")
-  );
-  listeners.keyboardWillHide();
-  assert.equal(keys(), 1);
-  stop();
-  assert.deepEqual(Object.keys(listeners), []);
   sqlite.close();
 });
 

@@ -613,15 +613,12 @@ export function countText(food: Food, unit: string, count: number) {
 }
 
 /**
- * The amount field after a keypad key: a digit, ".", "/" and " " for "1 1/2", or "⌫". A `fresh`
- * (still selected) amount is replaced by a number and cleared by "⌫". Keys that can't lead to an
- * amount are ignored.
+ * The amount field after the keyboard edits it: "," reads as ".", and text that can't lead to an
+ * amount ("1 1/2", "1½", "120.5") keeps the previous text.
  */
-export function typeAmount(text: string, key: string, fresh = false) {
-  if (key === "⌫") return fresh ? "" : text.slice(0, -1);
-  let next = (fresh && /^[\d.]$/.test(key) ? "" : text) + key;
-  if (/^0\d/.test(next)) next = next.slice(1);
-  return /^(?:\d{0,5}(?:\.\d{0,2})?|\d{1,3}\/\d{0,3}|\d{1,3} (?:\d{1,3}(?:\/\d{0,3})?)?)$/.test(
+export function editAmount(text: string, next: string) {
+  next = next.replace(",", ".");
+  return /^(?:\d{0,5}(?:\.\d{0,2})?|\d{1,3}\/\d{0,3}|\d{1,3} (?:\d{1,3}(?:\/\d{0,3})?)?|\d{0,3} ?[¼⅓½⅔¾])$/.test(
     next
   )
     ? next
