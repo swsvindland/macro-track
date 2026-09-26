@@ -4,6 +4,19 @@ September 25, 2026. Built from a code audit of the logging loop, coaching/Progre
 
 The ranking follows how the app is used: 3–4 quick logs a day, a morning weigh-in when Health isn't supplying weights, and one weekly check-in. Success is less time in the app, not more. Everything stays on the phone.
 
+## Status, September 26, 2026
+
+Landed on `roadmap/next-push`: every A item except A2 (needs the native build), B0–B12 (B11 without the catalog rebuild), and a MacroFactor parity batch requested after the owner shared screenshots of their MacroFactor setup:
+
+- **Progress** is a dashboard: weekly nutrition grid (consumed/remaining), daily expenditure estimate with a range and holding periods, weight trend with scale weight, goal line and 1W–All ranges.
+- **Plan** opens on a check-in countdown and the program's week, with **calorie shifting**: higher weekdays inside the same weekly budget; check-ins keep working on the unshifted budget.
+- **Today** has a week strip with calorie rings, hour headings with kcal and P/F/C and a **+** per hour, food icons, and a quick-log bar pinned above the tab bar on Today, Progress and Plan (search, barcode, on-device AI, and **+** for Log again).
+- **The logger** gives search results the screen, and the portion screen has unit chips (g, oz, volumes, the food's own portions, kcal), an in-app keypad with fractions, live target rings, and remembers each food's unit.
+
+Each item was built with tests, reviewed from a correctness and a product angle, and fixed; a whole-branch review then found and fixed 10 further defects, several of them interactions between features built in parallel. 285 tests pass in several time zones. Simulator checks covered Home, the logger, search, Progress, Expenditure, Plan and the food log; the device acceptance checklist in [MVP validation](mvp-validation.md) still applies.
+
+Next: the native batch (N1–N4 and A2), then section C. Calorie shifting moved from C into the parity batch.
+
 ## Ground rules
 
 - JS/TS work lands first, one commit per item, each passing `pnpm typecheck && pnpm lint && pnpm test`.
@@ -65,7 +78,7 @@ The ranking follows how the app is used: 3–4 quick logs a day, a morning weigh
 
 ## C. Later
 
-Calorie shifting (higher days within the same weekly budget); maintenance breaks and paused check-ins; Health reconciliation after restore (link instead of duplicating) and anchored incremental reads; backup v2 with preferences and height; one shared food-picker component; splitting today-screen/food-editor/photo-logger as features touch them; one sheet layout everywhere; VoiceOver labels that include kcal/time/portion; known fiber/sodium totals instead of "—"; removing the inherited Body Track screens and hiding the language picker until nutrition screens are translated; EAS Update for JS-only fixes; catalog v2 with porter stemming, merged OFF duplicates and a typo vocabulary; Android widget; Control Center control.
+Maintenance breaks and paused check-ins; Health reconciliation after restore (link instead of duplicating) and anchored incremental reads; backup v2 with preferences and height; one shared food-picker component; splitting today-screen/food-editor/photo-logger as features touch them; one sheet layout everywhere; VoiceOver labels that include kcal/time/portion; known fiber/sodium totals instead of "—"; removing the inherited Body Track screens and hiding the language picker until nutrition screens are translated; EAS Update for JS-only fixes; catalog v2 with porter stemming, merged OFF duplicates and a typo vocabulary; Android widget; Control Center control.
 
 ## Checked and intentionally unchanged
 
