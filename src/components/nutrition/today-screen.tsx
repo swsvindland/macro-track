@@ -13,6 +13,12 @@ import {
 } from "@/components/system";
 import { ActionMenu, DayPicker, Screen, SwipeRow } from "@/components/ui";
 import {
+  HomeSheets,
+  pendingAppAction,
+  subscribeAppActions,
+  takeAppAction,
+} from "@/lib/app-actions";
+import {
   copyEntries,
   countableDay,
   countLoggedDay,
@@ -68,7 +74,7 @@ const statusLabels: Record<DayState, string> = {
   fasting: "Fasted (counts as 0 kcal)",
 };
 type Toast = { message: string; undo?: () => string };
-type WeightSheet = { open: () => void };
+type WeightSheet = { open: () => void; close: () => void };
 // The swipe actions, for screen readers.
 const rowActions = [
   { name: "delete", label: "Delete" },
@@ -87,7 +93,10 @@ const named = (rows: FoodEntry[]) =>
 /** The Log weight sheet keeps its own state, so typing a weight doesn't re-render Home. */
 function HomeWeightSheet({ ref }: { ref: Ref<WeightSheet> }) {
   const weight = useMeasurementLog("weight");
-  useImperativeHandle(ref, () => ({ open: () => weight.launch(null) }));
+  useImperativeHandle(ref, () => ({
+    open: () => weight.launch(null),
+    close: () => weight.setOpen(false),
+  }));
   return <WeightForm log={weight} />;
 }
 
@@ -172,10 +181,48 @@ export function TodayScreen() {
         setToast(null);
       }
     });
+    // Links from Shortcuts or the Action Button (app-actions.ts), on a cold start or while
+    // open: sheets can't stack, so Home's close first (other tabs' close themselves), and the
+    // action starts on today.
+    let opening: ReturnType<typeof setTimeout> | undefined;
+    function act() {
+      if (!pendingAppAction()) return;
+      tick();
+      setEditor(null);
+      setMealEditor(null);
+      setCopying(false);
+      setMoving(null);
+      setLogger(null);
+      setPhotoLog(false);
+      weightSheet.current?.close();
+      setDay(localDay());
+      setSelected(null);
+      setToast(null);
+      setError("");
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+      clearTimeout(opening);
+      // Taken only once the sheets are gone, so a remount before then still finds it.
+      opening = setTimeout(() => {
+        const action = takeAppAction();
+        if (action === "log") setLogger({});
+        else if (action === "scan") setLogger({ start: "barcode" });
+        else if (action === "weigh-in") weightSheet.current?.open();
+        else if (action === "photo")
+          void modelStatus().then((status) => {
+            setAi(status);
+            if (photoLoggingOffered(status)) setPhotoLog(true);
+            else setLogger({});
+          });
+      }, 0);
+    }
+    act();
+    const unsubscribe = subscribeAppActions(act);
     return () => {
       clearTimeout(warm);
       clearTimeout(timer);
+      clearTimeout(opening);
       sub.remove();
+      unsubscribe();
     };
   }, []);
   useEffect(() => {
@@ -636,7 +683,7 @@ export function TodayScreen() {
   );
 
   return (
-    <>
+    <HomeSheets value>
       <Screen
         title="Today"
         compact
@@ -981,6 +1028,6 @@ export function TodayScreen() {
         />
       )}
       <HomeWeightSheet ref={weightSheet} />
-    </>
+    </HomeSheets>
   );
 }

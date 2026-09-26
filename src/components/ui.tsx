@@ -37,6 +37,7 @@ import {
   SystemText as Text,
   type IconName,
 } from "./system";
+import { useCloseForAppAction } from "@/lib/app-actions";
 import { localDay } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 
@@ -396,6 +397,8 @@ export function Editor({
   const { t } = useStore();
   const insets = useSafeAreaInsets();
   const portalHost = useId();
+  // A macrotrack:// link opens a sheet on Home, which iOS can't show over this one.
+  useCloseForAppAction(open, close);
   return (
     <Modal
       visible={open}

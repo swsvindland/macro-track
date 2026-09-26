@@ -131,6 +131,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   const alerts = [];
   // The latest render's effects; they run only when a test calls runEffects().
   const effects = [];
+  const mounted = new Set();
   let cursor = 0;
   const context = { revision: 0, refresh: () => context.revision++ };
   const react = {
@@ -220,6 +221,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./time-field": { TimeField: "TimeField" },
     // Home's sheets and cards render as plain elements.
     "expo-router": { router: {} },
+    "@/lib/app-actions": load("src/lib/app-actions.ts"),
     "@/lib/weigh-in": { weighInDue: () => false, undoWeight: () => {} },
     "@/components/measurements/use-measurement-log": { useMeasurementLog: () => ({}) },
     "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
@@ -256,7 +258,13 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
         if (previous && deps?.every((value, i) => Object.is(value, previous.deps[i]))) continue;
         previous?.cleanup?.();
         slots[slot] = { deps, cleanup: effect() };
+        mounted.add(slot);
       }
+    },
+    /** Runs the effects' cleanups, as React does on unmount. */
+    unmount() {
+      for (const slot of mounted) slots[slot].cleanup?.();
+      mounted.clear();
     },
   };
 }
@@ -1342,4 +1350,273 @@ test("compiled Home counts a full yesterday with Undo and asks about a short one
     sqlite.close();
     t.mock.timers.reset();
   }
+});
+
+test("links name a Home action with trailing slashes, queries and dev-build forms", () => {
+  const { parseAppAction } = load("src/lib/app-actions.ts");
+  const dev = (url) =>
+    `exp+macro-track://expo-development-client/?url=${encodeURIComponent(url)}&disableOnboarding=1`;
+  const cases = {
+    "macrotrack://log": "log",
+    "macrotrack://log/": "log",
+    "macrotrack://scan?source=shortcut": "scan",
+    "macrotrack:///photo": "photo",
+    "macrotrack://weigh-in/#top": "weigh-in",
+    " MacroTrack://LOG ": "log",
+    "macrotrack:scan": "scan",
+    "exp+macro-track://photo": "photo",
+    "/weigh-in/": "weigh-in",
+    log: "log",
+    [dev("macrotrack://scan")]: "scan",
+    [dev("http://192.168.1.20:8081/--/photo")]: "photo",
+    "exp://192.168.1.20:8081/--/weigh-in?x=1": "weigh-in",
+    "http://localhost:8081/--/log": "log",
+  };
+  for (const [url, action] of Object.entries(cases)) assert.equal(parseAppAction(url), action, url);
+  for (const url of [
+    "",
+    null,
+    undefined,
+    "macrotrack://",
+    "macrotrack://?action=log",
+    "macrotrack://plan",
+    "macrotrack://log/extra",
+    "macrotrack://logs",
+    "macrotrack://constructor",
+    "exp://192.168.1.20:8081",
+    dev("http://192.168.1.20:8081"),
+    "exp+macro-track://expo-development-client/",
+    "exp+macro-track://expo-development-client/?url=%E0%A4%A",
+  ])
+    assert.equal(parseAppAction(url), null, String(url));
+});
+
+test("every link redirects to Today and an action link leaves one pending action", () => {
+  const actions = load("src/lib/app-actions.ts");
+  const { redirectSystemPath } = load("src/app/+native-intent.tsx", {
+    "@/lib/app-actions": actions,
+  });
+  let heard = 0;
+  const stop = actions.subscribeAppActions(() => heard++);
+  // Anything else would stack a screen over Home, so it opens Today too.
+  for (const path of ["macrotrack://plan", "macrotrack://weighin", "macrotrack:///log/now", ""])
+    assert.equal(redirectSystemPath({ path, initial: false }), "/", path);
+  assert.equal(actions.pendingAppAction(), null);
+  assert.equal(heard, 0);
+  assert.equal(redirectSystemPath({ path: "macrotrack://scan/", initial: true }), "/");
+  assert.equal(redirectSystemPath({ path: "macrotrack://photo", initial: false }), "/");
+  assert.equal(heard, 2);
+  assert.equal(actions.pendingAppAction(), "photo", "the newer link wins");
+  assert.equal(actions.takeAppAction(), "photo");
+  assert.equal(actions.takeAppAction(), null, "taken once");
+  stop();
+  actions.requestAppAction("log");
+  assert.equal(heard, 2);
+
+  // An unknown route goes back to the Home already open instead of replacing itself with
+  // a second one.
+  const routes = [];
+  const { default: NotFound } = load("src/app/+not-found.tsx", {
+    "expo-router": {
+      router: {
+        dismissTo: (href) => routes.push(["dismissTo", href]),
+        replace: (href) => routes.push(["replace", href]),
+      },
+      useFocusEffect: (effect) => effect(),
+    },
+  });
+  assert.equal(NotFound(), null);
+  assert.deepEqual(routes, [["dismissTo", "/"]]);
+});
+
+test("only the newest Home hears a link, and open sheets outside Home close first", () => {
+  // The shared Editor, with just enough React to run its effects.
+  let home = false;
+  const effects = [];
+  const react = {
+    createContext: (value) => ({ value }),
+    useContext: (context) => (context === actions.HomeSheets ? home : context.value),
+    useEffect: (effect) => effects.push(effect),
+    useId: () => "sheet",
+  };
+  const actions = load("src/lib/app-actions.ts", { react });
+  const { Editor } = load("src/components/ui.tsx", {
+    react,
+    "react/jsx-runtime": { jsx: (type, props) => ({ type, props }), jsxs: () => null },
+    "react-native": { Platform: { OS: "ios" } },
+    "react-native-safe-area-context": { useSafeAreaInsets: () => ({ top: 0 }) },
+    uniwind: { withUniwind: (component) => component },
+    "heroui-native": {},
+    "heroui-native/portal": {},
+    "heroui-native-pro": {},
+    "react-native-gesture-handler": {},
+    "react-native-gesture-handler/ReanimatedSwipeable": { __esModule: true },
+    "./system": {},
+    "@/lib/app-actions": actions,
+    "@/lib/metrics": metrics,
+    "@/lib/store": { useStore: () => ({ t: (key) => key }) },
+  });
+  const heard = [];
+  const mount = (open, close) => {
+    effects.length = 0;
+    Editor({ title: "Sheet", open, close, children: null });
+    return effects.map((effect) => effect()).find(Boolean);
+  };
+  const older = actions.subscribeAppActions(() => heard.push("older"));
+  const newer = actions.subscribeAppActions(() => heard.push("newer"));
+  const closed = [];
+  const progress = mount(true, () => closed.push("progress"));
+  const hidden = mount(false, () => closed.push("hidden"));
+  home = true;
+  const homeSheet = mount(true, () => closed.push("home"));
+  assert.equal(hidden, undefined);
+  assert.equal(homeSheet, undefined, "Home closes its own sheets");
+
+  actions.requestAppAction("log");
+  assert.deepEqual(closed, ["progress"]);
+  assert.deepEqual(heard, ["newer"], "a covered, older Home never takes the action");
+  progress();
+  newer();
+  actions.requestAppAction("scan");
+  assert.deepEqual(closed, ["progress"]);
+  assert.deepEqual(heard, ["newer", "older"]);
+  older();
+  actions.requestAppAction("photo");
+  assert.deepEqual(heard, ["newer", "older"]);
+});
+
+function linkedHome(diary, actions, ai = "available") {
+  return homeScreen(
+    diary,
+    {},
+    {
+      "@/lib/app-actions": actions,
+      "@/lib/food-catalog": { openCatalogs: async () => {} },
+      "@/lib/local-ai": {
+        modelStatus: async () => ({ state: ai, engine: "apple", vision: true }),
+      },
+      "./photo-logger": {
+        PhotoLogger: "PhotoLogger",
+        photoLoggingOffered: (status) => status?.state === "available",
+      },
+      "react-native": {
+        View: "View",
+        Platform: { OS: "ios" },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
+        AccessibilityInfo: {
+          announceForAccessibility: () => {},
+          isScreenReaderEnabled: () => new Promise(() => {}),
+        },
+      },
+    }
+  );
+}
+const sheet = (tree, type) => tree.find((node) => node.type === type);
+
+test("compiled Home opens a link's sheet once, on today, from a cold start or while open", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  const today = metrics.localDay();
+  logAt(diary, nutrition.shiftDay(today, -1), "08:00", "Oats");
+  const actions = load("src/lib/app-actions.ts");
+
+  // Cold start: the link arrives before Home mounts.
+  actions.requestAppAction("scan");
+  const { harness, render, row } = linkedHome(diary, actions);
+  let tree = render();
+  harness.runEffects();
+  assert.equal(sheet(tree, "FastLogger"), undefined);
+  t.mock.timers.tick(1);
+  tree = render();
+  assert.equal(sheet(tree, "FastLogger").props.start, "barcode");
+  assert.equal(sheet(tree, "FastLogger").props.initialDay, today);
+  assert.equal(actions.pendingAppAction(), null);
+  sheet(tree, "FastLogger").props.close();
+  render();
+  harness.runEffects();
+  t.mock.timers.tick(1000);
+  assert.equal(sheet(render(), "FastLogger"), undefined, "the action runs once");
+
+  // Already open, on another day with a food open: the sheet closes and the logger
+  // opens on today.
+  render()
+    .find((node) => node.props?.accessibilityLabel === "Previous day")
+    .props.onPress();
+  row(render(), "Oats").props.onPress();
+  tree = render();
+  assert.ok(sheet(tree, "FoodEditor"));
+  actions.requestAppAction("log");
+  tree = render();
+  assert.equal(sheet(tree, "FoodEditor"), undefined, "open sheets close first");
+  assert.equal(sheet(tree, "FastLogger"), undefined);
+  t.mock.timers.tick(1);
+  tree = render();
+  assert.equal(sheet(tree, "FastLogger").props.start, undefined);
+  assert.equal(sheet(tree, "FastLogger").props.initialDay, today);
+  assert.ok(button(tree, "Log food"), "back on today");
+
+  // A photo link opens the photo logger when the model can run, the logger otherwise.
+  actions.requestAppAction("photo");
+  assert.equal(sheet(render(), "FastLogger"), undefined);
+  t.mock.timers.tick(1);
+  await new Promise(setImmediate);
+  tree = render();
+  assert.ok(sheet(tree, "PhotoLogger"));
+  assert.equal(sheet(tree, "FastLogger"), undefined);
+
+  // The weigh-in link closes the photo logger and opens the Log weight sheet.
+  const weightSheet = tree.find((node) => node.type?.name === "HomeWeightSheet").props.ref;
+  const calls = [];
+  weightSheet.current = { open: () => calls.push("open"), close: () => calls.push("close") };
+  actions.requestAppAction("weigh-in");
+  assert.equal(sheet(render(), "PhotoLogger"), undefined);
+  t.mock.timers.tick(1);
+  assert.deepEqual(calls, ["close", "open"]);
+
+  // Home unmounting before the sheet opens leaves the action for the next mount.
+  actions.requestAppAction("scan");
+  harness.unmount();
+  t.mock.timers.tick(1);
+  assert.equal(actions.pendingAppAction(), "scan");
+  sqlite.close();
+  const other = diaryDatabase();
+  const again = linkedHome(other.diary, actions, "unavailable");
+  again.render();
+  again.harness.runEffects();
+  t.mock.timers.tick(1);
+  tree = again.render();
+  assert.equal(sheet(tree, "FastLogger").props.start, "barcode");
+  sheet(tree, "FastLogger").props.close();
+  actions.requestAppAction("photo");
+  t.mock.timers.tick(1);
+  await new Promise(setImmediate);
+  tree = again.render();
+  assert.equal(sheet(tree, "PhotoLogger"), undefined);
+  assert.ok(sheet(tree, "FastLogger"), "no model: the logger opens instead");
+  other.sqlite.close();
+});
+
+test("compiled Home: of two mounted Homes, only the newer opens a link's sheet", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: new Date(2024, 0, 10, 12, 0, 10) });
+  const { diary, sqlite } = diaryDatabase();
+  const actions = load("src/lib/app-actions.ts");
+  const covered = linkedHome(diary, actions),
+    top = linkedHome(diary, actions);
+  for (const home of [covered, top]) {
+    home.render();
+    home.harness.runEffects();
+  }
+  actions.requestAppAction("log");
+  t.mock.timers.tick(1);
+  assert.equal(sheet(covered.render(), "FastLogger"), undefined);
+  assert.ok(sheet(top.render(), "FastLogger"));
+  assert.equal(actions.pendingAppAction(), null);
+
+  // Once the newer one is gone, the remaining Home hears the next link.
+  top.harness.unmount();
+  actions.requestAppAction("scan");
+  t.mock.timers.tick(1);
+  assert.equal(sheet(covered.render(), "FastLogger").props.start, "barcode");
+  covered.harness.unmount();
+  sqlite.close();
 });
