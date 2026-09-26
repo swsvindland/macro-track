@@ -1353,6 +1353,274 @@ test("remembered portions follow current food definitions and logger choices fav
   sqlite.close();
 });
 
+/** Writes diary history straight to SQLite, dated `daysAgo` and created when it was eaten. */
+function historyWriter(sqlite) {
+  const insert = sqlite.prepare(
+    "INSERT INTO food_entries (day, meal, logged_time, food, amount, portion_label, nutrients, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  return (item, daysAgo, time, amount = 100) => {
+    const day = nutrition.shiftDay(metrics.localDay(), -daysAgo);
+    insert.run(
+      day,
+      "Breakfast",
+      time,
+      JSON.stringify(item),
+      amount,
+      `${amount} g`,
+      JSON.stringify(nutrition.scaleNutrients(item, amount)),
+      new Date(`${day}T${foodTime.validFoodTime(time ?? "") ? time : "12:00"}:00`).getTime()
+    );
+  };
+}
+const named = (name) => ({ ...food, id: `custom:${name.toLowerCase()}`, name, barcode: null });
+
+test("log again ranks foods by how often, how recently and how near this time they are eaten", () => {
+  const { sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  const oats = named("Oats"),
+    once = named("Once"),
+    weekly = named("Weekly"),
+    stale = named("Stale");
+  for (let day = 1; day <= 30; day++) eat(oats, day, "08:00");
+  eat(once, 1, "08:05");
+  // Eaten every week until eight weeks ago.
+  for (let day = 56; day <= 175; day += 7) eat(weekly, day, "12:00", 55);
+  eat(stale, 70, "12:00");
+  const titles = (time) => fastLog.loggingChoices(time).choices.map((choice) => choice.title);
+  assert.deepEqual(titles("08:00").slice(0, 2), ["Oats", "Once"], "a daily food beats a one-off");
+  const noon = fastLog.loggingChoices("12:00");
+  const order = noon.choices.map((choice) => choice.title);
+  assert.ok(order.indexOf("Weekly") >= 0 && order.indexOf("Weekly") < order.indexOf("Stale"));
+  assert.ok(noon.known.get(weekly.id) > noon.known.get(stale.id));
+  assert.equal(noon.latest.get(weekly.id).amount, 55);
+  assert.equal(noon.choices.find((choice) => choice.title === "Weekly").items[0].amount, 55);
+  sqlite.close();
+});
+
+test("log again ranking survives invalid times without NaN", () => {
+  const { sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  const often = named("Often"),
+    rare = named("Rare");
+  for (let day = 1; day <= 10; day++) eat(often, day, "13:00");
+  eat(rare, 2, "07:00");
+  // A time saved by an older version, and an entry without one.
+  eat(rare, 3, "7:5");
+  eat(rare, 4, null);
+  for (const time of ["25:99", "", "8:0", "noon"]) {
+    const { choices, known } = fastLog.loggingChoices(time);
+    assert.ok([...known.values()].every(Number.isFinite), time);
+    assert.deepEqual(
+      choices.map((choice) => choice.title),
+      ["Often", "Rare"],
+      time
+    );
+  }
+  sqlite.close();
+});
+
+test("saved foods stay visible above a long history and add in one tap", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  for (let i = 0; i < 40; i++) eat(named(`Food ${i}`), 1 + (i % 5), "12:00");
+  const never = named("Never eaten");
+  const old = named("Old favorite");
+  eat(old, 150, "20:00", 42);
+  eat(named("Food 0"), 1, "12:05");
+  diary.toggleFavorite(never);
+  diary.toggleFavorite(old);
+  diary.toggleFavorite(named("Food 0"));
+  const choices = fastLog.loggingChoices("12:00");
+  assert.deepEqual(choices.saved.map((choice) => choice.title).sort(), [
+    "Food 0",
+    "Never eaten",
+    "Old favorite",
+  ]);
+  assert.equal(
+    choices.saved.find((choice) => choice.title === "Old favorite").items[0].amount,
+    42,
+    "a favorite outside the top foods keeps its portion"
+  );
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "12:00",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  let tree = render();
+  const rows = tree
+    .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+    .map((node) => node.props.accessibilityLabel.slice(7));
+  assert.equal(rows.length, 14);
+  assert.ok(!rows.includes("Food 0"), "a saved food is listed once, in its row");
+  const tile = tree.find((node) => node.props.accessibilityLabel === "Add Never eaten");
+  assert.ok(tile, "a never-eaten saved food is visible");
+  assert.ok(tree.some((node) => node.props.children === "Saved foods"));
+  tile.props.onPress();
+  tree = render();
+  assert.ok(tree.some((node) => node.props.accessibilityLabel === "Remove Never eaten"));
+  assert.ok(tree.some((node) => node.props.children === "Log 1 food"));
+  tree.find((node) => node.props.accessibilityLabel === "Add Old favorite").props.onLongPress();
+  assert.equal(render().find((node) => node.type === "Field").props.value, "42");
+  sqlite.close();
+});
+
+test("log again rows show calories and macros before the portion", () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  historyWriter(sqlite)(food, 1, "08:00", 50);
+  const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const texts = nodes(
+    harness.render(FastLogger, {
+      initialDay: metrics.localDay(),
+      initialTime: "08:00",
+      close: () => {},
+      onLogged: () => {},
+    })
+  )
+    .filter((node) => node.type === "Text")
+    .map((node) => node.props.children);
+  assert.ok(texts.includes("90 kcal 5P 3F 10C · "));
+  assert.ok(texts.includes("50 g"));
+  sqlite.close();
+});
+
+test("search finds foods eaten beyond the top 40 with their last portion at any time", async () => {
+  const { diary, sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  for (let i = 0; i < 45; i++)
+    for (let day = 1; day <= 3; day++) eat(named(`Food ${i}`), day, "08:00");
+  const catalog = (id, name, brand, source) => ({
+    ...food,
+    id,
+    name,
+    brand,
+    source,
+    barcode: null,
+  });
+  const yogurt = catalog("off:5200", "Greek Yogurt Plain", "Fage", "off");
+  const salmon = catalog("usda:175168", "Salmon, cooked", "", "usda");
+  const strawberry = catalog("off:5300", "Strawberry Yogurt", "Chobani", "off");
+  eat(yogurt, 2, "15:00", 170);
+  eat(salmon, 1, "19:00", 200);
+  const yogurtMatch = (named) => rank.matchesQuery("yogurt", named);
+  for (const time of ["08:00", "15:00"]) {
+    const data = fastLog.loggingChoices(time);
+    const recalled = [
+      ...data.choices.filter((choice) => yogurtMatch(choice.items[0].food)),
+      ...data.recall(yogurtMatch),
+    ];
+    assert.deepEqual(
+      recalled.map((choice) => [choice.title, choice.items[0].amount]),
+      [["Greek Yogurt Plain", 170]],
+      time
+    );
+    assert.deepEqual(
+      data.choose([salmon, strawberry]).map((choice) => choice.items[0].amount),
+      [200, 30],
+      `${time}: a catalog result reuses the last portion of a food eaten beyond the top ones`
+    );
+  }
+  assert.ok(
+    !fastLog.loggingChoices("08:00").choices.some((choice) => choice.title === yogurt.name)
+  );
+  const harness = screenHarness(
+    diary,
+    {},
+    {
+      "@/lib/fast-log": fastLog,
+      "@/lib/food-catalog": { searchFoods: async () => [strawberry, yogurt] },
+    }
+  );
+  const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
+  const render = () =>
+    nodes(
+      harness.render(FastLogger, {
+        initialDay: metrics.localDay(),
+        initialTime: "08:00",
+        close: () => {},
+        onLogged: () => {},
+      })
+    );
+  const titles = (tree) =>
+    tree
+      .filter((node) => node.props.accessibilityLabel?.startsWith("Adjust "))
+      .map((node) => node.props.accessibilityLabel.slice(7));
+  render()
+    .find((node) => node.type === "SearchInput")
+    .props.onChange("yogurt");
+  let tree = render();
+  assert.deepEqual(titles(tree), [yogurt.name], "the eaten yogurt is listed before the catalog");
+  harness.effects.forEach((effect) => effect());
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  tree = render();
+  assert.deepEqual(titles(tree), [yogurt.name, strawberry.name], "listed once, first");
+  const texts = tree.filter((node) => node.type === "Text").map((node) => node.props.children);
+  assert.ok(texts.includes("Fage · 170 g"));
+  assert.ok(texts.includes("Chobani · 1 serving · 30 g"));
+  sqlite.close();
+});
+
+test("log again ranks 13k diary entries quickly from a light indexed read", () => {
+  const { sqlite, fastLog } = diaryDatabase();
+  const eat = historyWriter(sqlite);
+  const foods = Array.from({ length: 400 }, (_, i) => named(`Food ${i}`));
+  // Three years of logging about 12 foods a day.
+  sqlite.exec("BEGIN");
+  for (let i = 0; i < 13000; i++)
+    eat(
+      foods[(i * 7919) % foods.length],
+      i % 1095,
+      `${String(i % 24).padStart(2, "0")}:${String((i * 13) % 60).padStart(2, "0")}`
+    );
+  sqlite.exec("COMMIT");
+  const statements = [];
+  const prepare = sqlite.prepare.bind(sqlite);
+  sqlite.prepare = (sql) => {
+    statements.push(sql);
+    return prepare(sql);
+  };
+  fastLog.loggingChoices("08:00");
+  const times = [];
+  for (let run = 0; run < 5; run++) {
+    const start = performance.now();
+    const { choices } = fastLog.loggingChoices("12:30");
+    times.push(performance.now() - start);
+    assert.ok(choices.length >= 40);
+  }
+  // A search reads the other foods' names, then full rows for the ones it matches.
+  const data = fastLog.loggingChoices("12:30");
+  const start = performance.now();
+  const recalled = data.recall((named) => named.name.endsWith("7"));
+  const recall = performance.now() - start;
+  assert.ok(recall < 20, `search recall took ${recall.toFixed(1)} ms`);
+  assert.ok(recalled.length && recalled.every((choice) => choice.title.endsWith("7")));
+  assert.equal(
+    recalled.length + data.choices.filter((choice) => choice.title.endsWith("7")).length,
+    40
+  );
+  sqlite.prepare = prepare;
+  const median = times.sort((a, b) => a - b)[2];
+  assert.ok(median < 20, `ranking took ${median.toFixed(1)} ms`);
+  const light = statements.find((sql) => sql.includes("json_extract"));
+  const plan = sqlite
+    .prepare(`EXPLAIN QUERY PLAN ${light}`)
+    .all(...Array(light.split("?").length - 1).fill(0));
+  assert.ok(plan.some((row) => row.detail.includes("food_entries_recent_idx")));
+  assert.ok(plan.every((row) => !row.detail.includes("TEMP B-TREE")));
+  // Full rows are read only for the top foods and search matches, by id.
+  const full = statements.filter(
+    (sql) => sql.includes('from "food_entries"') && sql.includes('"nutrients"')
+  );
+  assert.ok(full.length && full.every((sql) => /"id" in \(/.test(sql)), full.join("\n"));
+  sqlite.close();
+});
+
 test("compiled fast logger logs a whole meal once, remembers quantities, and closes immediately", () => {
   const { diary, sqlite, fastLog } = diaryDatabase();
   const day = metrics.localDay();
@@ -1999,7 +2267,7 @@ test("compiled fast logger search finds eaten foods by word and names each brand
     source: "off",
   };
   diary.saveEntry({
-    day: "2024-01-01",
+    day: nutrition.shiftDay(metrics.localDay(), -1),
     meal: "Breakfast",
     loggedTime: "08:00",
     food: egg,
@@ -2049,7 +2317,10 @@ test("compiled fast logger search finds eaten foods by word and names each brand
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(searches.length, 1);
   assert.equal(searches[0].query, "eggs");
-  assert.equal(searches[0].known.get(egg.id), 1, "search boosts foods by how often they are eaten");
+  assert.ok(
+    searches[0].known.get(egg.id) > 0.9,
+    "search boosts foods eaten recently around this time"
+  );
   tree = render();
   assert.deepEqual(titles(tree), [egg.name, branded.name], "the eaten food is listed once, first");
   assert.ok(texts(tree).includes("USDA · 1 large · 50 g"));
