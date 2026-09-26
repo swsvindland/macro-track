@@ -182,8 +182,11 @@ export function TrendChart({
             null
           )
       : null;
+  // A span shorter than three days would round several ticks onto the same day.
   const dateTicks =
-    span > 0 ? [0, 1, 2, 3].map((i) => addDays(from, Math.round((span * i) / 3))) : [from];
+    span > 0
+      ? [...new Set([0, 1, 2, 3].map((i) => addDays(from, Math.round((span * i) / 3))))]
+      : [from];
   const dateLabel = (day: string) =>
     span <= 120
       ? shortDay(day, language)
