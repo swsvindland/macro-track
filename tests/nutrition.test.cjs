@@ -3074,7 +3074,13 @@ test("logger choices skip quick-add estimates and rank foods and saved meals by 
   sqlite.close();
 });
 
-test("compiled Home shows one task at a time and logs to the day on screen", async () => {
+test("compiled Home shows one task at a time and logs to the day on screen", async (t) => {
+  // Home asks about yesterday only after 04:00, so pin the clock to 09:00 on the real date.
+  const real = new Date();
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date(real.getFullYear(), real.getMonth(), real.getDate(), 9, 0, 0),
+  });
   const { diary, sqlite, fastLog, db } = diaryDatabase();
   const today = metrics.localDay();
   const yesterday = nutrition.shiftDay(today, -1);
@@ -3126,7 +3132,9 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
   tree.find((node) => node.props.children === "Undo").props.onPress();
   assert.equal(diary.dayStatus(yesterday), "in-progress");
   // A day that reopens later (a forgotten snack) can be answered again.
+  // Real time for the press lock, mocked time for the entries written after it.
   await new Promise((resolve) => setTimeout(resolve, 950));
+  t.mock.timers.tick(950);
   harness.context.refresh();
   render()
     .find((node) => node.props.children === "Yes, complete")
@@ -3140,7 +3148,9 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
     portionLabel: "10 g",
     loggedTime: "21:00",
   });
+  // Real time for the press lock, mocked time for the entries written after it.
   await new Promise((resolve) => setTimeout(resolve, 950));
+  t.mock.timers.tick(950);
   harness.context.refresh();
   render()
     .find((node) => node.props.children === "Yes, complete")
