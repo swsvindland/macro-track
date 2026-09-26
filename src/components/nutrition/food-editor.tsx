@@ -42,7 +42,7 @@ import {
   type Meal,
   type MealItem,
 } from "@/lib/nutrition";
-import { localDay, parseNumber } from "@/lib/metrics";
+import { dayLabel, localDay, parseNumber } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodIcon } from "./food-icon";
@@ -436,6 +436,8 @@ export function FoodEditor({
   const [meal, setMeal] = useState<Meal>(
     () => entry?.meal ?? initialMeal ?? mealAtTime(initialTime ?? currentFoodTime())
   );
+  // The day and time fold into one line; tapping it opens the pickers.
+  const [when, setWhen] = useState(false);
   // An entry opens at the unit and count it was logged in; left alone, its amount and label stay.
   // A new food opens at what was last logged of it.
   const [start] = useState<AmountDraft>(() =>
@@ -796,9 +798,19 @@ export function FoodEditor({
               }}
             />
           </View>
-          {/* Correcting an entry is mostly its time, so there the fields come first. */}
-          {!entry && <PortionPreview nutrients={preview} targets={targets} />}
           {!onPick && (
+            <SystemButton
+              variant="ghost"
+              icon="time-outline"
+              className="self-start px-2"
+              accessibilityHint="Changes the day and time for this food"
+              accessibilityState={{ expanded: when }}
+              onPress={() => setWhen((open) => !open)}
+            >
+              {`${dayLabel(day)} · ${validFoodTime(loggedTime) ? formatClock(loggedTime) : "No time"}${diaryLayout === "meals" ? ` · ${meal}` : ""}`}
+            </SystemButton>
+          )}
+          {!onPick && when && (
             <>
               <TimeField
                 value={loggedTime}
@@ -807,12 +819,12 @@ export function FoodEditor({
                 day={day}
                 onDayChange={setDay}
               />
-              {diaryLayout !== "timeline" && (
+              {diaryLayout === "meals" && (
                 <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
               )}
             </>
           )}
-          {!!entry && <PortionPreview nutrients={preview} targets={targets} />}
+          <PortionPreview nutrients={preview} targets={targets} />
           {entry && (
             <SystemButton
               variant="danger-soft"

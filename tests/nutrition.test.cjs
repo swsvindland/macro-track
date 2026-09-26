@@ -1782,6 +1782,10 @@ test("compiled entry editor keeps the amount and label when only the time change
     const harness = screenHarness(diary, { diaryLayout: "timeline" });
     const { FoodEditor } = harness.load("src/components/nutrition/food-editor.tsx");
     const render = () => nodes(harness.render(FoodEditor, { entry, close: () => {} }));
+    // The day and time start folded into one line; a correction taps it open.
+    render()
+      .find((node) => node.type === "Button" && node.props.icon === "time-outline")
+      .props.onPress();
     change(render);
     amountAction(render(), "Save changes").onPress();
   };

@@ -12,8 +12,7 @@ import {
   formatClock,
   validFoodTime,
 } from "@/lib/food-time";
-import { localDay } from "@/lib/metrics";
-import { shiftDay } from "@/lib/nutrition";
+import { dayLabel, localDay } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 
 // One tap for the usual corrections: eaten just now or a little while ago.
@@ -23,17 +22,6 @@ const chips = [
   ["−30 m", 30, "30 minutes ago"],
   ["−1 h", 60, "1 hour ago"],
 ] as const;
-
-function dayLabel(day: string, locale: string) {
-  const today = localDay();
-  if (day === today) return "Today";
-  if (day === shiftDay(today, -1)) return "Yesterday";
-  return new Date(`${day}T12:00:00`).toLocaleDateString(locale, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 /**
  * When a food was eaten. Given a day, the date sits beside the time on one row: the day rarely
