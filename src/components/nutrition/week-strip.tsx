@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
 import { useCalendars } from "expo-localization";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { SystemText as Text } from "@/components/system";
+import { SystemButton, SystemText as Text } from "@/components/system";
 import { targetsForDay } from "@/lib/diary";
 import { dailyIntake, weekDays, weekStart, type WeekDay } from "@/lib/insights";
 import { shortDay } from "@/lib/metrics";
@@ -18,7 +18,8 @@ const weekActions = [
 
 /**
  * The selected day's week under Home's header: each day's calories against its target. Tap a
- * day to open it; a swipe moves to the same weekday a week away, stopping at today.
+ * day to open it; a swipe moves to the same weekday a week away, stopping at today. A dot marks
+ * today, and any other week names its dates with a button straight back.
  */
 export function WeekStrip({
   day,
@@ -52,6 +53,8 @@ export function WeekStrip({
       if (!success || (!dragged && Math.abs(velocityX) < 300)) return;
       move((dragged ? translationX : velocityX) < 0 ? 1 : -1);
     });
+  const end = shiftDay(start, 6),
+    away = end < today;
   const describe = (item: WeekDay) => {
     const eaten = number(item.eaten.calories, 0),
       target = item.target?.calories;
@@ -65,49 +68,70 @@ export function WeekStrip({
   };
   return (
     <GestureDetector gesture={swipe}>
-      <View className="flex-row gap-1 px-2 pb-1">
-        {days.map((item) => {
-          const future = item.day > today,
-            selected = item.day === day,
-            target = item.target?.calories;
-          return (
-            <Pressable
-              key={item.day}
-              disabled={future}
-              accessibilityRole="button"
-              accessibilityLabel={describe(item)}
-              accessibilityState={{ selected, disabled: future }}
-              accessibilityActions={weekActions}
-              onAccessibilityAction={({ nativeEvent }) =>
-                move(nativeEvent.actionName === "next" ? 1 : -1)
-              }
-              onPress={() => onChange(item.day)}
-              className={`flex-1 items-center gap-0.5 rounded-2xl py-1 ${selected ? "bg-surface-secondary" : ""} ${future ? "opacity-40" : ""}`}
+      <View>
+        {away && (
+          <View className="flex-row items-center justify-between pl-3">
+            <Text className="text-sm text-muted" maxFontSizeMultiplier={1.3}>
+              {shortDay(start, language)} – {shortDay(end, language)}
+            </Text>
+            <SystemButton
+              variant="ghost"
+              icon="return-up-forward"
+              labelClassName="text-accent-soft-foreground"
+              className="min-h-9 py-1"
+              hitSlop={4}
+              accessibilityLabel="Back to today"
+              onPress={() => onChange(today)}
             >
-              <Text
-                className={`text-xs leading-4 ${selected ? "font-semibold text-foreground" : "text-muted"}`}
-                maxFontSizeMultiplier={1.2}
-              >
-                {new Date(`${item.day}T12:00:00`).toLocaleDateString(
-                  language === "zh" ? "zh-CN" : language,
-                  { weekday: "narrow" }
-                )}
-              </Text>
-              <Ring
-                value={target && !future ? item.eaten.calories / target : 0}
-                size={32}
-                width={3}
+              Today
+            </SystemButton>
+          </View>
+        )}
+        <View className="flex-row gap-1 px-2 pb-1">
+          {days.map((item) => {
+            const future = item.day > today,
+              selected = item.day === day,
+              target = item.target?.calories;
+            return (
+              <Pressable
+                key={item.day}
+                disabled={future}
+                accessibilityRole="button"
+                accessibilityLabel={describe(item)}
+                accessibilityState={{ selected, disabled: future }}
+                accessibilityActions={weekActions}
+                onAccessibilityAction={({ nativeEvent }) =>
+                  move(nativeEvent.actionName === "next" ? 1 : -1)
+                }
+                onPress={() => onChange(item.day)}
+                className={`flex-1 items-center gap-0.5 rounded-2xl py-1 ${selected ? "bg-surface-secondary" : ""} ${future ? "opacity-40" : ""}`}
               >
                 <Text
-                  className={`text-sm tabular-nums ${item.day === today ? "font-semibold text-accent-soft-foreground" : ""}`}
+                  className={`text-xs leading-4 ${selected ? "font-semibold text-foreground" : "text-muted"}`}
                   maxFontSizeMultiplier={1.2}
                 >
-                  {Number(item.day.slice(8))}
+                  {new Date(`${item.day}T12:00:00`).toLocaleDateString(
+                    language === "zh" ? "zh-CN" : language,
+                    { weekday: "narrow" }
+                  )}
                 </Text>
-              </Ring>
-            </Pressable>
-          );
-        })}
+                <Ring
+                  value={target && !future ? item.eaten.calories / target : 0}
+                  size={32}
+                  width={3}
+                >
+                  <Text
+                    className={`text-sm tabular-nums ${item.day === today ? "font-semibold text-accent-soft-foreground" : ""}`}
+                    maxFontSizeMultiplier={1.2}
+                  >
+                    {Number(item.day.slice(8))}
+                  </Text>
+                </Ring>
+                <View className={`size-1 rounded-full ${item.day === today ? "bg-accent" : ""}`} />
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
     </GestureDetector>
   );
