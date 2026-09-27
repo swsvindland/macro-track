@@ -213,7 +213,6 @@ function LabelScanner({
       <PhotoCapture
         subject="the Nutrition Facts label"
         alternative="enter the values"
-        aspectRatio={3 / 4}
         onPhoto={(uri) => void read(uri)}
         onError={setError}
       />

@@ -20,7 +20,6 @@ export function discardPhoto(uri: string | null) {
 export function PhotoCapture({
   subject,
   alternative,
-  aspectRatio = 4 / 3,
   onPhoto,
   onError,
 }: {
@@ -28,7 +27,6 @@ export function PhotoCapture({
   subject: string;
   /** Another way to continue when there is no camera, e.g. "describe your meal". */
   alternative?: string;
-  aspectRatio?: number;
   onPhoto: (uri: string) => void;
   onError: (message: string) => void;
 }) {
@@ -92,9 +90,11 @@ export function PhotoCapture({
     );
   return (
     <View className="gap-2">
+      {/* The preview fills its frame by cropping, so the frame has the photo's own portrait 3:4
+          shape: what is in view is what the photo holds, and nothing past its edges. */}
       <CameraView
         ref={camera}
-        style={{ width: "100%", aspectRatio, borderRadius: 16, overflow: "hidden" }}
+        style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: 16, overflow: "hidden" }}
         facing="back"
         onMountError={() => setBroken(true)}
       />

@@ -58,14 +58,17 @@ export type ModelRequest = {
   maxTokens?: number;
 };
 
-export const MEAL_INSTRUCTIONS = `You list the foods in a meal photo and/or description for a nutrition log. Include every food and drink the person will eat. Look at every part of the plate, including toppings, spreads and sauces. List each food once; several pieces of the same food are one item with a larger quantity.
+export const MEAL_INSTRUCTIONS = `You list the foods in a meal photo and/or description for a nutrition log. A wrong food in the log is worse than a missing one, because the person can always add what you left out. List only food and drink you can clearly see or that the person names, including toppings, spreads and sauces you can see on the plate. List each food once; several pieces of the same food are one item with a larger quantity.
 
 Brand: fill it only when a brand or restaurant name is readable in the photo (logo, box, cup, wrapper) or stated in the description. Never guess a brand from how food looks; otherwise leave it empty.
 Branded food stays whole: a packaged product or a menu item from a named restaurant chain is one item, because its nutrition is published as a whole. Its toppings, fillings and sauces are part of it and are not listed again. For example a Domino's pizza is one item "Pepperoni pizza" counted in slices, and a McDonald's Big Mac is one item.
 Unbranded food is split: a homemade or unbranded burger, sandwich, salad, bowl or plate is split into its separate components. For example an unbranded cheeseburger with fries becomes: hamburger bun, beef patty, cheddar cheese, lettuce, tomato, ketchup, french fries.
 Sides, desserts and drinks are separate items.
 quantity and unit describe what is shown, for example 2 slice, 1 patty, 3 strip, 1 cup, 1 tbsp. grams is your best estimate of the total edible weight for that quantity. Typical weights: burger bun 55 g, cooked burger patty 110 g, cheese slice 20 g, lettuce leaf 10 g, tomato slice 15 g, bacon strip 10 g, sausage link 50 g, ham slice 30 g, large egg 50 g, bread slice 30 g, pizza slice 110 g, tbsp of sauce 15 g, medium fries 115 g, cup of cooked rice or pasta 160 g, chicken breast 170 g.
-Details in the description (brand, amount, preparation) override the photo. Do not add foods that are not shown or mentioned.`;
+Details in the description (brand, amount, preparation) override the photo. Do not add foods that are not shown or mentioned, and never guess a food from its setting (a table, a kitchen, a restaurant) or from a shape or colour that only resembles food.`;
+
+/** Added for photos, whose reply first says what is pictured and whether it is food at all. */
+export const PHOTO_INSTRUCTIONS = `Photos are often not of food, or not clearly. Before listing anything, write in scene what the photo really shows in a few plain words, e.g. "a plate of spaghetti", "a person smiling", "a dog on a couch", "an empty desk". Then set food to true only if real food or drink someone is about to eat is clearly visible and you can tell what it is. People, faces, pets, rooms, screens, menus, empty plates, closed packaging you can't read and anything blurry or too dark are not food: set food to false and leave items empty. When unsure, set food to false; the person will be asked to describe the meal instead. If the person's description names foods, list those even when the photo doesn't show them.`;
 
 export const MEAL_SCHEMA: JsonSchema = {
   title: "MealFoods",
@@ -106,14 +109,40 @@ export const MEAL_SCHEMA: JsonSchema = {
   "x-order": ["items"],
 };
 
+/**
+ * A photo reply commits to what is pictured before listing foods, so a person, pet or room
+ * reads as "no food" instead of the most likely meal.
+ */
+export const MEAL_PHOTO_SCHEMA: JsonSchema = {
+  ...MEAL_SCHEMA,
+  title: "MealPhoto",
+  properties: {
+    scene: {
+      type: "string",
+      description: "What the photo really shows in a few words, e.g. a plate of pasta, a person",
+    },
+    food: {
+      type: "boolean",
+      description: "true only if food or drink is clearly visible and recognizable",
+    },
+    ...MEAL_SCHEMA.properties,
+  },
+  required: ["scene", "food", "items"],
+  "x-order": ["scene", "food", "items"],
+};
+
 export function mealPrompt(description: string, photo: boolean) {
   const said = description.trim().replace(/\s+/g, " ").slice(0, 500);
   if (photo)
     return said
-      ? `List the foods in this photo. The person says: "${said}"`
-      : "List the foods in this photo.";
+      ? `Say what this photo shows, then list the foods in it. The person says: "${said}"`
+      : "Say what this photo shows, then list the foods in it, if there are any.";
   return `List the foods in this meal: "${said}"`;
 }
+
+/** The model's own verdict that a photo holds no recognizable food. */
+const noFoodPictured = (reply: unknown) =>
+  !!reply && typeof reply === "object" && (reply as { food?: unknown }).food === false;
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, 80) : "";
@@ -238,6 +267,8 @@ function findChain(value: string) {
  * person's description can name the chain when the model didn't.
  */
 export function readSeenFoods(reply: unknown, description = ""): SeenFood[] {
+  // Foods listed anyway for a photo judged not to show any are guesses; a description is not.
+  if (!description.trim() && noFoodPictured(reply)) return [];
   const rows =
     reply && typeof reply === "object" && Array.isArray((reply as { items?: unknown }).items)
       ? (reply as { items: unknown[] }).items
@@ -674,11 +705,12 @@ export async function analyzeMeal(
   if (!input.description.trim() && !input.imageUri)
     throw new Error("Add a photo or describe what you ate.");
   deps.onStage?.("reading");
+  const photo = !!input.imageUri;
   const seen = readSeenFoods(
     await deps.generate({
-      instructions: MEAL_INSTRUCTIONS,
-      prompt: mealPrompt(input.description, !!input.imageUri),
-      schema: MEAL_SCHEMA,
+      instructions: photo ? `${MEAL_INSTRUCTIONS}\n${PHOTO_INSTRUCTIONS}` : MEAL_INSTRUCTIONS,
+      prompt: mealPrompt(input.description, photo),
+      schema: photo ? MEAL_PHOTO_SCHEMA : MEAL_SCHEMA,
       imageUri: input.imageUri,
       maxTokens: 900,
     }),

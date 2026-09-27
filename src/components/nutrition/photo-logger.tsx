@@ -195,7 +195,7 @@ export function PhotoLogger({
           drafts.length
             ? "No food found with that description."
             : image
-              ? "No food found in this photo. Try a closer photo, or describe what you ate."
+              ? "No food recognized in this photo. Describe what you ate and tap Find foods, or retake it closer."
               : "No food found in that description."
         );
         return;
