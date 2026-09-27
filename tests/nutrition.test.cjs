@@ -1425,13 +1425,6 @@ test("compiled guided setup previews generated targets and starts the program on
   render()
     .find((node) => node.type === "Choices" && node.props.values.includes("female"))
     .props.onChange("male");
-  const initial = render().find(
-    (node) => node.type === "Button" && node.props.children === "Start this program"
-  );
-  assert.equal(initial.props.isDisabled, true);
-  render()
-    .find((node) => node.type === "Button" && node.props.accessibilityState?.checked === false)
-    .props.onPress();
   const start = render().find(
     (node) => node.type === "Button" && node.props.children === "Start this program"
   );

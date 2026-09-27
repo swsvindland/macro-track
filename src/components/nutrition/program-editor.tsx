@@ -58,7 +58,6 @@ export function ProgramEditor({ close }: { close: () => void }) {
   );
   const [checkDay, setCheckDay] = useState(String(saved?.checkInDay ?? 1));
   const [shift, setShift] = useState<CalorieShift | undefined>(saved?.shift);
-  const [eligible, setEligible] = useState(false);
   const [error, setError] = useState("");
   const locked = useRef(false);
   const kept = {
@@ -202,18 +201,9 @@ export function ProgramEditor({ close }: { close: () => void }) {
         Coaching is for adults who are not pregnant or breastfeeding. Use professionally guided
         manual targets for medical nutrition needs or eating disorder care.
       </Text>
-      {!onlyShift && (
-        <SystemButton
-          variant="outline"
-          onPress={() => setEligible((value) => !value)}
-          accessibilityState={{ checked: eligible }}
-        >
-          {eligible ? "✓ " : ""}This applies to me
-        </SystemButton>
-      )}
       <ErrorText message={error} />
       <SystemButton
-        isDisabled={!onlyShift && (!eligible || !formula)}
+        isDisabled={!onlyShift && !formula}
         onPress={() => {
           if (locked.current) return;
           try {
