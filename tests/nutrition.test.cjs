@@ -268,6 +268,7 @@ function diaryDatabase() {
     "./metrics": metrics,
     "./nutrition": nutrition,
     "./food-time": foodTime,
+    "./program": program,
   });
   const fastLog = load("src/lib/fast-log.ts", {
     "@/db": { db, ...schema },
@@ -1406,6 +1407,7 @@ test("compiled guided setup previews generated targets and starts the program on
       "@/lib/coaching-store": store,
       "@/lib/program": program,
       "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+      "@/components/plan/pace-slider": { PaceSlider: "PaceSlider" },
     }
   );
   const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");

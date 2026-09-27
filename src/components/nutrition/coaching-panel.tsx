@@ -126,7 +126,7 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
     goal && coached
       ? goal.mode === "maintain"
         ? "Maintain"
-        : `${goal.mode === "gain" ? "Bulk" : "Cut"} ${number(goal.pace, Number.isInteger(goal.pace * 10) ? 1 : 2)}%/wk`
+        : `${goal.mode === "gain" ? "Bulk" : "Cut"} ${number(goal.pace, Math.round(goal.pace * 100) % 10 ? 2 : 1)}%/wk`
       : undefined;
   const notes = program
     ? [
