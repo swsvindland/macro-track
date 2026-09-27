@@ -19,6 +19,14 @@ export type Program = {
   shift?: CalorieShift;
 };
 /**
+ * The weekly pace, as a share of body weight, that a cut or bulk can choose, and the band that
+ * suits most people. A cut past 1% suits a short mini-cut of a few weeks.
+ */
+export const PACES = {
+  lose: { min: 0.1, max: 1.5, step: 0.05, best: [0.5, 1] },
+  gain: { min: 0.05, max: 0.5, step: 0.05, best: [0.1, 0.25] },
+} as const;
+/**
  * Checks calorie shifting. With targets, the other days also keep at least 75% of them and enough
  * calories for carbs and fat, and every day stays in the coached range.
  */

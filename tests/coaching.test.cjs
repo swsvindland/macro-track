@@ -934,6 +934,7 @@ const loadBackup = (db) =>
     "@/db": { db, ...schema },
     "./metrics": metrics,
     "./nutrition": nutrition,
+    "./program": program,
   });
 
 test("programs keep macros set at a check-in, and adjustments stay in the coached range", () => {

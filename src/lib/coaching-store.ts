@@ -4,6 +4,7 @@ import {
   checkInCycle,
   goalProgress,
   initialExpenditure,
+  PACES,
   reviewProgram,
   startingTargets,
   validateProgram,
@@ -36,7 +37,7 @@ export function saveGoal(mode: Goal["mode"], pace: number) {
     !["manual", "lose", "maintain", "gain"].includes(mode) ||
     !Number.isFinite(pace) ||
     pace < 0 ||
-    pace > (mode === "gain" ? 0.25 : 0.5)
+    pace > PACES[mode === "gain" ? "gain" : "lose"].max
   )
     throw new Error("Choose a supported goal and pace.");
   return db
@@ -353,7 +354,7 @@ export function previewProgram(
     !["lose", "maintain", "gain"].includes(mode) ||
     !Number.isFinite(pace) ||
     pace <= 0 ||
-    pace > (mode === "gain" ? 0.25 : 0.5)
+    pace > PACES[mode === "gain" ? "gain" : "lose"].max
   )
     throw new Error("Choose a supported goal and pace.");
   const previous = currentGoal();

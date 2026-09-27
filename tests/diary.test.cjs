@@ -1464,6 +1464,7 @@ test("a restore asks about yesterday instead of counting over an answer it doesn
       "@/db": { db, ...schema },
       "./metrics": metrics,
       "./nutrition": nutrition,
+      "./program": load("src/lib/program.ts", { "./nutrition": nutrition, "./metrics": metrics }),
     });
   const phone = loggedYesterday(t, fullDay);
   phone.diary.setDayStatus(yesterday, "in-progress");

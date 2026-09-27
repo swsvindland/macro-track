@@ -1,12 +1,13 @@
 import { useRef, useState } from "react";
 import { CalorieShiftPicker } from "@/components/plan/calorie-shift";
+import { PaceSlider } from "@/components/plan/pace-slider";
 import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { createProgram, currentGoal, previewProgram, saveShift } from "@/lib/coaching-store";
 import { baseTargetsForDay } from "@/lib/diary";
-import { type Program } from "@/lib/program";
+import { PACES, type Program } from "@/lib/program";
 import { localDay, parseNumber, weightTrend } from "@/lib/metrics";
 import type { CalorieShift } from "@/lib/nutrition";
 import type { Goal } from "@/lib/coaching";
@@ -20,7 +21,8 @@ export function ProgramEditor({ close }: { close: () => void }) {
   const [mode, setMode] = useState<Exclude<Goal["mode"], "manual">>(
     existing?.mode === "manual" ? "maintain" : (existing?.mode ?? "lose")
   );
-  const [pace, setPace] = useState(String(existing?.pace || 0.25));
+  // A cut starts at the low end of its recommended band, a bulk at the top of its own.
+  const [pace, setPace] = useState<number>(existing?.pace || PACES.lose.best[0]);
   // A first program starts from what Health and the height log already know.
   const [age, setAge] = useState(() => {
     if (saved) return String(saved.age);
@@ -85,7 +87,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
   // The daily budget before shifting, so a shift that doesn't fit shows why in its own section.
   const rebuilt = useNutritionQuery(() => {
     try {
-      return previewProgram(mode, Number(pace), budget).targets;
+      return previewProgram(mode, pace, budget).targets;
     } catch {
       return null;
     }
@@ -98,7 +100,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
         value={mode}
         onChange={(value) => {
           setMode(value);
-          setPace(".25");
+          setPace(value === "gain" ? PACES.gain.best[1] : PACES.lose.best[0]);
         }}
         label={(value) => ({ lose: "Cut", maintain: "Maintain", gain: "Bulk" })[value]}
       />
@@ -143,15 +145,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
         }
       />
       {mode !== "maintain" && (
-        <>
-          <Text className="font-semibold">Weekly pace (% of body weight)</Text>
-          <Choices
-            values={mode === "gain" ? ["0.1", "0.25"] : ["0.25", "0.5"]}
-            value={pace.replace(/^\./, "0.")}
-            onChange={setPace}
-            label={(value) => `${value}%`}
-          />
-        </>
+        <PaceSlider mode={mode} value={pace} onChange={setPace} weightKg={budget.weightKg} />
       )}
       <Text className="font-semibold">Macro preference</Text>
       <Choices
@@ -225,7 +219,7 @@ export function ProgramEditor({ close }: { close: () => void }) {
           try {
             locked.current = true;
             if (onlyShift) saveShift(shift);
-            else createProgram(mode, Number(pace), draft);
+            else createProgram(mode, pace, draft);
             refresh();
             close();
           } catch (e) {
