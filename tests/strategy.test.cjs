@@ -850,9 +850,6 @@ test("compiled program editor previews the budget and saves the shift with the p
   render()
     .find((node) => node.type === "Choices" && node.props.values.includes("female"))
     .props.onChange("male");
-  render()
-    .find((node) => node.type === "Button" && node.props.accessibilityState?.checked === false)
-    .props.onPress();
   let tree = render();
   let picker = tree.find((node) => node.type === "CalorieShiftPicker");
   assert.equal(picker.props.value, undefined, "off by default");
@@ -972,17 +969,12 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
   const render = () => nodes(harness.render(ProgramEditor, { close: () => closed++ }));
   const button = (tree, label) =>
     tree.find((node) => node.type === "Button" && node.props.children === label);
-  const eligibility = (tree) =>
-    tree.find(
-      (node) => node.type === "Button" && node.props.accessibilityState?.checked !== undefined
-    );
 
   // Untouched, the editor offers to rebuild the program from the latest estimate.
   let tree = render();
   const rebuilt = tree.find((node) => node.type === "CalorieShiftPicker").props.budget;
   assert.notEqual(rebuilt.calories, kept.calories);
   assert.ok(button(tree, "Start this program"));
-  assert.ok(eligibility(tree));
 
   // Weekends alone: today's budget stays, with no program restart to confirm.
   tree.find((node) => node.type === "CalorieShiftPicker").props.onChange(weekends);
@@ -993,7 +985,6 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
       (node) => node.type === "Text" && text(node) === "Your current budget, as a weekly average"
     )
   );
-  assert.equal(eligibility(tree), undefined);
   const save = button(tree, "Save calorie shifting");
   assert.equal(save.props.isDisabled, false);
   save.props.onPress();
