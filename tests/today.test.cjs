@@ -208,6 +208,7 @@ function loggerHarness(diary, fastLog, props = {}) {
   const store = { diaryLayout: "meals", number: (n) => String(n), date: (day) => day };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
   dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
+  dependencies["./widget"] ??= { updateWidget: () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   const { FastLogger } = load("src/components/nutrition/fast-logger.tsx", dependencies, true);
   return {
@@ -590,6 +591,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
   dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
+  dependencies["./widget"] ??= { updateWidget: () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,
@@ -1516,4 +1518,68 @@ test("Progress and Plan mount the tab bar; Library and Settings don't", () => {
     ["src/app/(tabs)/settings.tsx", ["@/components/screens/settings-screen", "SettingsScreen"]],
   ])
     assert.ok(!nodes(route(file, screen)).some((node) => node.type === "ScreenFooter"), file);
+});
+
+test("widget snapshot covers today and the week ahead, rounded, with each day's targets", () => {
+  const writes = [];
+  const storage = class {
+    static reloadWidget() {
+      writes.push("reload");
+    }
+    set(key, value) {
+      writes.push([key, value]);
+    }
+  };
+  const target = { calories: 2300, protein: 170, carbs: 240, fat: 70 };
+  const widget = load("src/lib/widget.ts", {
+    "@bacons/apple-targets": { ExtensionStorage: storage },
+    "./diary": {
+      entriesForDay: (day) =>
+        day === metrics.localDay()
+          ? [
+              {
+                nutrients: {
+                  calories: 410.6,
+                  protein: 30.4,
+                  carbs: 40.5,
+                  fat: 12,
+                  fiber: 4,
+                  sodium: 300,
+                },
+              },
+            ]
+          : [],
+      targetsForDay: () => target,
+    },
+    "./metrics": metrics,
+    "./nutrition": nutrition,
+  });
+  const snapshot = widget.widgetSnapshot("2026-12-29", (day) => ({
+    eaten: { calories: day === "2026-12-29" ? 1260.4 : 0, protein: 91.6, carbs: 0, fat: 0 },
+    target: day === "2027-01-01" ? null : target,
+  }));
+  assert.deepEqual(Object.keys(snapshot.days), [
+    "2026-12-29",
+    "2026-12-30",
+    "2026-12-31",
+    "2027-01-01",
+    "2027-01-02",
+    "2027-01-03",
+    "2027-01-04",
+  ]);
+  assert.deepEqual(snapshot.days["2026-12-29"].eaten, {
+    calories: 1260,
+    protein: 92,
+    carbs: 0,
+    fat: 0,
+  });
+  assert.equal(snapshot.days["2027-01-01"].target, null);
+
+  widget.updateWidget();
+  widget.updateWidget();
+  // Unchanged numbers don't spend another widget reload.
+  assert.equal(writes.filter((write) => write === "reload").length, 1);
+  const today = JSON.parse(writes[0][1]).days[metrics.localDay()];
+  assert.deepEqual(today.eaten, { calories: 411, protein: 30, carbs: 41, fat: 12 });
+  assert.deepEqual(today.target, target);
 });

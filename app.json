@@ -15,6 +15,9 @@
       },
       "supportsTablet": false,
       "bundleIdentifier": "dev.svindland.vector.macro",
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.dev.svindland.vector.macro"]
+      },
       "infoPlist": {
         "CFBundleDisplayName": "Macros",
         "ITSAppUsesNonExemptEncryption": false
@@ -107,7 +110,8 @@
           "cameraPermission": "Scan food barcodes with Vector Macros.",
           "recordAudioAndroid": false
         }
-      ]
+      ],
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true,
