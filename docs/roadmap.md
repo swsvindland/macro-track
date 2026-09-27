@@ -15,7 +15,9 @@ Landed on `roadmap/next-push`: every A item except A2 (needs the native build), 
 
 Each item was built with tests, reviewed from a correctness and a product angle, and fixed; a whole-branch review then found and fixed 10 further defects, several of them interactions between features built in parallel. 285 tests pass in several time zones. Simulator checks covered Home, the logger, search, Progress, Expenditure, Plan and the food log; the device acceptance checklist in [MVP validation](mvp-validation.md) still applies.
 
-Next: the native batch (N1–N4 and A2), then section C. Calorie shifting moved from C into the parity batch.
+N3 landed September 27: Home Screen widgets (small, medium) with kcal left, P/C/F and Scan/AI buttons, plus Lock Screen circular, rectangular and inline widgets, built as a `targets/widget` extension fed through an App Group.
+
+Next: the rest of the native batch (N1, N2, N4 and A2), then section C. Calorie shifting moved from C into the parity batch.
 
 ## Ground rules
 

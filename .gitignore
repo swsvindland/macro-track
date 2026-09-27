@@ -46,5 +46,7 @@ yarn-error.*
 # Generated native folders
 /ios
 /android
+# Widget colors, written from targets/*/expo-target.config.js on prebuild
+targets/*/Assets.xcassets/
 modules/*/android/build/
 modules/*/ios/build/

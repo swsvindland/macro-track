@@ -357,6 +357,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   Object.assign(store, storeOverrides);
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
   dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
+  dependencies["./widget"] ??= { updateWidget: () => {} };
   dependencies["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", dependencies, true);
   return {
     context,
@@ -1464,6 +1465,7 @@ test("a restore asks about yesterday instead of counting over an answer it doesn
       "@/db": { db, ...schema },
       "./metrics": metrics,
       "./nutrition": nutrition,
+      "./program": load("src/lib/program.ts", { "./nutrition": nutrition, "./metrics": metrics }),
     });
   const phone = loggedYesterday(t, fullDay);
   phone.diary.setDayStatus(yesterday, "in-progress");

@@ -96,6 +96,20 @@ test("model replies are validated, cleaned and deduplicated", () => {
   assert.equal(many.length, 12);
 });
 
+test("a photo judged not to show food yields nothing unless the person describes a meal", () => {
+  const burger = { brand: "", name: "Cheeseburger", quantity: 1, unit: "burger", grams: 220 };
+  const person = { scene: "a person smiling", food: false, items: [burger] };
+  assert.deepEqual(ai.readSeenFoods(person), []);
+  assert.deepEqual(ai.readSeenFoods(person, "   "), []);
+  assert.deepEqual(
+    ai.readSeenFoods(person, "a cheeseburger").map((food) => food.name),
+    ["Cheeseburger"]
+  );
+  assert.equal(ai.readSeenFoods({ scene: "a burger", food: true, items: [burger] }).length, 1);
+  // Description-only replies have no verdict at all.
+  assert.equal(ai.readSeenFoods({ items: [burger] }).length, 1);
+});
+
 test("a chain's pizza or burger keeps its toppings; drinks and sides stay separate", () => {
   const foods = ai.readSeenFoods({
     items: [
@@ -781,7 +795,38 @@ test("analysis asks for a photo or description and prefers the person's own food
   assert.equal(drafts[0].item.amount, 1);
   assert.equal(requests[0].imageUri, "file:///meal.jpg");
   assert.match(requests[0].prompt, /The person says: "my overnight oats"/);
-  assert.equal(requests[0].schema, ai.MEAL_SCHEMA);
+  assert.equal(requests[0].schema, ai.MEAL_PHOTO_SCHEMA);
+  assert.ok(requests[0].instructions.endsWith(ai.PHOTO_INSTRUCTIONS));
+
+  const described = await draft([
+    { brand: "", name: "overnight oats", quantity: 1, unit: "jar", grams: 300 },
+  ]);
+  assert.equal(described.requests[0].schema, ai.MEAL_SCHEMA);
+  assert.equal(described.requests[0].instructions, ai.MEAL_INSTRUCTIONS);
+});
+
+test("a photo with no food is reported empty without searching the catalog", async () => {
+  const requests = [];
+  const searched = [];
+  const drafts = await ai.analyzeMeal(
+    { description: "", imageUri: "file:///selfie.jpg" },
+    {
+      generate: async (request) => {
+        requests.push(request);
+        return {
+          scene: "a person standing in a kitchen",
+          food: false,
+          items: [{ brand: "", name: "Hamburger", quantity: 1, unit: "burger", grams: 200 }],
+        };
+      },
+      search: async (expression) => (searched.push(expression), []),
+      known: [],
+    }
+  );
+  assert.deepEqual(drafts, []);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(searched, []);
+  assert.match(requests[0].prompt, /Say what this photo shows/);
 });
 
 test("JSON helpers describe a schema for models without constrained decoding", () => {
@@ -791,6 +836,11 @@ test("JSON helpers describe a schema for models without constrained decoding", (
     /\{"items":\[\{"brand":"","name":"","quantity":0\.1,"unit":"","grams":1\}\]\}/
   );
   assert.match(sketch, /items\[\]\.grams: Estimated total edible weight in grams/);
+  // A photo reply says what is pictured, and whether it is food, before any item.
+  assert.match(
+    modelJson.describeJson(ai.MEAL_PHOTO_SCHEMA),
+    /\{"scene":"","food":false,"items":\[\{"brand":"","name":"","quantity":0\.1,"unit":"","grams":1\}\]\}/
+  );
   assert.deepEqual(modelJson.extractJson('Sure!\n```json\n{"items": []}\n```'), { items: [] });
   assert.throws(() => modelJson.extractJson("I can't help with that."), /did not return JSON/);
   assert.throws(() => modelJson.extractJson("{not json}"));

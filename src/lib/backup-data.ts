@@ -16,6 +16,7 @@ import {
   checkIns,
 } from "@/db";
 import { localDay } from "./metrics";
+import { PACES } from "./program";
 import { microKeys, recipeFood, shiftDay, validateFood, type Food, type Recipe } from "./nutrition";
 
 export const MAX_BACKUP_TEXT = 20 * 1024 * 1024;
@@ -103,7 +104,7 @@ const dataSchema = z.strictObject({
         .strictObject({
           id,
           mode: z.enum(["manual", "lose", "maintain", "gain"]),
-          pace: z.number().min(0).max(0.5),
+          pace: z.number().min(0).max(PACES.lose.max),
           startedDay: day,
           program: z
             .strictObject({
@@ -139,7 +140,7 @@ const dataSchema = z.strictObject({
             .nullable()
             .optional(),
         })
-        .refine((row) => row.mode !== "gain" || row.pace <= 0.25)
+        .refine((row) => row.mode !== "gain" || row.pace <= PACES.gain.max)
     )
     .max(10000)
     .default([]),

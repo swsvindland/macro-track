@@ -270,6 +270,67 @@ test("a shift needs one to six higher days and keeps the other days at 75% or mo
   program.validateProgram({ ...profile, initialExpenditure: 2600, shift: weekends });
 });
 
+test("a cut can run up to 1.5% a week for a mini-cut, and a bulk up to 0.5%", () => {
+  const { store, sqlite } = coachingDatabase("2024-01-01");
+  const draft = { ...profile, activity: "high", checkInDay: 1 };
+  const expenditure = program.initialExpenditure(draft);
+  const kcal = (mode, pace, changes = {}) =>
+    store.previewProgram(mode, pace, { ...draft, ...changes }).targets.calories;
+  // 1.5% of 80 kg is 1.2 kg a week, 1,320 kcal a day under the estimate.
+  assert.equal(kcal("lose", 1.5), expenditure - 1320);
+  assert.equal(kcal("lose", 0.1), expenditure - 88);
+  assert.equal(kcal("gain", 0.5, { targetWeightKg: 90 }), expenditure + 440);
+  assert.throws(() => kcal("lose", 1.55), /supported goal and pace/);
+  assert.throws(() => kcal("gain", 0.55, { targetWeightKg: 90 }), /supported goal and pace/);
+  // The calorie floor still applies to a fast cut from a small budget.
+  assert.throws(() => kcal("lose", 1.5, { activity: "low" }), /Choose a slower pace/);
+  sqlite.close();
+});
+
+test("compiled pace slider marks the recommended band and lands on its steps", () => {
+  const changes = [];
+  const slider = { Track: "Track", Fill: "Fill", Thumb: "Thumb" };
+  const harness = screenHarness({
+    "heroui-native": {
+      Slider: slider,
+      useSlider: () => ({ minValue: 0.1, maxValue: 1.5, trackSize: 308, thumbSize: 28 }),
+    },
+  });
+  const { PaceSlider } = harness.load("src/components/plan/pace-slider.tsx");
+  const render = (mode, value) =>
+    nodes(
+      harness.render(PaceSlider, { mode, value, weightKg: 80, onChange: (v) => changes.push(v) })
+    );
+
+  let tree = render("lose", 1.25);
+  const root = tree.find((node) => node.type === slider);
+  assert.deepEqual([root.props.minValue, root.props.maxValue, root.props.step], [0.1, 1.5, 0.05]);
+  const thumb = tree.find((node) => node.type === "Thumb");
+  assert.equal(thumb.props.accessibilityValue.text, "1.25% of body weight · −1.0 kg/wk");
+  assert.equal(thumb.props.accessibilityHint, "Recommended 0.5–1% of body weight a week");
+  // Drags and screen-reader adjustments land on whole steps inside the range.
+  root.props.onChange(0.7000000000000001);
+  root.props.onChange([2]);
+  thumb.props.onAccessibilityAction({ nativeEvent: { actionName: "increment" } });
+  thumb.props.onAccessibilityAction({ nativeEvent: { actionName: "decrement" } });
+  assert.deepEqual(changes, [0.7, 1.5, 1.3, 1.2]);
+  assert.ok(tree.some((node) => node.type === "Text" && text(node) === "Recommended 0.5–1%"));
+  assert.ok(tree.some((node) => node.type === "Text" && /mini-cut of 2–4 weeks/.test(text(node))));
+  // The band sits where the thumb's centre is at 0.5% and 1%.
+  const band = tree.find((node) => typeof node.type === "function");
+  const bar = nodes(band.type(band.props)).find((node) => node.props?.style);
+  assert.deepEqual(
+    [bar.props.style.left, bar.props.style.width].map((px) => Math.round(px * 100) / 100),
+    [94, 100]
+  );
+
+  tree = render("lose", 0.75);
+  assert.ok(!tree.some((node) => node.type === "Text" && /mini-cut/.test(text(node))));
+  tree = render("gain", 0.25);
+  assert.equal(tree.find((node) => node.type === slider).props.maxValue, 0.5);
+  assert.ok(tree.some((node) => node.type === "Text" && text(node) === "Recommended 0.1–0.25%"));
+});
+
 test("targets follow the program running each day, and earlier days never change", () => {
   const data = coachingDatabase("2024-01-01");
   const { db, clock, diary, store, insights, sqlite } = data;
@@ -497,6 +558,7 @@ test("backups and the targets CSV carry the shift, and older backups restore wit
     "@/db": { db, ...schema },
     "./nutrition": nutrition,
     "./metrics": metrics,
+    "./program": program,
   });
   const copy = backup.createBackup();
   backup.restoreBackup(copy);
@@ -618,6 +680,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     ...dependencies,
   };
   all["./health-schedule"] ??= { syncHealthFood: async () => {} };
+  all["./widget"] ??= { updateWidget: () => {} };
   all["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", all, true);
   return {
     context,
@@ -733,6 +796,7 @@ test("a first program starts from Health's birthday and sex and the logged heigh
         "@/lib/metrics": fakeMetrics,
         "./metrics": fakeMetrics,
         "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+        "@/components/plan/pace-slider": { PaceSlider: "PaceSlider" },
       },
       overrides
     );
@@ -769,6 +833,7 @@ test("compiled program editor previews the budget and saves the shift with the p
     "@/lib/metrics": fakeMetrics,
     "./metrics": fakeMetrics,
     "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+    "@/components/plan/pace-slider": { PaceSlider: "PaceSlider" },
   });
   const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");
   let closed = 0;
@@ -828,6 +893,7 @@ test("compiled program editor previews the budget and saves the shift with the p
     "@/lib/metrics": fakeMetrics,
     "./metrics": fakeMetrics,
     "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+    "@/components/plan/pace-slider": { PaceSlider: "PaceSlider" },
   });
   const editor = reopened.load("src/components/nutrition/program-editor.tsx").ProgramEditor;
   assert.deepEqual(
@@ -899,6 +965,7 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
     "@/lib/metrics": fakeMetrics,
     "./metrics": fakeMetrics,
     "@/components/plan/calorie-shift": { CalorieShiftPicker: "CalorieShiftPicker" },
+    "@/components/plan/pace-slider": { PaceSlider: "PaceSlider" },
   });
   const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");
   let closed = 0;
@@ -938,9 +1005,9 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
   // Any other change rebuilds the program, shift and all.
   tree = render();
   assert.ok(button(tree, "Start this program"));
-  tree
-    .find((node) => node.type === "Choices" && node.props.values.includes("0.5"))
-    .props.onChange("0.5");
+  const slider = tree.find((node) => node.type === "PaceSlider");
+  assert.equal(slider.props.mode, "lose");
+  slider.props.onChange(1.25);
   tree = render();
   assert.ok(button(tree, "Start this program"));
   assert.notDeepEqual(tree.find((node) => node.type === "CalorieShiftPicker").props.budget, kept);

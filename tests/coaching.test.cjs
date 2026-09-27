@@ -716,6 +716,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     ...dependencies,
   };
   all["./health-schedule"] ??= { syncHealthFood: async () => {} };
+  all["./widget"] ??= { updateWidget: () => {} };
   all["@/lib/nutrition-store"] = load("src/lib/nutrition-store.tsx", all, true);
   return {
     context,
@@ -934,6 +935,7 @@ const loadBackup = (db) =>
     "@/db": { db, ...schema },
     "./metrics": metrics,
     "./nutrition": nutrition,
+    "./program": program,
   });
 
 test("programs keep macros set at a check-in, and adjustments stay in the coached range", () => {

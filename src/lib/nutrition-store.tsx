@@ -2,6 +2,7 @@ import { AppState } from "react-native";
 import { syncHealthFood } from "./health-schedule";
 import { localDay } from "./metrics";
 import { useStore } from "./store";
+import { updateWidget } from "./widget";
 import {
   createContext,
   useContext,
@@ -37,6 +38,11 @@ export function NutritionProvider({ children }: { children: ReactNode }) {
     if (!revision) return;
     // Batches a burst of edits (multi-select, Undo) into one Health write.
     const timer = setTimeout(() => void syncHealthFood(), 3000);
+    return () => clearTimeout(timer);
+  }, [revision]);
+  useEffect(() => {
+    // Launch, every write and each new day; a burst of edits reloads the widget once.
+    const timer = setTimeout(updateWidget, 500);
     return () => clearTimeout(timer);
   }, [revision]);
   return (
