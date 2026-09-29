@@ -1,5 +1,5 @@
 /*
-  Vector Kit 1.2.1 — src/vector/tokens.css  (lineage: SIBYL)
+  Vector Kit 1.2.2 — src/vector/tokens.css  (lineage: SIBYL)
   Byte-identical in body-track, lift-track, macro-track, water-track. Hash-checked by scripts/vector-kit.mjs.
   Canonical copy: /Users/sam/Development/VectorApps/vector-design/kit/src/vector/tokens.css. Never edit in an app repo.
 
@@ -25,7 +25,7 @@
   the class that actually sets the property.
 */
 
-/* TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.2.1). Do not edit. */
+/* TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.2.2). Do not edit. */
 @theme {
   /* Families: only the bundled faces (useFonts aliases). Tailwind font-medium/semibold/bold therefore
      select a family, not a weight; weights are explicit numbers in kit components and the COMPONENTS block. */

@@ -1,6 +1,6 @@
 # Vector Design System
 
-**Kit 1.2.1 · lineage: SIBYL · applies to Vector Body, Vector Lift, Vector Macros, Vector Hydration**
+**Kit 1.2.2 · lineage: SIBYL · applies to Vector Body, Vector Lift, Vector Macros, Vector Hydration**
 
 This file ships byte-identical in every repo as `docs/design-system.md`. It replaces `water-track/SIBYL_Design_System.md`, which moves to `docs/history/`. Canonical copy: `vector-design/kit/docs/design-system.md`. `KIT.md` explains the files and the drift check. `MIGRATION.md` lists the work.
 
@@ -929,6 +929,7 @@ Each unverified platform behaviour ships with a safe default decided in advance.
 
 ## Changelog
 
+- **1.2.2.** `assets/fonts/IBMPlexMono-OFL.txt` is stored with LF line endings. Git keeps the file as LF in each repo, so a fresh clone checked it out as LF while the manifest hashed the CRLF copy, and `check` reported drift on any machine but this one.
 - **1.2.1.** (patch) The lead's decision on 1.2.0 deferred items #23 / #35: a kit primitive for signal-filled app cells, and the `accent` rule closes the alias lift used to get around it. Additive: nothing renamed or removed, and all four apps compile against it unchanged.
     - New **SignalCell** (form.tsx) `{selected, onPress?, disabled?, accessibilityLabel, accessibilityHint?, accessibilityRole?: 'button'|'checkbox'|'radio', size?: 'md'|'sm', check?, className?, children?}`, `SignalCellProps` and `useSignalInk()`: the one place a `#22D3EE` fill meets its `#071017` content (§5.5). While a cell is selected, kit Text, Value and Icon inside it draw signal ink whatever tone they pass. ChipRow chips are now small SignalCells: same look, plus the pressed `bg-accent-hover` state on a selected chip.
     - New rule **`accent-alias`** (no baseline, like `accent`): `bg-` / `text-` / `border-segment`, `bg-accent-hover`, `fill-` / `stroke-` / `outline-` / `ring-accent`, Uniwind's `accent-accent`, and `useThemeColor` / `useCSSVariable` of `segment` or `accent-hover` in app code. A baseline older than 1.2.1 gets warnings until the next `check --baseline`, which refuses them. Hits today: lift 2 (`workout/set-row.tsx` done cell, `workout/effort.tsx` EffortPicker); body, macro and water none. Covered by tests.
