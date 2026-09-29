@@ -1,0 +1,339 @@
+/*
+  Vector Kit 1.2.1 — src/vector/tokens.css  (lineage: SIBYL)
+  Byte-identical in body-track, lift-track, macro-track, water-track. Hash-checked by scripts/vector-kit.mjs.
+  Canonical copy: /Users/sam/Development/VectorApps/vector-design/kit/src/vector/tokens.css. Never edit in an app repo.
+
+  Included from each app's kit-owned src/global.css, AFTER the HeroUI imports so these values win:
+      @import "tailwindcss";
+      @import "uniwind";
+      @import "heroui-native/styles";
+      @import "heroui-native-pro/styles";
+      @import "./vector/tokens.css";
+      @source '../node_modules/heroui-native/lib';
+      @source '../node_modules/heroui-native-pro/lib';
+  Uniwind follows relative @imports when it collects @variant light/dark variables
+  (uniwind/src/bundler/artifacts/css/themes.ts: dependency.url.startsWith('.') -> recurse), and
+  Tailwind compiles them with base = dirname(global.css). Verified offline against heroui-native 1.0.8 + uniwind 1.11
+  (@tailwindcss/node 4.3.2) and heroui-native 1.0.9 + uniwind 1.12 (@tailwindcss/node 4.3.3).
+
+  The TOKENS block is generated from src/vector/tokens.json. The COMPONENTS block is hand-written and may only
+  contain plain declarations on HeroUI slot classes (Uniwind drops ios:/android:/rtl:/focus: variants inside
+  custom classes). It is deliberately NOT wrapped in @layer: HeroUI's component CSS is unlayered, so layered kit
+  rules would lose in any CSS-cascade renderer (Expo web). Plain rules win by source order everywhere; Uniwind's
+  native output is identical either way. On native, className token order decides between DIFFERENT classes
+  (HeroUI's tv puts modifiers such as button__label--size-md after button__label), so an override must target
+  the class that actually sets the property.
+*/
+
+/* TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.2.1). Do not edit. */
+@theme {
+  /* Families: only the bundled faces (useFonts aliases). Tailwind font-medium/semibold/bold therefore
+     select a family, not a weight; weights are explicit numbers in kit components and the COMPONENTS block. */
+  --font-sans: "Inter";
+  --font-normal: "Inter";
+  --font-medium: "Inter";
+  --font-semibold: "Inter";
+  --font-bold: "Inter";
+  --font-mono: "IBMPlexMono";
+
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 17px;
+  --text-lg--line-height: 22px;
+  --text-xl: 20px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 28px;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 34px;
+  --text-4xl: 34px;
+  --text-4xl--line-height: 40px;
+  --text-5xl: 48px;
+  --text-5xl--line-height: 52px;
+  --tracking-tight: 0em;
+  --tracking-label: 0.08em;
+
+  /* One control/panel radius (4) and one mark radius (2). Monotonic; 3xl=4 means HeroUI can never draw a pill. */
+  --radius: 4px;
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 4px;
+  --radius-3xl: 4px;
+  --radius-4xl: 4px;
+  --field-radius: 4px;
+  --radius-mark: 2px;
+  --radius-control: 4px;
+  --radius-panel: 4px;
+
+  --border-width: 1px;
+  --field-border-width: 1px;
+  --opacity-disabled: 0.4;
+}
+
+@theme inline static {
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-foreground: var(--accent-soft-foreground);
+  --color-success-soft: var(--success-soft);
+  --color-success-soft-foreground: var(--success-soft-foreground);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-soft-foreground: var(--warning-soft-foreground);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-soft-foreground: var(--danger-soft-foreground);
+  --color-field-border-focus: var(--focus);
+  --color-tint: var(--tint);
+  --color-tint-foreground: var(--tint-foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-border-strong: var(--border-strong);
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-warning-hover: color-mix(in oklab, var(--warning) 90%, black);
+  --color-field-hover: var(--surface-secondary);
+}
+
+@layer theme {
+  :root {
+    @variant light {
+      --background: #ffffff;
+      --foreground: #15212b;
+      --surface: #ffffff;
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #f7f9fa;
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #f1f5f7;
+      --surface-tertiary-foreground: var(--foreground);
+      --overlay: #ffffff;
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(7, 16, 23, 0.24);
+      --muted: #5f6d78;
+      --default: #f1f5f7;
+      --default-foreground: var(--foreground);
+      --accent: #22d3ee;
+      --accent-foreground: #071017;
+      --accent-soft: #ecfeff;
+      --accent-soft-foreground: #007088;
+      --field-background: #ffffff;
+      --field-foreground: var(--foreground);
+      --field-placeholder: var(--muted);
+      --field-border: #7a8791;
+      --success: #177245;
+      --success-foreground: #ffffff;
+      --success-soft: #eef8f1;
+      --success-soft-foreground: var(--success);
+      --warning: #8a6212;
+      --warning-foreground: #ffffff;
+      --warning-soft: #fff7e6;
+      --warning-soft-foreground: var(--warning);
+      --danger: #9f3039;
+      --danger-foreground: #ffffff;
+      --danger-soft: #fdf2f3;
+      --danger-soft-foreground: var(--danger);
+      --segment: var(--accent);
+      --segment-foreground: var(--accent-foreground);
+      --border: #d9e1e6;
+      --separator: #e9eef1;
+      --focus: var(--tint);
+      --link: var(--tint);
+      --surface-shadow: none;
+      --field-shadow: none;
+      --overlay-shadow: 0 16px 48px rgba(20, 40, 50, 0.14);
+      --tint: #007088;
+      --tint-foreground: #ffffff;
+      --foreground-secondary: #3e4d57;
+      --border-strong: #7a8791;
+      --cat-1: var(--foreground);
+      --cat-2: #4e5d68;
+      --cat-3: var(--border-strong);
+      --chart-1: var(--tint);
+      --chart-2: var(--muted);
+      --chart-3: var(--foreground-secondary);
+      --chart-4: var(--separator);
+      --chart-5: var(--warning);
+    }
+    @variant dark {
+      --background: #071017;
+      --foreground: #f3f6f7;
+      --surface: #0d171e;
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #111d25;
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #15232c;
+      --surface-tertiary-foreground: var(--foreground);
+      --overlay: #111d25;
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(0, 0, 0, 0.5);
+      --muted: #93a0a8;
+      --default: #15232c;
+      --default-foreground: var(--foreground);
+      --accent: #22d3ee;
+      --accent-foreground: #071017;
+      --accent-soft: #083344;
+      --accent-soft-foreground: #67e8f9;
+      --field-background: #0d171e;
+      --field-foreground: var(--foreground);
+      --field-placeholder: var(--muted);
+      --field-border: #687b86;
+      --success: #5ad58a;
+      --success-foreground: #071017;
+      --success-soft: #0e2418;
+      --success-soft-foreground: var(--success);
+      --warning: #d9a441;
+      --warning-foreground: #071017;
+      --warning-soft: #2a2212;
+      --warning-soft-foreground: var(--warning);
+      --danger: #f08a93;
+      --danger-foreground: #071017;
+      --danger-soft: #2e171b;
+      --danger-soft-foreground: var(--danger);
+      --segment: var(--accent);
+      --segment-foreground: var(--accent-foreground);
+      --border: #263640;
+      --separator: #1b2931;
+      --focus: var(--tint);
+      --link: var(--tint);
+      --surface-shadow: none;
+      --field-shadow: none;
+      --overlay-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+      --tint: #22d3ee;
+      --tint-foreground: #071017;
+      --foreground-secondary: #c8d1d6;
+      --border-strong: #687b86;
+      --cat-1: var(--foreground);
+      --cat-2: #aab5bc;
+      --cat-3: var(--border-strong);
+      --chart-1: var(--tint);
+      --chart-2: var(--muted);
+      --chart-3: var(--foreground-secondary);
+      --chart-4: var(--separator);
+      --chart-5: var(--warning);
+    }
+  }
+}
+/* TOKENS:END */
+
+/* COMPONENTS:BEGIN — hand-written. Plain declarations only, no @layer (see header). */
+
+/* 1. Weights. Uniwind registers every --font-* it finds in @theme, so Tailwind's font-medium/semibold/bold
+      (and heroui-native 1.0.9's `@apply font-medium`) emit font-family only. Slot weights are stated here.
+      Works on 1.0.8 (font-family: var(--font-medium)) and 1.0.9 (@apply font-medium) alike. */
+.button__label {
+  font-weight: 500;
+}
+/* Size lives on the modifier: tv emits `button__label … button__label--size-md` and Uniwind resolves in className
+   order, so a font-size on .button__label would lose to text-base (md) / text-lg (lg). The kit uses md and lg. */
+.button__label--size-md,
+.button__label--size-lg {
+  font-size: 15px;
+  line-height: 20px;
+}
+.label__text {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.description__root {
+  font-size: 12px;
+  line-height: 16px;
+}
+.card__label {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.card__description {
+  font-size: 14px;
+  line-height: 20px;
+}
+.dialog__label,
+.popover__label,
+.bottom-sheet__label,
+.alert__title {
+  font-weight: 600;
+}
+.chip__label,
+.menu__label,
+.menu__item-title,
+.select__list-label,
+.select__item-label,
+.list-group__item-title,
+.tabs__label,
+.toast__label,
+.calendar__heading,
+.calendar__header-cell-label,
+.calendar__cell-label,
+.text__root--weight-medium {
+  font-weight: 500;
+}
+.text__root--type-h1,
+.text__root--type-h2,
+.text__root--type-h3,
+.text__root--type-h4,
+.text__root--type-h5,
+.text__root--type-h6,
+.text__root--weight-semibold,
+.text__root--weight-bold,
+.input-otp__slot-value,
+.input-otp__slot-placeholder {
+  font-weight: 600;
+}
+
+/* 2. Targets. Nothing interactive is shorter than 44pt. */
+.menu__item,
+.select__item {
+  min-height: 44px;
+}
+
+/* 3. Shapes HeroUI hard-codes (slot names confirmed in node_modules for 1.0.8 and 1.0.9).
+      switch.css:4,27 = 9999px; slider.css = radius-xl; checkbox.css = radius-lg; Pro segment.css:79 = 22px.
+      The calendar__cell-indicator dot and the PressableFeedback ripple are left alone. */
+.switch__root {
+  border-radius: 4px;
+}
+.switch__thumb {
+  border-radius: 2px;
+}
+.slider__track,
+.slider__track-background,
+.slider__fill,
+.slider__thumb-container,
+.slider__thumb-knob {
+  border-radius: 2px;
+}
+.checkbox__root {
+  border-radius: 2px;
+}
+.segment__item--size-lg,
+.segment__indicator--size-lg {
+  border-radius: 4px;
+}
+
+/* 4. The Pro time trigger sits under date inputs, so it takes their field border. */
+.time-picker__trigger {
+  border-width: var(--field-border-width);
+  border-color: var(--field-border);
+}
+
+/* 5. State lines HeroUI draws in --color-accent (#22D3EE: 1.81:1 on white, a cyan line in light mode).
+      Pro Timeline current ring: tint 5.72 on white / 5.50 on its #ECFEFF fill; 7.41 on #083344 (dark).
+      Default/muted markers identify a state, so they take border-strong (3.68 light, 4.11 dark) instead of --border.
+      Tabs secondary underline: safety net only; the label colour (--segment-foreground on every variant) cannot be
+      targeted per variant, so HeroUI Tabs is banned outright (raw-heroui rule, no baseline) and replaced by Choices. */
+.timeline__marker--status-current {
+  border-color: var(--tint);
+}
+.timeline__marker--status-default,
+.timeline__marker--status-muted {
+  border-color: var(--border-strong);
+}
+.tabs__indicator--variant-secondary {
+  border-color: var(--tint);
+}
+/* COMPONENTS:END */
