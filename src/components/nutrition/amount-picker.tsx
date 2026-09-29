@@ -1,15 +1,18 @@
-import { useRef, type ReactNode } from "react";
-import { Pressable, ScrollView, TextInput, View } from "react-native";
+import type { ReactNode } from "react";
+import { View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { useThemeColor } from "heroui-native";
-import { twMerge } from "tailwind-merge";
 import {
-  SystemButton,
-  SystemIcon,
-  SystemIconButton,
-  SystemLabel,
-  SystemText as Text,
-} from "@/components/system";
+  Button,
+  ChipRow,
+  Field,
+  IconButton,
+  Label,
+  Text,
+  Value,
+  decimalSeparator,
+  useKitFormat,
+} from "@/vector";
 import {
   convertCount,
   editAmount,
@@ -21,38 +24,14 @@ import {
   type Targets,
 } from "@/lib/nutrition";
 import { useStore } from "@/lib/store";
+import type { Message } from "@/lib/translations";
 import { FoodNutrients } from "./nutrient-list";
 
 /** The amount field: text in one of the food's units. `fresh` text is replaced by the next key. */
 export type AmountDraft = { unit: string; text: string; fresh: boolean };
 
-function UnitChip({
-  unit,
-  selected,
-  onPress,
-}: {
-  unit: PortionUnit;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <SystemButton
-      variant="ghost"
-      className={twMerge(
-        "gap-1 rounded-full border-2 px-3.5 py-1.5",
-        selected ? "border-foreground bg-foreground" : "border-border bg-surface-secondary"
-      )}
-      accessibilityLabel={unit.label}
-      accessibilityState={{ selected }}
-      onPress={onPress}
-    >
-      {selected && <SystemIcon name="checkmark" size={16} color="background" />}
-      <Text className={selected ? "font-semibold text-background" : "text-foreground"}>
-        {unit.label}
-      </Text>
-    </SystemButton>
-  );
-}
+/** Stands in for an amount the record does not list: never 0, which would be a claim. */
+const unknownMark = "—";
 
 /**
  * Amount entry on the system keyboard, which opens with the sheet: the field, ± steppers, the
@@ -65,15 +44,18 @@ export function AmountPicker({
   value,
   onChange,
   actions,
+  label,
 }: {
   units: PortionUnit[];
   value: AmountDraft;
   onChange: (value: AmountDraft) => void;
   /** One or two actions; the last is the primary one. */
   actions: { label: string; onPress: () => void }[];
+  /** The field's label, when "Amount in {unit}" doesn't read (a saved meal's "×"). */
+  label?: string;
 }) {
-  const input = useRef<TextInput>(null);
-  const muted = String(useThemeColor("muted"));
+  const { t } = useStore();
+  const format = useKitFormat();
   const unit = units.find((row) => row.key === value.unit) ?? units[0];
   const count = parseAmount(value.text);
   const step = unitStep(unit);
@@ -81,7 +63,7 @@ export function AmountPicker({
     onChange({ unit: target.key, text: formatCount(next, target), fresh: true });
   const more = () => set(count > 0 ? count + step : step);
   const less = () => count - step > 0 && set(count - step);
-  const stepLabel = `${formatCount(step, unit)} ${unit.label}`;
+  const stepLabel = t("amountUnit", { count: formatCount(step, unit), unit: unit.label });
   const choose = (next: PortionUnit) => {
     if (next.key === unit.key) return;
     if (!value.fresh && count > 0)
@@ -91,88 +73,78 @@ export function AmountPicker({
   };
   const measures = units.filter((row) => row.kind === "mass" || row.kind === "volume");
   const own = units.filter((row) => row.kind === "count" || row.kind === "energy");
-  const chip = (row: PortionUnit) => (
-    <UnitChip
-      key={row.key}
-      unit={row}
-      selected={row.key === unit.key}
-      onPress={() => choose(row)}
-    />
-  );
+  const byKey = new Map(units.map((row) => [row.key, row]));
   return (
     <View className="gap-2">
-      <View className="flex-row items-center gap-2">
-        <SystemIconButton
+      {/* The steppers line up with the field under its label. */}
+      <View className="flex-row items-end gap-2">
+        <IconButton
           icon="remove"
           variant="secondary"
-          accessibilityLabel={`Decrease by ${stepLabel}`}
-          isDisabled={!(count - step > 0)}
+          accessibilityLabel={t("decreaseBy", { amount: stepLabel })}
+          disabled={!(count - step > 0)}
           onPress={less}
         />
-        <Pressable
-          accessible={false}
-          className="h-12 flex-1 flex-row items-center rounded-2xl border-2 border-accent bg-surface px-3"
-          onPress={() => input.current?.focus()}
-        >
-          <TextInput
-            ref={input}
+        <View className="flex-1">
+          <Field
+            label={label ?? t("amountIn", { unit: unit.label })}
+            numeric
+            unit={unit.label}
             autoFocus
-            accessibilityLabel={`Amount in ${unit.label}`}
-            className="h-full flex-1 font-mono text-xl tabular-nums text-foreground"
-            placeholder="0"
-            placeholderTextColor={muted}
-            value={value.text}
+            placeholder={format.number(0)}
+            // Shown with the locale's decimal ("1,5" in de); the draft keeps "." for parseAmount.
+            value={value.text.replace(".", decimalSeparator(format.tag))}
             // A prefilled or stepped amount stays selected so the first key replaces it.
             selection={value.fresh ? { start: 0, end: value.text.length } : undefined}
             selectTextOnFocus
-            onChangeText={(next) =>
+            onChange={(next) =>
               onChange({ ...value, text: editAmount(value.text, next), fresh: false })
             }
-            keyboardType="decimal-pad"
-            autoCorrect={false}
-            autoComplete="off"
           />
-          <Text className="text-muted">{unit.label}</Text>
-        </Pressable>
-        <SystemIconButton
+        </View>
+        <IconButton
           icon="add"
           variant="secondary"
-          accessibilityLabel={`Increase by ${stepLabel}`}
+          accessibilityLabel={t("increaseBy", { amount: stepLabel })}
           onPress={more}
         />
       </View>
       {units.length > 1 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          className="-mx-4"
-          contentContainerClassName="items-center gap-2 px-4"
-        >
-          {measures.map(chip)}
-          {!!measures.length && !!own.length && <View className="mx-1 h-6 w-px bg-separator" />}
-          {own.map(chip)}
-        </ScrollView>
+        <ChipRow
+          values={units.map((row) => row.key)}
+          groups={[measures, own]
+            .filter((group) => group.length)
+            .map((group) => group.map((row) => row.key))}
+          // The amount always has a unit: tapping the chosen one again keeps it.
+          required
+          value={unit.key}
+          onChange={(key) => {
+            const next = byKey.get(key);
+            if (next) choose(next);
+          }}
+          label={(key) => byKey.get(key)?.label ?? key}
+          accessibilityLabel={t("unit")}
+        />
       )}
-      <View className="flex-row gap-1.5">
+      <View className="flex-row gap-2">
         {actions.map((action, i) => (
-          <SystemButton
+          <Button
             key={action.label}
             variant={i === actions.length - 1 ? "primary" : "secondary"}
-            className="h-12 min-h-12 flex-1 rounded-xl px-2 py-0"
-            labelClassName="font-semibold"
+            size="lg"
+            className="flex-1"
             fit
             onPress={action.onPress}
           >
             {action.label}
-          </SystemButton>
+          </Button>
         ))}
       </View>
     </View>
   );
 }
 
-/** A progress ring; past 100% it is full and amber. */
+/** A progress ring in the text-safe cyan; past 100% it is full and in the warning colour. */
 export function Ring({
   value,
   size = 52,
@@ -185,7 +157,8 @@ export function Ring({
   children?: ReactNode;
 }) {
   const track = String(useThemeColor("border"));
-  const fill = String(useThemeColor(value > 1 ? "warning" : "accent-soft-foreground"));
+  // `link` is HeroUI's alias of the kit's --tint.
+  const fill = String(useThemeColor(value > 1 ? "warning" : "link"));
   const radius = (size - width) / 2;
   const length = 2 * Math.PI * radius;
   const shown = Math.min(Math.max(value, 0), 1);
@@ -211,7 +184,6 @@ export function Ring({
             r={radius}
             stroke={fill}
             strokeWidth={width}
-            strokeLinecap="round"
             strokeDasharray={`${length * shown} ${length}`}
             fill="none"
           />
@@ -224,31 +196,36 @@ export function Ring({
 
 /** The day's calories with the foods being chosen, against its target. */
 export function DayRing({ calories, target }: { calories: number; target: number | null }) {
-  const { number } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
+  const eaten = format.number(calories);
   return (
     <View
       accessible
       accessibilityLabel={
         target
-          ? `${number(calories, 0)} of ${number(target, 0)} calories for the day, with these foods`
-          : `${number(calories, 0)} calories for the day, with these foods`
+          ? t("dayRingOfTarget", { eaten, target: format.number(target) })
+          : t("dayRingEaten", { eaten })
       }
-      className="flex-row items-center gap-2 rounded-full bg-surface-secondary py-1 pl-1 pr-3"
+      className="flex-row items-center gap-2"
     >
       {!!target && <Ring value={calories / target} size={28} width={4} />}
-      <Text className="text-sm font-medium tabular-nums">
-        {target ? `${number(calories, 0)} / ${number(target, 0)}` : `${number(calories, 0)} kcal`}
-      </Text>
+      <Value
+        size="xs"
+        value={eaten}
+        unit={target ? t("ofTarget", { target: format.number(target) }) : t("kcal")}
+      />
     </View>
   );
 }
 
+// P · C · F, with each macro's calories per gram for its share of the portion's energy.
 const macros = [
-  ["protein", "Protein", 4],
-  ["fat", "Fat", 9],
-  ["carbs", "Carbs", 4],
-] as const;
-const rings = [["calories", "Calories"], ...macros] as const;
+  ["protein", "macroProtein", 4],
+  ["carbs", "macroCarbs", 4],
+  ["fat", "macroFat", 9],
+] as const satisfies readonly (readonly [keyof Targets, Message, number])[];
+const rings = [["calories", "calories"], ...macros] as const;
 
 /**
  * A portion's calories and macros (each as a share of its calories), what it adds to the day's
@@ -261,44 +238,44 @@ export function PortionPreview({
   nutrients: Nutrients | null;
   targets?: Targets | null;
 }) {
-  const { number } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
   const energy = nutrients
     ? macros.reduce((sum, [key, , kcal]) => sum + nutrients[key] * kcal, 0)
     : 0;
   return (
     <View className="gap-4">
-      <View className="flex-row items-end gap-2">
-        <View className="flex-[1.3]">
-          <Text
-            className="text-4xl font-semibold tabular-nums"
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.6}
-            maxFontSizeMultiplier={1.35}
-          >
-            {nutrients ? number(nutrients.calories, 0) : "—"}
-          </Text>
-          <Text className="text-sm text-muted">Calories</Text>
-        </View>
+      <View className="gap-1">
+        <Label>{t("calories")}</Label>
+        <Value
+          size="xl"
+          value={nutrients ? format.number(nutrients.calories) : unknownMark}
+          unit={t("kcal")}
+        />
+      </View>
+      <View className="flex-row gap-3">
         {macros.map(([key, label, kcal]) => (
-          <View key={key} className="flex-1 items-center gap-0.5">
-            <View className="rounded-full bg-surface-secondary px-2 py-0.5">
-              <Text className="text-xs tabular-nums">
-                {nutrients && energy > 0
-                  ? `${Math.round((nutrients[key] * kcal * 100) / energy)}%`
-                  : "—"}
-              </Text>
-            </View>
-            <Text className="text-lg font-semibold tabular-nums">
-              {nutrients ? number(nutrients[key], 1) : "—"}
+          <View key={key} className="flex-1 gap-1">
+            {/* A column header that wraps rather than clips: "Kohlenhydrate" is a long word. */}
+            <Text variant="label" tone="muted">
+              {t(label)}
             </Text>
-            <Text className="text-sm text-muted">{label}</Text>
+            <Value
+              size="m"
+              value={nutrients ? format.number(nutrients[key], 1) : unknownMark}
+              unit={t("grams")}
+            />
+            <Text variant="readoutXS" tone="muted">
+              {nutrients && energy > 0
+                ? format.percent((nutrients[key] * kcal) / energy)
+                : unknownMark}
+            </Text>
           </View>
         ))}
       </View>
       {!!targets && (
         <View className="gap-2">
-          <SystemLabel accessibilityRole="header">Impact on targets</SystemLabel>
+          <Label accessibilityRole="header">{t("impactOnTargets")}</Label>
           <View className="flex-row justify-between">
             {rings.map(([key, label]) => {
               const share = nutrients && targets[key] > 0 ? nutrients[key] / targets[key] : 0;
@@ -306,13 +283,18 @@ export function PortionPreview({
                 <View
                   key={key}
                   accessible
-                  accessibilityLabel={`${label}: ${Math.round(share * 100)}% of the day's target`}
+                  accessibilityLabel={t("shareOfTarget", {
+                    label: t(label),
+                    percent: format.percent(share),
+                  })}
                   className="flex-1 items-center gap-1"
                 >
                   <Ring value={share}>
-                    <Text className="text-xs tabular-nums">{`${Math.round(share * 100)}%`}</Text>
+                    <Text variant="readoutXS">{format.percent(share)}</Text>
                   </Ring>
-                  <Text className="text-xs text-muted">{label}</Text>
+                  <Text variant="caption" tone="muted">
+                    {t(label)}
+                  </Text>
                 </View>
               );
             })}

@@ -15,7 +15,15 @@ import {
 } from "@/db";
 import { dayOf, localDay, type Units } from "./metrics";
 import { shiftDay } from "./nutrition";
-import { languagePreference, resolveLanguage, type Language, translate } from "./translations";
+import {
+  interpolate,
+  isMessage,
+  languagePreference,
+  resolveLanguage,
+  translate,
+  type Language,
+  type Message,
+} from "./translations";
 
 function read() {
   const prefs = Object.fromEntries(
@@ -31,7 +39,11 @@ function read() {
     .orderBy(desc(weightEntries.measuredAt), desc(weightEntries.id))
     .all();
   const healthSyncEnabled = prefs.healthSyncEnabled === "true";
-  const healthSyncError = prefs.healthSyncError ?? "";
+  // Stored as a translation key; unreadable text from elsewhere still reports a failed sync.
+  const storedSyncError = prefs.healthSyncError ?? "";
+  const healthSyncError: Message | "" = isMessage(storedSyncError)
+    ? storedSyncError
+    : storedSyncError && "syncFailed";
   // Sync can be on for someone without a smart scale; only a recent imported weight
   // means Home can skip the manual weigh-in. A one-off sync failure doesn't count.
   const imported = new Set(
@@ -114,7 +126,7 @@ type Store = Data & {
   language: Language;
   refresh: () => void;
   setPreference: (key: string, value: string) => void;
-  t: (key: string) => string;
+  t: (key: Message, values?: Record<string, string | number>) => string;
   number: (value: number, digits?: number) => string;
   date: (value: string) => string;
 };
@@ -163,7 +175,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           .run();
         refresh();
       },
-      t: (key) => translate(language, key),
+      t: (key, values) =>
+        values ? interpolate(translate(language, key), values) : translate(language, key),
       number: (value, digits = 1) => numberFormat(locale, digits).format(value),
       date: (value) =>
         new Date(value.length === 10 ? `${value}T12:00:00` : value).toLocaleDateString(locale, {

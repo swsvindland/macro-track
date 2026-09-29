@@ -8,6 +8,7 @@ const ts = require("typescript");
 const { drizzle } = require(
   path.join(path.dirname(require.resolve("drizzle-orm/expo-sqlite")), "driver.cjs")
 );
+const { englishT, kitMock } = require("./kit-mock.cjs");
 
 /** Transpiles production TS; `compile` runs React Compiler first, as the app build does. */
 function load(file, dependencies = {}, compile = false) {
@@ -390,18 +391,24 @@ function programInput(day = "2024-02-01") {
 }
 
 test("pace never reads as a signed zero and shows stone to two decimals", () => {
-  const number = (value, digits = 1) =>
-    new Intl.NumberFormat("en", {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    }).format(value);
-  assert.equal(metrics.formatPace(-0.04, "metric", number), "0.0 kg/wk");
-  assert.equal(metrics.formatPace(-0.02, "stone", number), "0.00 st/wk");
-  assert.equal(metrics.formatPace(0, "imperial", number), "0.0 lb/wk");
-  assert.equal(metrics.formatPace(-0.44, "metric", number), "−0.4 kg/wk");
-  assert.equal(metrics.formatPace(-0.03, "imperial", number), "−0.1 lb/wk");
-  assert.equal(metrics.formatPace(0.25, "stone", number), "+0.04 st/wk");
-  assert.equal(metrics.formatWeight(76.9, "stone", number), "12.11 st");
+  // The kit's formatter signs through Intl and writes a negative with the typographic minus (U+2212).
+  const { format } = kitMock(load);
+  const pace = (kg, units) => metrics.formatPace(kg, units, format, englishT);
+  assert.equal(pace(-0.04, "metric"), "0.0 kg/wk");
+  assert.equal(pace(-0.02, "stone"), "0.00 st/wk");
+  assert.equal(pace(0, "imperial"), "0.0 lb/wk");
+  assert.equal(pace(-0.44, "metric"), "\u22120.4 kg/wk");
+  assert.equal(pace(-0.03, "imperial"), "\u22120.1 lb/wk");
+  assert.equal(pace(0.25, "stone"), "+0.04 st/wk");
+  assert.equal(metrics.formatWeight(76.9, "stone", format), "12.11 st");
+  // Another locale writes its own decimal, unit spacing and "per week".
+  const { createFormat } = load("src/vector/format.ts");
+  const de = JSON.parse(readFileSync("src/lib/locales/de.json", "utf8"));
+  const german = (key, values) => de[key].replace(/\{(\w+)\}/g, (_, name) => values[name]);
+  assert.equal(
+    metrics.formatPace(-0.44, "metric", createFormat("de-DE"), german),
+    "\u22120,4 kg/Wo."
+  );
 });
 
 test("one far-off weigh-in holds the review by name, and without it the review runs", () => {
@@ -692,6 +699,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     language: "en",
     weights: [],
     refresh: () => {},
+    t: englishT,
     ...storeOverrides,
   };
   const all = {
@@ -711,6 +719,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     },
     "./check-in-adjuster": { CheckInAdjuster: "CheckInAdjuster" },
     "@/components/ui": { ErrorText: "Error" },
+    "@/vector": kitMock(load),
     "@/lib/store": { useStore: () => store },
     "./store": { useStore: () => store },
     ...dependencies,
@@ -801,7 +810,10 @@ test("compiled check-in shows usable days against the twelve it needs", () => {
   const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
   const tree = nodes(home.render(HomeCheckIn, { onDone() {}, onWeighIn() {}, onReviewLogs() {} }));
   assert.ok(shown(tree, "Text", "Still learning your needs"));
-  assert.ok(shown(tree, "Text", "10/12 usable days · 21 weigh-in days"));
+  assert.deepEqual(tree.find((node) => node.type === "Meta")?.props.items, [
+    "10/12 usable days",
+    "21 weigh-in days",
+  ]);
   assert.equal(store.coverage(store.currentReview()), "10/12");
   data.sqlite.close();
 });
@@ -835,7 +847,7 @@ test("compiled Plan confirms saved targets in place on first setup and after the
   };
   const field = (tree, label) =>
     tree.find((node) => node.type === "Field" && node.props.label === label);
-  const confirmation = "Targets saved. You\u2019re ready to log.";
+  const confirmation = "Targets saved. You are ready to log.";
 
   let tree = render();
   assert.equal(field(tree, "Calories (kcal)").props.value, "");
@@ -847,7 +859,7 @@ test("compiled Plan confirms saved targets in place on first setup and after the
   ])
     field(tree, label).props.onChange(value);
   tree = render();
-  assert.equal(shown(tree, "Text", confirmation), undefined);
+  assert.equal(shown(tree, "Callout", confirmation), undefined);
   shown(tree, "Button", "Save targets").props.onPress();
   tree = render();
   assert.deepEqual(data.diary.targetsForDay("2024-02-01"), {
@@ -856,19 +868,19 @@ test("compiled Plan confirms saved targets in place on first setup and after the
     carbs: 220,
     fat: 70,
   });
-  assert.ok(shown(tree, "Text", confirmation), "shown on first setup");
+  assert.ok(shown(tree, "Callout", confirmation), "shown on first setup");
   assert.deepEqual(announced, [confirmation]);
 
   field(tree, "Calories (kcal)").props.onChange("2000");
   tree = render();
-  assert.equal(shown(tree, "Text", confirmation), undefined, "editing clears it");
+  assert.equal(shown(tree, "Callout", confirmation), undefined, "editing clears it");
   shown(tree, "Button", "Save targets").props.onPress();
   tree = render();
   assert.equal(data.diary.targetsForDay("2024-02-01").calories, 2000);
   assert.equal(field(tree, "Calories (kcal)").props.value, "2000");
-  assert.ok(shown(tree, "Text", confirmation), "shown after the targets change");
+  assert.ok(shown(tree, "Callout", confirmation), "shown after the targets change");
   shown(tree, "Button", "Save targets").props.onPress();
-  assert.ok(shown(render(), "Text", confirmation), "shown when saving unchanged targets");
+  assert.ok(shown(render(), "Callout", confirmation), "shown when saving unchanged targets");
 
   field(render(), "Carbs (g)").props.onChange("999");
   data.diary.saveTargets("2024-02-01", { calories: 1900, protein: 150, carbs: 200, fat: 70 });
@@ -876,7 +888,11 @@ test("compiled Plan confirms saved targets in place on first setup and after the
   tree = render();
   assert.equal(field(tree, "Calories (kcal)").props.value, "1900");
   assert.equal(field(tree, "Carbs (g)").props.value, "200", "new targets replace a stale draft");
-  assert.equal(shown(tree, "Text", confirmation), undefined, "not for targets changed elsewhere");
+  assert.equal(
+    shown(tree, "Callout", confirmation),
+    undefined,
+    "not for targets changed elsewhere"
+  );
 
   field(tree, "Fat (g)").props.onChange("80");
   tree.find((node) => node.type === "CoachingPanel").props.onTargetsChanged();
@@ -898,34 +914,21 @@ function contrast(a, b) {
   return (high + 0.05) / (low + 0.05);
 }
 
-test("light-mode accent text, links and focus rings keep AA contrast on every surface", () => {
-  const css = readFileSync("src/global.css", "utf8");
-  const theme = (variant) => {
-    const block = css.slice(css.indexOf(`@variant ${variant}`)).split("}")[0];
-    return Object.fromEntries(
-      [...block.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)].map(([, name, value]) => [name, value])
-    );
-  };
-  const light = theme("light");
-  const surfaces = [
-    "background",
-    "surface",
-    "surface-secondary",
-    "surface-tertiary",
-    "accent-soft",
-  ];
-  for (const token of ["link", "accent-soft-foreground"])
+test("tint text, links and focus rings keep AA contrast on every surface", () => {
+  // The kit's generated tokens (src/vector/tokens.json), the values src/global.css imports.
+  const { light, dark } = load("src/vector/tokens.ts");
+  const surfaces = ["background", "surface", "surfaceSecondary", "surfaceTertiary", "accentSoft"];
+  for (const token of ["tint", "link", "accentSoftForeground"])
     for (const surface of surfaces)
       assert.ok(
         contrast(light[token], light[surface]) >= 4.5,
         `${token} on ${surface}: ${contrast(light[token], light[surface]).toFixed(2)}`
       );
-  for (const surface of ["field-background", "background", "surface-secondary"])
+  for (const surface of ["fieldBackground", "background", "surfaceSecondary"])
     assert.ok(contrast(light.focus, light[surface]) >= 3, `focus on ${surface}`);
-  assert.ok(contrast(light["accent-foreground"], light.accent) >= 4.5, "primary button label");
+  assert.ok(contrast(light.accentForeground, light.accent) >= 4.5, "primary button label");
 
-  const dark = theme("dark");
-  for (const token of ["link", "accent-soft-foreground", "focus"])
+  for (const token of ["tint", "link", "accentSoftForeground", "focus"])
     assert.ok(contrast(dark[token], dark.surface) >= 4.5, `dark ${token}`);
 });
 
@@ -1171,7 +1174,8 @@ test("a flagged misread under the goal weight doesn't offer Maintain, before or 
   const home = screenHarness(checkInDependencies(data), { weights: data.weights() });
   const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
   const tree = renderCheckIn(home, HomeCheckIn);
-  assert.equal(shown(tree, "Button", "Keep targets this week").props.variant, "primary");
+  // Secondary: the quick-log dock's barcode button is Home's one primary action.
+  assert.equal(shown(tree, "Button", "Keep targets this week").props.variant, "secondary");
   assert.ok(!tree.some((node) => String(node.props.children).startsWith("Maintain")));
 
   // Kept, the saved review still names the reading; ignored, the trend is back above the goal.
@@ -1341,7 +1345,8 @@ test("compiled check-in adjusts the proposal from Home and keeps Accept one tap"
   const { HomeCheckIn } = home.load("src/components/nutrition/home-check-in.tsx");
   const done = [];
   let tree = renderCheckIn(home, HomeCheckIn, done);
-  assert.equal(shown(tree, "Button", "Accept plan").props.variant, "primary");
+  // Secondary: the quick-log dock's barcode button is Home's one primary action.
+  assert.equal(shown(tree, "Button", "Accept plan").props.variant, "secondary");
   assert.equal(
     tree.find((node) => node.type === "CheckInAdjuster"),
     undefined
@@ -1384,32 +1389,34 @@ test("compiled adjuster steps 50 kcal, recounts typed grams and saves them", () 
     onCancel() {},
   };
   const render = () => nodes(screen.render(CheckInAdjuster, props));
+  // The readout sits in the polite live region between the steppers.
   const calories = (tree) =>
-    [tree.find((node) => node.props.accessibilityLiveRegion === "polite").props.children]
-      .flat()
-      .join("");
-  const input = (tree, label) => labelled(tree, `${label} in grams`);
+    nodes(tree.find((node) => node.props.accessibilityLiveRegion === "polite")).find(
+      (node) => node.type === "Value"
+    ).props.value;
+  const input = (tree, label) =>
+    tree.find((node) => node.type === "Field" && node.props.label === label);
   let tree = render();
-  assert.equal(calories(tree), "2310 kcal/day");
-  labelled(tree, "50 kcal more").props.onPress();
+  assert.equal(calories(tree), "2,310");
+  labelled(tree, "Increase by 50 kcal").props.onPress();
   tree = render();
-  assert.equal(calories(tree), "2360 kcal/day");
+  assert.equal(calories(tree), "2,360");
   assert.deepEqual(
     ["Protein", "Carbs", "Fat"].map((label) => input(tree, label).props.value),
     ["128", "278", "82"]
   );
   // The live region only speaks on Android.
-  assert.deepEqual(announced, ["2360 kcal a day: 128 g protein, 278 g carbs, 82 g fat"]);
-  input(tree, "Protein").props.onChangeText("150");
-  input(render(), "Carbs").props.onChangeText("256");
+  assert.deepEqual(announced, ["2,360 kcal, protein 128 g, carbs 278 g, fat 82 g"]);
+  input(tree, "Protein").props.onChange("150");
+  input(render(), "Carbs").props.onChange("256");
   tree = render();
-  assert.equal(calories(tree), "2362 kcal/day");
+  assert.equal(calories(tree), "2,362");
   shown(tree, "Button", "Save targets").props.onPress();
   assert.deepEqual(saved, [{ calories: 2362, protein: 150, carbs: 256, fat: 82 }]);
-  input(tree, "Fat").props.onChangeText("");
+  input(tree, "Fat").props.onChange("");
   tree = render();
-  assert.equal(shown(tree, "Button", "Save targets").props.isDisabled, true);
-  assert.equal(labelled(tree, "50 kcal more").props.isDisabled, true);
+  assert.equal(shown(tree, "Button", "Save targets").props.disabled, true);
+  assert.equal(labelled(tree, "Increase by 50 kcal").props.disabled, true);
 
   const low = screenHarness({
     ...checkInDependencies(data),
@@ -1422,7 +1429,7 @@ test("compiled adjuster steps 50 kcal, recounts typed grams and saves them", () 
       start: { calories: 1520, protein: 128, fat: 50, carbs: 140 },
     })
   );
-  assert.equal(labelled(lowTree, "50 kcal less").props.isDisabled, true);
+  assert.equal(labelled(lowTree, "Decrease by 50 kcal").props.disabled, true);
   data.sqlite.close();
 });
 
@@ -1453,8 +1460,11 @@ test("adjusting a learning week starts from the program at today's trend", () =>
   assert.deepEqual(adjuster.props.program, own);
   const adjust = adjusterScreen(data);
   const render = () => adjust(adjuster.props);
-  assert.equal(labelled(render(), "Protein in grams").props.value, "128");
-  labelled(render(), "50 kcal less").props.onPress();
+  assert.equal(
+    render().find((node) => node.type === "Field" && node.props.label === "Protein").props.value,
+    "128"
+  );
+  labelled(render(), "Decrease by 50 kcal").props.onPress();
   shown(render(), "Button", "Save targets").props.onPress();
   assert.deepEqual(done, ["Check-in done. Your adjusted targets start today."]);
   assert.deepEqual(data.diary.targetsForDay("2024-02-01"), program.programMacros(2105, 80, own));
@@ -1478,7 +1488,7 @@ test("adjusting a learning week starts from the program at today's trend", () =>
   assert.equal(props.start.protein, 109);
   const bulkAdjust = adjusterScreen(bulk);
   const draw = () => bulkAdjust(props);
-  labelled(draw(), "50 kcal more").props.onPress();
+  labelled(draw(), "Increase by 50 kcal").props.onPress();
   shown(draw(), "Button", "Save targets").props.onPress();
   assert.equal(saved[0].protein, 112);
   assert.equal(bulk.store.currentGoal().program.custom, undefined);
@@ -1493,8 +1503,10 @@ test("adjusting a learning week starts from the program at today's trend", () =>
     onSave: (targets) => typed.push(targets),
   };
   const typedAdjust = adjusterScreen(bulk);
-  labelled(typedAdjust(typedProps), "Protein in grams").props.onChangeText("150");
-  labelled(typedAdjust(typedProps), "50 kcal more").props.onPress();
+  typedAdjust(typedProps)
+    .find((node) => node.type === "Field" && node.props.label === "Protein")
+    .props.onChange("150");
+  labelled(typedAdjust(typedProps), "Increase by 50 kcal").props.onPress();
   shown(typedAdjust(typedProps), "Button", "Save targets").props.onPress();
   const plan = { ...moreCarbs, custom: { proteinG: 150 } };
   assert.deepEqual(typed, [program.programMacros(2138, 80, plan)]);
@@ -1513,7 +1525,7 @@ test("compiled check-in offers Maintain at the goal weight once the trend reache
   const maintain = shown(tree, "Button", "Maintain 80.5 kg");
   maintain.props.onPress();
   maintain.props.onPress();
-  assert.deepEqual(done, ["Check-in done. You’re now maintaining 80.5 kg."]);
+  assert.deepEqual(done, ["Check-in done. You are now maintaining 80.5 kg."]);
   assert.equal(data.store.currentGoal().mode, "maintain");
   assert.equal(data.db.select().from(schema.coachingGoals).all().length, 2);
   data.sqlite.close();
@@ -1603,24 +1615,10 @@ test("an adjuster closes once the other screen answers the check-in, and Maintai
 });
 
 test("compiled weight history dims an ignored weigh-in and includes it again in one tap", () => {
-  const Timeline = Object.assign(() => null, {
-    Item: "Item",
-    Rail: "Rail",
-    Content: "Content",
-    Title: "Title",
-    Description: "Description",
-  });
-  const screen = screenHarness(
-    {
-      "./metrics": metrics,
-      "@expo/vector-icons": { Feather: "Feather" },
-      "heroui-native": { useThemeColor: () => "#000000" },
-      "heroui-native-pro": { Timeline },
-    },
-    { t: (key) => ({ weight: "Weight" })[key] ?? key }
-  );
+  const screen = screenHarness({ "./metrics": metrics });
   const { MeasurementHistory } = screen.load("src/components/measurements/measurement-history.tsx");
-  const calls = [];
+  const calls = [],
+    opened = [];
   const rows = [
     { id: 2, measuredAt: "2024-01-21", values: { weight: 76.9 }, excluded: true },
     { id: 1, measuredAt: "2024-01-20", values: { weight: 80 }, excluded: false },
@@ -1630,26 +1628,41 @@ test("compiled weight history dims an ignored weigh-in and includes it again in 
       log: {
         rows,
         fields: ["weight"],
-        format: (key, value) => `${value} kg`,
+        readout: (key, value) => ({ value: String(value), unit: "kg" }),
         limit: 30,
         setLimit() {},
-        launch() {},
+        launch: (row) => opened.push(row.id),
         exclude: (row, excluded) => calls.push([row.id, excluded]),
       },
     })
   );
   const includes = tree.filter(
-    (node) => node.type === "Button" && node.props.children === "Include"
+    (node) => node.type === "Button" && node.props.children === "Include in trend"
   );
   assert.equal(includes.length, 1);
   includes[0].props.onPress();
   assert.deepEqual(calls, [[2, false]]);
-  const labels = tree
-    .filter((node) => node.type === "Description")
-    .map((node) => node.props.children);
-  assert.deepEqual(labels, ["Weight · Ignored", "Weight"]);
-  const dimmed = tree.filter((node) => /opacity-50/.test(node.props.className ?? ""));
-  assert.equal(dimmed.length, 2, "the ignored row's date and value");
+  const records = tree.filter((node) => node.type === "RecordRow");
+  assert.deepEqual(
+    records.map((node) => [node.props.time, node.props.title, node.props.description]),
+    [
+      ["1/21/24", "Weight", "Ignored in trend"],
+      ["1/20/24", "Weight", undefined],
+    ]
+  );
+  // The ignored reading reads muted; screen readers get Include as an action on its row.
+  assert.deepEqual(
+    records.map((node) => node.props.value.props.tone),
+    ["muted", "default"]
+  );
+  assert.deepEqual(records[1].props.accessibilityActions, []);
+  records[0].props.onAccessibilityAction({ nativeEvent: { actionName: "include" } });
+  assert.deepEqual(calls, [
+    [2, false],
+    [2, false],
+  ]);
+  records[1].props.onPress();
+  assert.deepEqual(opened, [1]);
 });
 
 // Progress at a glance: the week against its budget, the goal's date and daily expenditure.
@@ -2038,63 +2051,24 @@ test("the expenditure series spans every logged day and every check-in, not the 
 });
 
 test("chart colors for calories and macros stand out from their track in both themes", () => {
-  const css = readFileSync("src/global.css", "utf8");
-  const theme = (variant) => {
-    const block = css.slice(css.indexOf(`@variant ${variant}`)).split("}")[0];
-    return Object.fromEntries(
-      [...block.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)].map(([, name, value]) => [name, value])
-    );
-  };
+  // Calories draw in tint; protein, carbs and fat in the kit's ink ramp (cat-1…3).
+  const tokens = load("src/vector/tokens.ts");
   for (const variant of ["light", "dark"]) {
-    const colors = theme(variant);
-    for (const key of ["calories", "protein", "fat", "carbs"])
+    const colors = tokens[variant];
+    for (const fill of ["tint", "cat1", "cat2", "cat3"])
       assert.ok(
-        contrast(colors[`chart-${key}`], colors["surface-secondary"]) >= 3,
-        `${variant} ${key}`
+        contrast(colors[fill], colors.surfaceSecondary) >= 3,
+        `${variant} ${fill}: ${contrast(colors[fill], colors.surfaceSecondary).toFixed(2)}`
       );
   }
-  assert.match(css, /--color-chart-protein: var\(--chart-protein\)/);
+  // Registered at runtime too, so useThemeColor("cat-1") resolves and bg-cat-1 has a colour.
+  assert.match(readFileSync("src/vector/tokens.css", "utf8"), /--color-cat-1: var\(--cat-1\)/);
 });
 
 /** Compiled Progress screens over a real database; charts and nested cards stay unrendered. */
 function progressHarness(data) {
-  const Segment = Object.assign(() => null, {
-    Group: "SegmentGroup",
-    Indicator: "SegmentIndicator",
-    Item: "SegmentItem",
-    Label: "SegmentLabel",
-  });
-  const system = {
-    SystemButton: "Button",
-    SystemIcon: "Icon",
-    SystemIconButton: "IconButton",
-    SystemLabel: "Label",
-    SystemPanel: Object.assign(() => null, { Body: "PanelBody" }),
-    SystemText: "Text",
-  };
-  const chart = load("src/components/progress/chart.tsx", {
-    "react-native": { View: "View" },
-    "react-native-svg": {
-      default: "Svg",
-      Circle: "Circle",
-      Line: "Line",
-      Path: "Path",
-      Rect: "Rect",
-    },
-    "heroui-native": {},
-    "heroui-native-pro": { Segment },
-    "@/components/system": system,
-    "@/lib/metrics": metrics,
-    "@/lib/store": {},
-  });
   const pushed = [];
   const focus = { current: true };
-  const words = {
-    add: "Add",
-    weight: "Weight",
-    needWeight: "Add a weight to get started.",
-    sourcesTitle: "Sources & methods",
-  };
   const harness = () =>
     screenHarness(
       {
@@ -2109,23 +2083,19 @@ function progressHarness(data) {
           useIsFocused: () => focus.current,
         },
         "expo-localization": { useCalendars: () => [{ firstWeekday: 2 }] },
-        "heroui-native": {
-          useThemeColor: (color) => (Array.isArray(color) ? color.map(() => "#000000") : "#000000"),
-        },
-        "heroui-native-pro": { Segment },
-        "@/components/system": system,
         "@/components/ui": { Screen: "Screen" },
         "@/components/measurements/use-measurement-log": {
           useMeasurementLog: () => ({ launch() {} }),
         },
         "@/components/measurements/weight-form": { WeightForm: "WeightForm" },
-        "./chart": chart,
         "./detail-screen": { DetailScreen: "DetailScreen", Explainer: "Explainer" },
       },
-      { t: (key) => words[key] ?? key, weights: data.weights() }
+      { weights: data.weights() }
     );
-  return { harness, chart, pushed, focus, Segment };
+  return { harness, pushed, focus };
 }
+/** The app's numbers as Progress formats them (en-US). */
+const shownNumber = (value) => kitMock(load).format.number(value);
 const texts = (tree) =>
   tree
     .filter((node) => node.type === "Text")
@@ -2175,11 +2145,11 @@ test("compiled Progress starts empty for a new user without inventing numbers", 
   );
   assert.ok(shown(bars, "Text", "This week"));
   assert.equal(
-    bars.find((node) => node.props.accessibilityLabel === "Previous week").props.isDisabled,
+    bars.find((node) => node.props.accessibilityLabel === "Previous week").props.disabled,
     true
   );
   assert.equal(bars.filter((node) => node.type === "Pressable").length, 7);
-  assert.equal(texts(bars).filter((text) => text === "no target").length, 4);
+  assert.equal(texts(bars).filter((text) => text === "No target").length, 4);
   data.sqlite.close();
 });
 
@@ -2192,11 +2162,12 @@ test("compiled Progress shows the week against its budget, the goal's date and t
   const tree = nodes(main.render(screen.ProgressScreen));
   const [expenditure, weight] = tree.filter((node) => node.props?.href);
   const series = data.insights.expenditureSeries("2024-01-26", "2024-02-01", data.weights());
-  assert.equal(expenditure.props.value, series.at(-1).kcal.toFixed(0));
+  assert.equal(expenditure.props.value, shownNumber(series.at(-1).kcal));
   assert.deepEqual(
     expenditure.props.points.map((point) => point.day),
     series.map((point) => point.day)
   );
+  // The trend keeps its decimal, as formatWeight writes weights elsewhere.
   assert.deepEqual(
     [weight.props.value, weight.props.unit, weight.props.points.length],
     ["80.0", "kg", 6]
@@ -2208,10 +2179,15 @@ test("compiled Progress shows the week against its budget, the goal's date and t
     card.render(card.load("src/components/progress/progress-screen.tsx").ThisWeek, summary.props)
   );
   const average = week.find((node) => node.props.label === "Average intake");
-  assert.equal(average.props.value, "2400 / 2200 kcal");
-  assert.equal(average.props.note, "3 complete days · Protein 100% · Carbs 100% · Fat 120%");
+  assert.equal(average.props.value, "2,400 / 2,200 kcal");
+  assert.deepEqual(average.props.note, [
+    "3 complete days",
+    "Protein 100%",
+    "Carbs 100%",
+    "Fat 120%",
+  ]);
   // Mon–Wed ran 600 kcal over; Thursday to Sunday share the rest of the budget.
-  assert.ok(texts(week).includes("~2050 kcal/day for the rest of the week lands on budget"));
+  assert.ok(texts(week).includes("~2,050 kcal/day for the rest of the week lands on budget"));
   // Out of reach within 500 kcal of the target, or with no days left: the week's balance instead.
   const balance = (value) => {
     const view = harness();
@@ -2224,32 +2200,36 @@ test("compiled Progress shows the week against its budget, the goal's date and t
       )
     );
   };
-  assert.ok(balance(5204).includes("5200 kcal over this week’s budget"));
-  assert.ok(balance(-4000).includes("4000 kcal under this week’s budget"));
+  assert.ok(balance(5204).includes("5,200 kcal over this week’s budget"));
+  assert.ok(balance(-4000).includes("4,000 kcal under this week’s budget"));
   assert.ok(balance(2).includes("On this week’s budget"));
   const goal = week.find((node) => node.props.label === "Goal 75.0 kg");
   assert.equal(goal.props.value, `~${metrics.shortDay(summary.props.data.projection.eta, "en")}`);
-  assert.equal(goal.props.note, "Trend 80.0 kg · 0.0 kg/wk");
+  assert.deepEqual(goal.props.note, ["Trend 80.0 kg", "0.0 kg/wk"]);
   assert.ok(shown(week, "Button", "Review check-in"));
 
   const grid = harness();
   const Grid = grid.load("src/components/progress/progress-screen.tsx").WeeklyNutrition;
   const props = tree.find((node) => node.type === screen.WeeklyNutrition).props;
-  // The chosen day's calories on the right: the value, then "of" its target, "left" or "over".
+  // The chosen day's calories at the end: the value, then its target.
   const calories = (tree) => {
-    const all = texts(tree),
-      unit = all.indexOf(" kcal");
-    return [all[unit - 1], all[unit + 1]];
+    const figure = nodes(
+      tree.find((node) => node.key === "calories" && node.props.style?.height === 40)
+    );
+    return [
+      figure.find((node) => node.type === "Value").props.value,
+      figure.find((node) => node.type === "Text").props.children,
+    ];
   };
   let bars = nodes(grid.render(Grid, props));
   assert.equal(
-    bars.find((node) => node.props.accessibilityLabel === "Previous week").props.isDisabled,
+    bars.find((node) => node.props.accessibilityLabel === "Previous week").props.disabled,
     false
   );
-  assert.deepEqual(calories(bars), ["0", "of 2200"]);
+  assert.deepEqual(calories(bars), ["0", "/ 2,200"]);
   bars.find((node) => node.type === "Pressable").props.onPress();
   bars = nodes(grid.render(Grid, props));
-  assert.deepEqual(calories(bars), ["2400", "of 2200"]);
+  assert.deepEqual(calories(bars), ["2,400", "/ 2,200"]);
   data.sqlite.close();
 });
 
@@ -2259,60 +2239,42 @@ test("compiled weight trend and expenditure screens chart the range and reach th
   const none = nodes(
     blank.render(blank.load("src/components/progress/weight-trend-screen.tsx").WeightTrendScreen)
   );
-  assert.ok(texts(none).includes("Add a weight to get started."));
+  assert.equal(
+    none.find((node) => node.type === "SystemState").props.message,
+    "Add a weight to get started."
+  );
   const noEstimate = progressHarness(empty).harness();
-  assert.ok(
-    shown(
-      nodes(
-        noEstimate.render(
-          noEstimate.load("src/components/progress/expenditure-screen.tsx").ExpenditureScreen
-        )
-      ),
-      "Text",
-      "No estimate yet"
-    )
+  assert.equal(
+    nodes(
+      noEstimate.render(
+        noEstimate.load("src/components/progress/expenditure-screen.tsx").ExpenditureScreen
+      )
+    ).find((node) => node.type === "SystemState").props.code,
+    "No estimate yet"
   );
   empty.sqlite.close();
 
   const data = insightsDatabase("2024-02-01");
   seedProgram(data, "2024-02-01", { weight: (date) => (date < "2024-01-20" ? 81 : 80) });
-  const { harness, chart, pushed } = progressHarness(data);
+  const { harness, pushed } = progressHarness(data);
   const trend = harness();
   const tree = nodes(
     trend.render(trend.load("src/components/progress/weight-trend-screen.tsx").WeightTrendScreen)
   );
-  const summary = tree.find((node) => node.type === chart.RangeSummary);
-  assert.deepEqual(
-    summary.props.stats.map((stat) => stat.label),
-    ["Average", "Difference"]
-  );
-  assert.ok(summary.props.stats[1].value.startsWith("−"));
-  // A scrubbed expenditure readout outgrows a phone at larger text; it shrinks to fit instead.
-  const readout = nodes(
-    chart.RangeSummary({
-      stats: [
-        { label: "Estimate", value: "2,345", unit: "kcal" },
-        { label: "Range", value: "2,100–2,500", unit: "kcal" },
-      ],
-      caption: "Jan 20",
-    })
-  );
-  const stats = readout.filter((node) => node.key === "Estimate" || node.key === "Range");
-  assert.equal(stats.length, 2);
-  for (const stat of stats) {
-    assert.match(stat.props.className, /\bshrink\b/);
-    const value = nodes(stat).find((node) => node.props.className?.includes("text-3xl"));
-    assert.equal(value.props.numberOfLines, 1);
-    assert.equal(value.props.adjustsFontSizeToFit, true);
-  }
-  const plot = tree.find((node) => node.type === chart.TrendChart);
-  assert.deepEqual(plot.props.goal, { value: 75, label: "Goal 75.0 kg" });
+  // The range's average, with the change over it as a signed delta.
+  const summary = tree.find((node) => node.type === "RangeSummary");
+  assert.equal(summary.props.label, "Average");
+  assert.equal(summary.props.unit, "kg");
+  assert.ok(summary.props.delta.startsWith("\u2212"), "a loss reads with the typographic minus");
+  const plot = tree.find((node) => node.type === "TrendChart");
+  // The kit tags the goal line GOAL; the label is its readout.
+  assert.deepEqual(plot.props.goal, { value: 75, label: "75.0 kg" });
   assert.equal(plot.props.from, "2024-01-10");
   assert.deepEqual(
-    plot.props.lines.map((line) => [line.key, line.segments[0].length]),
+    plot.props.lines.map((line) => [line.role, line.style, line.points.length]),
     [
-      ["scale", 22],
-      ["trend", 22],
+      ["reference", "dots", 22],
+      ["subject", undefined, 22],
     ]
   );
   shown(tree, "Button", "All weigh-ins · 22").props.onPress();
@@ -2322,15 +2284,15 @@ test("compiled weight trend and expenditure screens chart the range and reach th
   const chartTree = nodes(
     spend.render(spend.load("src/components/progress/expenditure-screen.tsx").ExpenditureScreen)
   );
-  const line = chartTree.find((node) => node.type === chart.TrendChart);
+  const line = chartTree.find((node) => node.type === "TrendChart");
   const points = data.insights.expenditureSeries("", "2024-02-01", data.weights());
   assert.equal(line.props.from, points[0].day);
   // The program's starting estimate holds, then the learned estimate takes over.
   assert.deepEqual(
-    line.props.lines.map((item) => [item.key, item.segments.length]),
+    line.props.lines.map((item) => [item.style, item.label]),
     [
-      ["estimate", 1],
-      ["holding", 1],
+      ["line", "Expenditure"],
+      ["dashed", "Holding"],
     ]
   );
   assert.equal(line.props.band.points.length, points.length);
@@ -2364,11 +2326,11 @@ test("compiled Progress in manual mode or before any weigh-in shows only what it
   assert.equal(summary.data.projection, null);
   assert.equal(
     week.find((node) => node.props.label === "Average intake").props.value,
-    "2400 / 2200 kcal"
+    "2,400 / 2,200 kcal"
   );
   // Monday ran 200 over; unlogged Tuesday and Wednesday count on neither side, so Thursday to
   // Sunday share it.
-  assert.ok(texts(week).includes("~2150 kcal/day for the rest of the week lands on budget"));
+  assert.ok(texts(week).includes("~2,150 kcal/day for the rest of the week lands on budget"));
   assert.equal(week.filter((node) => node.type === "Button").length, 0);
 
   // A new program before any weigh-in: its starting estimate, the goal without a date yet.
@@ -2381,7 +2343,7 @@ test("compiled Progress in manual mode or before any weigh-in shows only what it
     })
     .run();
   ({ cards, week } = render());
-  assert.deepEqual(cards, ["2600", "—"]);
+  assert.deepEqual(cards, ["2,600", "—"]);
   assert.equal(
     week.find((node) => node.props.label === "Goal 75.0 kg").props.value,
     "Add a weigh-in"
@@ -2446,9 +2408,9 @@ test("compiled Progress dates a weight trend with no weigh-in in the last seven 
   const week = nodes(
     card.render(card.load("src/components/progress/progress-screen.tsx").ThisWeek, summary.props)
   );
-  assert.match(
-    week.find((node) => node.props.label === "Goal 75.0 kg").props.note,
-    new RegExp(`^Trend 80.0 kg on ${metrics.shortDay("2024-01-31", "en")} · `)
+  assert.equal(
+    week.find((node) => node.props.label === "Goal 75.0 kg").props.note[0],
+    `Trend 80.0 kg on ${metrics.shortDay("2024-01-31", "en")}`
   );
 
   // A weigh-in this week brings back the last seven days.
@@ -2487,7 +2449,7 @@ test("compiled weight history opens Health settings in the tabs underneath", () 
       "./weight-form": { WeightForm: "WeightForm" },
       "./measurement-history": { MeasurementHistory: "MeasurementHistory" },
     },
-    { t: (key) => key, healthSyncEnabled: false, lastSync: null }
+    { healthSyncEnabled: false, lastSync: null }
   );
   const { WeightLog } = screen.load("src/components/measurements/weight-log.tsx");
   const tree = nodes(screen.render(WeightLog));

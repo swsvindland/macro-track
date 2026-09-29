@@ -4,6 +4,21 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import { File, Paths } from "expo-file-system";
 import { SystemButton, SystemText as Text } from "@/components/system";
+import { useStore } from "@/lib/store";
+
+// What each kind of photo asks for, whole sentences so each language orders its own words.
+const copy = {
+  meal: {
+    allow: "allowCameraMeal",
+    unavailable: "cameraUnavailableMeal",
+    take: "takePhotoOfMeal",
+  },
+  label: {
+    allow: "allowCameraLabel",
+    unavailable: "cameraUnavailableLabel",
+    take: "takePhotoOfLabel",
+  },
+} as const;
 
 /** Photos are only needed until they are read; the camera or picker copy is deleted after. */
 export function discardPhoto(uri: string | null) {
@@ -18,18 +33,16 @@ export function discardPhoto(uri: string | null) {
 
 /** An in-sheet camera with a library fallback, for meals and nutrition labels. */
 export function PhotoCapture({
-  subject,
-  alternative,
+  kind,
   onPhoto,
   onError,
 }: {
-  /** What to photograph, e.g. "your meal". */
-  subject: string;
-  /** Another way to continue when there is no camera, e.g. "describe your meal". */
-  alternative?: string;
+  /** What to photograph: a meal (or describe it instead) or a label (or type its values). */
+  kind: keyof typeof copy;
   onPhoto: (uri: string) => void;
   onError: (message: string) => void;
 }) {
+  const { t } = useStore();
   const [permission, requestPermission] = useCameraPermissions();
   const [broken, setBroken] = useState(false);
   const [taking, setTaking] = useState(false);
@@ -43,7 +56,7 @@ export function PhotoCapture({
       });
       if (!result.canceled && result.assets[0]) onPhoto(result.assets[0].uri);
     } catch {
-      onError("Couldn't open your photos.");
+      onError(t("couldNotOpenPhotos"));
     }
   }
   async function take() {
@@ -53,36 +66,32 @@ export function PhotoCapture({
       const picture = await camera.current?.takePictureAsync({ quality: 0.8 });
       if (picture?.uri) onPhoto(picture.uri);
     } catch {
-      onError("Couldn't take the photo. Try again or choose one from your library.");
+      onError(t("couldNotTakePhoto"));
     } finally {
       setTaking(false);
     }
   }
   const library = (
-    <SystemButton variant="secondary" icon="images-outline" onPress={() => void choose()}>
-      Choose photo
+    <SystemButton variant="secondary" icon="photoLibrary" onPress={() => void choose()}>
+      {t("choosePhoto")}
     </SystemButton>
   );
-  if (!permission) return <Text className="text-muted">Checking camera access…</Text>;
+  if (!permission) return <Text className="text-muted">{t("checkingCamera")}</Text>;
   if (!permission.granted || broken)
     return (
       <View className="gap-3">
-        <Text className="text-muted">
-          {broken
-            ? `The camera is unavailable. Choose a photo${alternative ? ` or ${alternative}` : ""}.`
-            : `Allow camera access to photograph ${subject}, or choose a photo you already took.`}
-        </Text>
+        <Text className="text-muted">{t(broken ? copy[kind].unavailable : copy[kind].allow)}</Text>
         {!broken && (
           <SystemButton
             variant="secondary"
-            icon="camera-outline"
+            icon="camera"
             onPress={() => {
               void (permission.canAskAgain ? requestPermission() : Linking.openSettings()).catch(
                 () => setBroken(true)
               );
             }}
           >
-            {permission.canAskAgain ? "Allow camera" : "Open camera settings"}
+            {t(permission.canAskAgain ? "allowCamera" : "openCameraSettings")}
           </SystemButton>
         )}
         {library}
@@ -91,22 +100,25 @@ export function PhotoCapture({
   return (
     <View className="gap-2">
       {/* The preview fills its frame by cropping, so the frame has the photo's own portrait 3:4
-          shape: what is in view is what the photo holds, and nothing past its edges. */}
-      <CameraView
-        ref={camera}
-        style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: 16, overflow: "hidden" }}
-        facing="back"
-        onMountError={() => setBroken(true)}
-      />
+          shape: what is in view is what the photo holds, and nothing past its edges. A 1pt
+          keyline and a 4pt corner keep a white photo apart from the white sheet. */}
+      <View className="overflow-hidden rounded-control border border-border">
+        <CameraView
+          ref={camera}
+          style={{ width: "100%", aspectRatio: 3 / 4 }}
+          facing="back"
+          onMountError={() => setBroken(true)}
+        />
+      </View>
       <View className="flex-row gap-2">
         <SystemButton
           className="flex-1"
           icon="camera"
           isDisabled={taking}
-          accessibilityLabel={`Take photo of ${subject}`}
+          accessibilityLabel={t(copy[kind].take)}
           onPress={() => void take()}
         >
-          {taking ? "Taking…" : "Take photo"}
+          {t(taking ? "taking" : "takePhoto")}
         </SystemButton>
         {library}
       </View>

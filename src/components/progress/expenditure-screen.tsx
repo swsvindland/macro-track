@@ -1,22 +1,26 @@
 import { useState } from "react";
-import { View } from "react-native";
 import { router } from "expo-router";
-import { useThemeColor } from "heroui-native";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import {
+  LinkButton,
+  Note,
+  RangeChips,
+  RangeSummary,
+  SystemState,
+  TrendChart,
+  rangeStart,
+  useKitFormat,
+  type ChartLine,
+  type ChartPoint,
+  type Range,
+} from "@/vector";
 import { checkInEstimates, expenditureSeries, type ExpenditurePoint } from "@/lib/insights";
 import { localDay, shortDay } from "@/lib/metrics";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
-import {
-  Legend,
-  RangeChips,
-  RangeSummary,
-  TrendChart,
-  rangeStart,
-  type ChartPoint,
-  type Range,
-} from "./chart";
 import { DetailScreen, Explainer } from "./detail-screen";
+
+/** A diary day as a local calendar date, at noon so no time zone moves it. */
+const dateOf = (day: string) => new Date(`${day}T12:00:00`);
 
 /** Runs of estimated and holding days; each run ends on the next one's first day so they join. */
 function runs(points: ExpenditurePoint[]) {
@@ -36,8 +40,8 @@ function runs(points: ExpenditurePoint[]) {
 }
 
 export function ExpenditureScreen() {
-  const { weights, number, language, date } = useStore();
-  const [accent, foreground] = useThemeColor(["accent-soft-foreground", "foreground"]);
+  const { weights, t } = useStore();
+  const format = useKitFormat();
   const data = useNutritionQuery(() => {
     const today = localDay();
     return { today, points: expenditureSeries("", today, weights), checkIns: checkInEstimates() };
@@ -48,136 +52,78 @@ export function ExpenditureScreen() {
   const from = rangeStart(range, today, points[0]?.day ?? today);
   const shown = points.filter((point) => point.day >= from);
   const { learned, holding } = runs(shown);
-  const kcal = (value: number) => number(value, 0);
+  const kcal = (value: number) => format.number(value);
   const at = scrub ? shown.find((point) => point.day === scrub) : undefined;
   const first = shown[0],
     last = shown.at(-1);
+  // Both kinds of run are the subject: the estimate, drawn dashed while it holds.
+  const lines: ChartLine[] = [
+    ...learned.map((run) => ({
+      points: run,
+      role: "subject" as const,
+      style: "line" as const,
+      label: t("expenditure"),
+    })),
+    ...holding.map((run) => ({
+      points: run,
+      role: "subject" as const,
+      style: "dashed" as const,
+      label: t("holding"),
+    })),
+  ];
   return (
-    <DetailScreen title="Expenditure">
+    <DetailScreen title={t("expenditure")}>
       {first && last ? (
         <>
           {at ? (
             <RangeSummary
-              stats={[
-                { label: "Estimate", value: kcal(at.kcal), unit: "kcal" },
-                { label: "Range", value: `${kcal(at.low)}–${kcal(at.high)}`, unit: "kcal" },
+              label={shortDay(at.day, format.tag, true)}
+              value={kcal(at.kcal)}
+              unit={t("kcal")}
+              meta={[
+                t("rangeKcal", { range: format.range(at.low, at.high) }),
+                at.holding ? t("holding") : "",
               ]}
-              caption={`${shortDay(at.day, language, true)}${at.holding ? " · Holding" : ""}`}
             />
           ) : (
             <RangeSummary
-              stats={[
-                {
-                  label: "Average",
-                  value: kcal(shown.reduce((sum, point) => sum + point.kcal, 0) / shown.length),
-                  unit: "kcal",
-                },
-                {
-                  label: "Difference",
-                  value: `${last.kcal < first.kcal ? "−" : last.kcal > first.kcal ? "+" : ""}${kcal(Math.abs(last.kcal - first.kcal))}`,
-                  unit: "kcal",
-                },
-              ]}
-              caption={`${shortDay(first.day, language)} – ${date(last.day)}`}
+              label={t("average")}
+              value={kcal(shown.reduce((sum, point) => sum + point.kcal, 0) / shown.length)}
+              unit={t("kcal")}
+              delta={format.number(last.kcal - first.kcal, 0, true)}
+              meta={[format.dateRange(dateOf(first.day), dateOf(last.day))]}
             />
           )}
           <TrendChart
             from={from}
             to={today}
-            lines={[
-              { key: "estimate", segments: learned, color: accent },
-              { key: "holding", segments: holding, color: accent, dashed: true },
-            ]}
-            band={{ points: shown, color: accent }}
+            lines={lines}
+            band={{ points: shown, label: t("estimateRange") }}
             markers={{
               points: data.checkIns.map((row) => ({ day: row.day, value: row.kcal })),
-              color: foreground,
+              label: data.checkIns.some((row) => row.day >= from) ? t("checkIn") : undefined,
             }}
             minSpan={300}
-            format={(value) => number(value, 0)}
-            label={`Estimated expenditure, ${shortDay(first.day, language)} to ${shortDay(last.day, language)}: ${kcal(first.kcal)} to ${kcal(last.kcal)} kcal a day`}
-            scrub={scrub}
-            onScrub={setScrub}
+            yFormat={kcal}
+            summary={t("expenditureChartSummary", {
+              from: shortDay(first.day, format.tag),
+              to: shortDay(last.day, format.tag),
+              start: kcal(first.kcal),
+              end: kcal(last.kcal),
+            })}
+            onScrub={(point) => setScrub(point?.day ?? null)}
           />
-          <RangeChips value={range} onChange={setRange} />
-          <Legend
-            items={[
-              {
-                label: "Range",
-                swatch: (
-                  <View
-                    className="h-3 w-4 rounded-sm"
-                    style={{ backgroundColor: accent, opacity: 0.3 }}
-                  />
-                ),
-              },
-              {
-                label: "Expenditure",
-                swatch: (
-                  <View className="h-0.5 w-4 rounded-full" style={{ backgroundColor: accent }} />
-                ),
-              },
-              {
-                label: "Holding",
-                swatch: (
-                  <View className="w-4 flex-row gap-1">
-                    <View
-                      className="h-0.5 flex-1 rounded-full"
-                      style={{ backgroundColor: accent }}
-                    />
-                    <View
-                      className="h-0.5 flex-1 rounded-full"
-                      style={{ backgroundColor: accent }}
-                    />
-                  </View>
-                ),
-              },
-              ...(data.checkIns.some((row) => row.day >= from)
-                ? [
-                    {
-                      label: "Check-in",
-                      swatch: (
-                        <View
-                          className="h-2.5 w-2.5 rounded-sm border-2"
-                          style={{ borderColor: foreground }}
-                        />
-                      ),
-                    },
-                  ]
-                : []),
-            ]}
-          />
+          <RangeChips value={range} onChange={setRange} accessibilityLabel={t("chartRange")} />
         </>
       ) : (
-        <SystemPanel className="p-4">
-          <SystemPanel.Body className="gap-2">
-            <Text className="font-semibold">No estimate yet</Text>
-            <Text className="text-sm text-muted">
-              Mark days complete and weigh in regularly. The estimate starts once three weeks hold
-              12 usable days and six weigh-ins, or from your program’s starting estimate.
-            </Text>
-          </SystemPanel.Body>
-        </SystemPanel>
+        <SystemState kind="empty" code={t("noEstimateYet")} message={t("noEstimateHelp")} />
       )}
-      <Explainer title="How is expenditure estimated?">
-        <Text className="text-sm text-muted">
-          Each day looks back 21 days. Complete and fasting days, in runs of at least seven, are
-          matched to the change in your weight trend at 7,700 kcal per kg: what you ate minus the
-          energy that went into or came out of storage. Day-to-day values are smoothed.
-        </Text>
-        <Text className="text-sm text-muted">
-          Without enough new evidence the estimate holds. The shaded range narrows with more usable
-          days and steadier weigh-ins. Check-ins use the same evidence but move more slowly, so
-          their numbers can differ a little. It is an estimate, not a measurement.
-        </Text>
-        <SystemButton
-          variant="ghost"
-          className="self-start px-0"
-          labelClassName="text-accent-soft-foreground"
-          onPress={() => router.push("/coaching-method")}
-        >
-          How check-ins work
-        </SystemButton>
+      <Explainer title={t("howExpenditureEstimated")}>
+        <Note>{t("expenditureExplainerMethod")}</Note>
+        <Note>{t("expenditureExplainerHolding")}</Note>
+        <LinkButton icon="forward" onPress={() => router.push("/coaching-method")}>
+          {t("coachingMethodTitle")}
+        </LinkButton>
       </Explainer>
     </DetailScreen>
   );

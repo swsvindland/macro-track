@@ -4,6 +4,7 @@ const { readFileSync, readdirSync } = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
+const { englishT, kitMock } = require("./kit-mock.cjs");
 const { drizzle } = require(
   path.join(path.dirname(require.resolve("drizzle-orm/expo-sqlite")), "driver.cjs")
 );
@@ -38,8 +39,8 @@ function load(file, dependencies = {}, compile = false) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const rank = load("src/lib/food-rank.ts");
-const foodIcons = load("src/lib/food-icons.ts");
 const metrics = load("src/lib/metrics.ts");
+const translations = load("src/lib/translations.ts");
 const foodTime = load("src/lib/food-time.ts", { "./nutrition": nutrition });
 const schema = load("src/db/schema.ts");
 const food = {
@@ -164,11 +165,13 @@ function loggerHarness(diary, fastLog, props = {}) {
     },
     "react-native": {
       View: "View",
+      Pressable: "Pressable",
       ScrollView: "ScrollView",
       AppState: {},
       Platform: { OS: "ios" },
       Alert: { alert: () => {} },
     },
+    "@/vector": kitMock(load),
     "@/components/system": {
       SystemButton: "Button",
       SystemIconButton: "IconButton",
@@ -181,7 +184,6 @@ function loggerHarness(diary, fastLog, props = {}) {
       Choices: "Choices",
       DateInput: "DateInput",
       ErrorText: "Error",
-      SearchInput: "SearchInput",
     },
     "@/lib/diary": diary,
     "@/lib/metrics": metrics,
@@ -191,10 +193,7 @@ function loggerHarness(diary, fastLog, props = {}) {
     "@/lib/fast-log": fastLog,
     "@/lib/food-catalog": { searchCatalog: async () => ({ foods: [], fixes: {} }) },
     "@/lib/food-rank": rank,
-    "@/lib/food-icons": foodIcons,
-    "./food-icon": { FoodIcon: "FoodIcon" },
     "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
-    "./ai-mark": { AiMark: "AiMark" },
     "./amount-picker": {
       AmountPicker: "AmountPicker",
       PortionPreview: "PortionPreview",
@@ -205,7 +204,12 @@ function loggerHarness(diary, fastLog, props = {}) {
     "./quick-add": { QuickAdd: "QuickAdd" },
     "./time-field": { TimeField: "TimeField" },
   };
-  const store = { diaryLayout: "meals", number: (n) => String(n), date: (day) => day };
+  const store = {
+    diaryLayout: "meals",
+    number: (n) => String(n),
+    date: (day) => day,
+    t: englishT,
+  };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
   dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
   dependencies["./widget"] ??= { updateWidget: () => {} };
@@ -241,6 +245,10 @@ function nodes(tree) {
     ...nodes(tree.props?.children),
     ...nodes(tree.props?.footer),
     ...nodes(tree.props?.header),
+    // A kit RecordRow draws the elements it is handed in these slots.
+    ...(tree.type === "RecordRow"
+      ? [tree.props.leading, tree.props.description, tree.props.value].flatMap(nodes)
+      : []),
   ];
 }
 /** An element's children in order, without empty slots, arrays or fragments. */
@@ -282,13 +290,9 @@ test("compiled logger shows its save bar only while something is selected", () =
   tree = logger.render();
   // One row: the selection's calories and protein beside the save button.
   const [bar] = flat(editor(tree).footer.props.children).filter((node) => node.type === "View");
-  assert.deepEqual(
-    flat(bar.props.children).map((node) => [node.type, node.props.children]),
-    [
-      ["Text", "90 kcal · 5 g protein"],
-      ["Button", "Log 1 food"],
-    ]
-  );
+  const [summary, save] = flat(bar.props.children);
+  assert.deepEqual(flat(summary.props.children)[0].props.items, ["90 kcal", "5 g protein"]);
+  assert.deepEqual([save.type, save.props.children], ["Button", "Log 1 food"]);
   find(tree, "IconButton", `Remove ${food.name}`).props.onPress();
   assert.equal(editor(logger.render()).footer, undefined, "emptied again: the bar goes");
   sqlite.close();
@@ -407,8 +411,7 @@ test("compiled logger folds the day and time panel away so the search field stay
   const { diary, sqlite, fastLog } = diaryDatabase();
   const logger = loggerHarness(diary, fastLog);
   const scrolls = [];
-  const when = (tree) =>
-    tree.find((node) => node.type === "Button" && node.props.icon === "time-outline");
+  const when = (tree) => tree.find((node) => node.type === "Button" && node.props.icon === "time");
   // The day rides on the time field's row rather than a field of its own.
   const panel = (tree) =>
     tree
@@ -517,12 +520,14 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "react-native": {
       View: "View",
+      Pressable: "Pressable",
       ActivityIndicator: "ActivityIndicator",
       AppState: {},
       Platform: { OS: "ios" },
       Linking: {},
       AccessibilityInfo: {},
     },
+    "@/vector": kitMock(load),
     "expo-router": { router: {}, useIsFocused: () => true },
     "expo-camera": { CameraView: "CameraView", useCameraPermissions: () => [] },
     "@/components/system": {
@@ -541,9 +546,6 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       ...element("Choices"),
       ...element("DateInput"),
       ...element("Screen"),
-      ...element("ActionMenu"),
-      ...element("DayPicker"),
-      ...element("SwipeRow"),
       ErrorText: "Error",
     },
     "@/components/measurements/use-measurement-log": { useMeasurementLog: () => ({}) },
@@ -559,11 +561,9 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
     "@/lib/food-rank": rank,
-    "@/lib/food-icons": foodIcons,
     "@/lib/local-ai": {},
     "@/lib/nutrition-label": {},
     "@/lib/weigh-in": { weighInDue: () => false },
-    "./food-icon": element("FoodIcon"),
     "./food-editor": { FoodEditor: "FoodEditor", FoodRow: "FoodRow" },
     "./fast-logger": element("FastLogger"),
     "./home-check-in": element("HomeCheckIn"),
@@ -572,7 +572,6 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "./quick-log-bar": element("QuickLogBar"),
     "./meal-editor": element("MealEditor"),
     "./nutrient-list": { ...element("FoodNutrients"), ...element("DayNutrients") },
-    "./ai-mark": element("AiMark"),
     "./recipe-editor": element("RecipeEditor"),
     "./photo-logger": { PhotoLogger: "PhotoLogger", photoLoggingOffered: () => false },
     "./copy-day": { CopyDay: "CopyDay", MoveEntries: "MoveEntries" },
@@ -587,6 +586,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     language: "en",
     number: (n) => String(Math.round(n)),
     date: (day) => day,
+    t: englishT,
     ...storeOverrides,
   };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
@@ -608,212 +608,42 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
   };
 }
-/** The icon a row leads with. */
-const iconIn = (row) => {
-  assert.ok(row, "row");
-  return nodes(row.props.children).find((node) => node.type === "FoodIcon")?.props.icon;
-};
-
-test("food icons name the dish before what it's made of", () => {
-  const { foodIcon, mealIcon } = foodIcons;
-  const icon = (name, more = {}) =>
-    foodIcon({ id: "usda:1", name, brand: "", source: "usda", ...more });
-  const expect = (cases) => {
-    for (const [name, expected] of Object.entries(cases)) assert.equal(icon(name), expected, name);
-  };
-  expect({
-    pizza: "🍕",
-    egg: "🥚",
-    chicken: "🍗",
-    beef: "🥩",
-    steak: "🥩",
-    fish: "🐟",
-    salmon: "🐟",
-    rice: "🍚",
-    bread: "🍞",
-    toast: "🍞",
-    cheese: "🧀",
-    milk: "🥛",
-    coffee: "☕",
-    apple: "🍎",
-    banana: "🍌",
-    salad: "🥗",
-    lettuce: "🥗",
-    cereal: "🥣",
-    yogurt: "🥣",
-    pasta: "🍝",
-    burger: "🍔",
-    fries: "🍟",
-    soda: "🥤",
-    beer: "🍺",
-    cookie: "🍪",
-    donut: "🍩",
-    chocolate: "🍫",
-    nuts: "🥜",
-    potato: "🥔",
-  });
-  // The first match in the table's order: a dish wins over its ingredients.
-  expect({
-    "Chicken pizza": "🍕",
-    "Egg noodles": "🍜",
-    "Chicken noodle soup": "🍲",
-    "Peanut butter cookie": "🍪",
-    "Milk chocolate": "🍫",
-    "Coffee cake": "🍰",
-    "Chicken and rice": "🍗",
-  });
-  // A longer phrase takes its words with it.
-  expect({
-    "Crab cakes": "🦀",
-    "Root beer": "🥤",
-    "Chocolate milk": "🥛",
-    "Peanut butter": "🥜",
-    "Ice cream sandwich": "🍨",
-    "Sweet potato fries": "🍟",
-    "Hot dog bun": "🍞",
-    "Tart cherry juice": "🧃",
-  });
-  // Whole words only, as written or singular, with accents, & and apostrophes read plainly.
-  expect({
-    Eggplant: "🍆",
-    Pineapple: "🍍",
-    Hamburger: "🍔",
-    Popcorn: "🍿",
-    Eggs: "🥚",
-    Cherries: "🍒",
-    Potatoes: "🥔",
-    "Jalapeño poppers": "🌶️",
-    "Crème brûlée": "🍮",
-    "Mac & Cheese": "🍝",
-    "Reese's Peanut Butter Cups": "🍫",
-  });
-  // Catalogs name the kind first; so do the owner's foods from MacroFactor.
-  expect({
-    "Milk, chocolate, fluid, commercial": "🥛",
-    "Rolls, hamburger or hot dog": "🍞",
-    "Oil, olive, salad or cooking": "🫒",
-    "Cheddar Cheese, Natural": "🧀",
-    Pepperoni: "🥓",
-    "Turkey Breast Low Salt Prepackaged Or Deli Meat": "🍗",
-    "Sourdough Bread": "🍞",
-    "Hot & Spicy Chicken Wings Sections By Trader Joe's": "🍗",
-    "Fat Free Ultra Filtered Milk By Fairlife": "🥛",
-    "Frosted Mini-Wheats Bite Size By Kellogg's": "🥣",
-    "Beef Jerky Teriyaki By Jack Link's": "🥩",
-  });
-  // The brand speaks only when the name doesn't.
-  assert.equal(icon("Glazed", { brand: "Dunkin' Donuts" }), "🍩");
-  assert.equal(icon("Pink salmon", { brand: "Chicken of the Sea" }), "🐟");
-  // Quick adds are estimates whatever they're called; recipes and the rest fall back.
-  assert.equal(foodIcon({ id: "quick:1-a", name: "Pizza", brand: "", source: "custom" }), "⚡");
-  assert.equal(icon("Nana's special", { id: "recipe:1", source: "recipe" }), "🍲");
-  assert.equal(icon("Protein pancakes", { id: "recipe:2", source: "recipe" }), "🥞");
-  assert.equal(icon("Mystery item"), "🍽️");
-  assert.equal(icon(""), "🍽️");
-  assert.equal(mealIcon("Usual breakfast"), "🍽️");
-  assert.equal(mealIcon("Burrito bowl"), "🌯");
-});
-
-test("compiled food icon is one small size and silent to screen readers", () => {
-  const jsx = (type, props) => ({ type, props });
-  const { FoodIcon } = load(
-    "src/components/nutrition/food-icon.tsx",
-    {
-      "react/jsx-runtime": { jsx, jsxs: jsx },
-      "react/compiler-runtime": {
-        c: (size) => Array(size).fill(Symbol.for("react.memo_cache_sentinel")),
-      },
-      "@/components/system": { SystemText: "Text" },
-    },
-    true
-  );
-  const { type, props } = FoodIcon({ icon: "🍕" });
-  assert.equal(type, "Text");
-  assert.equal(props.children, "🍕");
-  assert.equal(props.accessibilityElementsHidden, true);
-  assert.equal(props.importantForAccessibility, "no");
-  // Sized like the other icons, not with the text, so every row lines up.
-  assert.equal(props.allowFontScaling, false);
-  assert.match(props.className, /\bw-7\b/);
-});
-
-test("compiled logger leads Log again, search results, saved foods and saved meals with icons", () => {
-  const { diary, sqlite, fastLog } = diaryDatabase();
-  const day = nutrition.shiftDay(metrics.localDay(), -1);
-  const pizza = { ...food, id: "custom:pizza", name: "Chicken pizza" };
-  const yogurt = { ...food, id: "custom:yogurt", name: "Greek yogurt" };
-  for (const item of [pizza, yogurt])
-    diary.saveEntry({
-      day,
-      meal: "Lunch",
-      loggedTime: "12:00",
-      ...nutrition.portionItem(item, "g", 50),
-    });
-  diary.saveMeal("Burrito bowl", day, "Lunch");
-  diary.toggleFavorite(yogurt);
-  const logger = loggerHarness(diary, fastLog);
-  let tree = logger.render();
-  assert.equal(iconIn(find(tree, "Button", "Adjust Chicken pizza")), "🍕");
-  assert.equal(iconIn(find(tree, "Button", `Adjust ${food.name}`)), "🍽️");
-  assert.equal(iconIn(find(tree, "Button", "Adjust Burrito bowl")), "🌯");
-  // The saved row's tile, not a list row's + button.
-  assert.equal(iconIn(find(tree, "Button", "Add Greek yogurt")), "🥣");
-  search(tree).onChange("pizza");
-  tree = logger.render();
-  assert.equal(iconIn(find(tree, "Button", "Adjust Chicken pizza")), "🍕");
-  logger.unmount();
-  sqlite.close();
-});
-
-test("compiled Home and Library rows lead with the food's icon", () => {
+test("compiled Home and Library rows name their foods in words; every food list is a FoodRow", () => {
   const { diary, sqlite } = diaryDatabase();
   const today = metrics.localDay();
   const pizza = { ...food, id: "custom:pizza", name: "Chicken pizza" };
-  const quick = {
-    ...food,
-    id: "quick:1-a",
-    name: "Pizza slice",
-    basis: "serving",
-    sourceVersion: "quick-1",
-    portions: [{ label: "1 entry", amount: 1 }],
-  };
   diary.saveEntry({
     day: today,
     meal: "Lunch",
     loggedTime: "00:00",
     ...nutrition.portionItem(pizza, "g", 100),
   });
-  diary.saveEntry({
-    day: today,
-    meal: "Lunch",
-    loggedTime: "00:00",
-    food: quick,
-    amount: 1,
-    portionLabel: "1 estimated entry",
-  });
   const home = screenHarness(diary);
   const tree = home.render(home.load("src/components/nutrition/today-screen.tsx").TodayScreen);
-  assert.equal(iconIn(find(tree, "Button", "Edit Chicken pizza")), "🍕");
-  assert.equal(iconIn(find(tree, "Button", "Edit Pizza slice")), "⚡");
+  // No emoji leads the row: its time, then its name.
+  const row = find(tree, "RecordRow", "Edit Chicken pizza");
+  assert.equal(row.props.leading, undefined);
+  assert.deepEqual(
+    [row.props.time, row.props.title],
+    [foodTime.formatClock("00:00", "en"), "Chicken pizza"]
+  );
 
   diary.saveMeal("Burrito bowl", today, "Lunch");
   const library = screenHarness(diary);
   const shelf = library.render(
     library.load("src/components/nutrition/library-screen.tsx").LibraryScreen
   );
-  const meal = shelf.find(
-    (node) =>
-      node.type === "Button" &&
-      nodes(node.props.children).some((child) => child.props.children === "Burrito bowl")
-  );
-  assert.equal(iconIn(meal), "🌯");
+  const meal = shelf.find((node) => node.type === "ListRow" && node.props.title === "Burrito bowl");
+  assert.equal(meal.props.description, "1 foods · 180 kcal");
   // Every food list in Library and the food finder is a FoodRow.
   assert.ok(shelf.some((node) => node.type === "FoodRow" && node.props.food.id === pizza.id));
   const rows = screenHarness(diary);
   const { FoodRow } = rows.load("src/components/nutrition/food-editor.tsx");
-  const row = rows.render(FoodRow, { food: pizza, onPress: () => {} })[0];
-  assert.equal(row.props.accessibilityLabel, "Log Chicken pizza");
-  assert.equal(iconIn(row), "🍕");
+  const [listed] = rows.render(FoodRow, { food: pizza, onPress: () => {} });
+  assert.deepEqual(
+    [listed.type, listed.props.title, listed.props.description, listed.props.accessibilityLabel],
+    ["ListRow", "Chicken pizza", "My food · 180 kcal / 100 g", "Log Chicken pizza"]
+  );
   sqlite.close();
 });
 
@@ -839,10 +669,13 @@ function logMacros(diary, day, time, name, [calories, protein, fat, carbs], meal
 const heading = (tree, title) =>
   tree.find(
     (node) =>
-      node.type === "Text" &&
+      node.type === "View" &&
       node.props.accessibilityRole === "header" &&
-      node.props.children?.[0] === title
+      flat(node.props.children)[0]?.props.children === title
   );
+/** The totals under a heading: calories, then P · C · F. */
+const totalsOf = (header) =>
+  flat(header.props.children).find((node) => node.type === "Meta")?.props.items;
 const logger = (tree) => tree.find((node) => node.type === "FastLogger");
 
 test("compiled Home heads each hour with its totals and a + that logs into it", (t) => {
@@ -858,12 +691,12 @@ test("compiled Home heads each hour with its totals and a + that logs into it", 
   const { TodayScreen } = home.load("src/components/nutrition/today-screen.tsx");
   let tree = home.render(TodayScreen);
   const lunch = heading(tree, noon);
-  assert.equal(lunch.props.children[1].props.children, " · 236 kcal · 11P 21F 1C");
+  assert.deepEqual(totalsOf(lunch), ["236 kcal", "P 11", "C 1", "F 21"]);
   assert.equal(
     lunch.props.accessibilityLabel,
-    `${noon}, 236 kcal, protein 11 g, fat 21 g, carbs 1 g`
+    `${noon}, 236 kcal, protein 11 g, carbs 1 g, fat 21 g`
   );
-  assert.equal(heading(tree, clock("08:00")).props.children[1].props.children.at(-1), "C");
+  assert.deepEqual(totalsOf(heading(tree, clock("08:00"))), ["300 kcal", "P 10", "C 50", "F 5"]);
   // Only hours with food while empty hours are hidden, each with its own +.
   const pluses = (tree) =>
     tree.filter(
@@ -895,7 +728,7 @@ test("compiled Home heads each hour with its totals and a + that logs into it", 
   tree = all.render(Shown);
   assert.equal(pluses(tree).length, 24);
   const three = clock("15:00");
-  assert.deepEqual(heading(tree, three).props.children, [three, false]);
+  assert.equal(totalsOf(heading(tree, three)), undefined);
   assert.equal(find(tree, "ActionMenu", `Options for ${three}`), undefined);
   find(tree, "IconButton", `Log food at ${three}`).props.onPress();
   tree = all.render(Shown);
@@ -908,10 +741,7 @@ test("compiled Home heads each hour with its totals and a + that logs into it", 
   const classic = screenHarness(diary, { diaryLayout: "meals" });
   const Meals = classic.load("src/components/nutrition/today-screen.tsx").TodayScreen;
   tree = classic.render(Meals);
-  assert.equal(
-    heading(tree, "Breakfast").props.children[1].props.children,
-    " · 300 kcal · 10P 5F 50C"
-  );
+  assert.deepEqual(totalsOf(heading(tree, "Breakfast")), ["300 kcal", "P 10", "C 50", "F 5"]);
   find(tree, "IconButton", "Log food to Breakfast").props.onPress();
   tree = classic.render(Meals);
   assert.deepEqual(
@@ -921,24 +751,22 @@ test("compiled Home heads each hour with its totals and a + that logs into it", 
   sqlite.close();
 });
 
-test("compiled Home rows put calories and macros between the name and the portion", (t) => {
+test("compiled Home rows show the time, the food with its portion and macros, then calories", (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 13, 5, 0) });
   const { diary, sqlite } = diaryDatabase();
   logMacros(diary, metrics.localDay(), "12:00", "Pepperoni", [151, 6, 14, 0]);
   const home = screenHarness(diary);
   const tree = home.render(home.load("src/components/nutrition/today-screen.tsx").TodayScreen);
-  const row = find(tree, "Button", "Edit Pepperoni");
-  // Nothing trails the text, so long names get the width.
-  const [icon, text] = flat(row.props.children);
+  const row = find(tree, "RecordRow", "Edit Pepperoni");
+  const { time, title, description, value: calories } = row.props;
+  assert.equal(time, foodTime.formatClock("12:00", "en"));
+  assert.equal(title, "Pepperoni");
+  // The portion, then P · C · F.
+  assert.deepEqual(description.props.items, ["30 g", "P 6", "C 0", "F 14"]);
   assert.deepEqual(
-    [icon.type, text.type, flat(row.props.children).length],
-    ["FoodIcon", "View", 2]
+    [calories.type, calories.props.value, calories.props.unit],
+    ["Value", "151", "kcal"]
   );
-  const [name, numbers, portion] = flat(text.props.children);
-  assert.equal(name.props.children, "Pepperoni");
-  assert.deepEqual(numbers.props.children[0].props.children, ["151", " kcal"]);
-  assert.equal(numbers.props.children[1], " · 6P 14F 0C");
-  assert.deepEqual(portion.props.children, [`${foodTime.formatClock("12:00", "en")} · `, "30 g"]);
   sqlite.close();
 });
 
@@ -959,12 +787,12 @@ test("compiled Home keeps the week strip at the top and opens the day it picks",
   strip.props.onChange(yesterday);
   const tree = home.render(TodayScreen);
   assert.equal(tree.find((node) => node.type === "WeekStrip").props.day, yesterday);
-  assert.ok(find(tree, "Button", `Edit ${food.name}`), "yesterday's food is listed");
+  assert.ok(find(tree, "RecordRow", `Edit ${food.name}`), "yesterday's food is listed");
   sqlite.close();
 });
 
 /** The compiled week strip against the real diary, with a swipe that tests can finish. */
-function stripHarness(diary, db, firstWeekday = 2) {
+function stripHarness(diary, db, firstWeekday = 2, rtl = false) {
   const insights = load("src/lib/insights.ts", {
     "@/db": { db, ...schema },
     "./coaching-store": {},
@@ -990,6 +818,7 @@ function stripHarness(diary, db, firstWeekday = 2) {
       "react-native-gesture-handler": { Gesture: { Pan: pan }, GestureDetector: "GestureDetector" },
       "@/lib/insights": insights,
       "./amount-picker": { Ring: "Ring" },
+      "@/vector": { ...kitMock(load), useIsRTL: () => rtl },
     }
   );
   const { WeekStrip } = harness.load("src/components/nutrition/week-strip.tsx");
@@ -1018,9 +847,9 @@ test("compiled week strip rings each day's calories against its target", (t) => 
   assert.deepEqual(
     cells(tree).map((cell) => cell.props.accessibilityLabel),
     [
-      "Mon, Jan 8: 1000 of 2000 kcal",
-      "Tue, Jan 9: 2500 of 2000 kcal",
-      "Wed, Jan 10, today: 500 of 2000 kcal",
+      "Mon, Jan 8: 1,000 of 2,000 kcal",
+      "Tue, Jan 9: 2,500 of 2,000 kcal",
+      "Wed, Jan 10, today: 500 of 2,000 kcal",
       "Thu, Jan 11: upcoming",
       "Fri, Jan 12: upcoming",
       "Sat, Jan 13: upcoming",
@@ -1034,7 +863,7 @@ test("compiled week strip rings each day's calories against its target", (t) => 
   );
   assert.deepEqual(
     rings.map((ring) => ring.props.children.props.children),
-    [8, 9, 10, 11, 12, 13, 14]
+    ["8", "9", "10", "11", "12", "13", "14"]
   );
   assert.equal(flat(cells(tree)[0].props.children)[0].props.children, "M");
   assert.deepEqual(
@@ -1055,13 +884,16 @@ test("compiled week strip rings each day's calories against its target", (t) => 
   // Sunday first where the calendar says so.
   const sunday = stripHarness(diary, db, 1);
   tree = sunday.render({ ...props, day: "2024-01-07" });
-  assert.equal(cells(tree)[0].props.accessibilityLabel, "Sun, Jan 7: 1500 of 2000 kcal");
+  assert.equal(cells(tree)[0].props.accessibilityLabel, "Sun, Jan 7: 1,500 of 2,000 kcal");
   assert.equal(cells(tree).at(-1).props.accessibilityLabel, "Sat, Jan 13: upcoming");
   // Days without a target show calories alone and an empty ring.
   const early = stripHarness(diary, db);
   tree = early.render({ ...props, day: "2023-12-27" });
   assert.equal(cells(tree)[0].props.accessibilityLabel, "Mon, Dec 25: 0 kcal");
   assert.equal(tree.find((node) => node.type === "Ring").props.value, 0);
+  // Away from this week, a link reads "Today" and says where it goes.
+  const back = tree.find((node) => node.type === "Button" && node.props.children === "Today");
+  assert.equal(back.props.accessibilityLabel, "Back to today");
   sqlite.close();
 });
 
@@ -1115,6 +947,24 @@ test("compiled week strip swipes a week at a time, stopping at today, and reads 
   sqlite.close();
 });
 
+test("compiled week strip mirrors its swipe in a right-to-left layout", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2024, 0, 10, 12, 0, 0) });
+  const { diary, db, sqlite } = diaryDatabase();
+  const strip = stripHarness(diary, db, 2, true);
+  const picked = [];
+  const props = { day: "2024-01-10", today: "2024-01-10", onChange: (day) => picked.push(day) };
+  let tree = strip.render(props);
+  // Earlier days sit at the right edge: a swipe to the left goes back a week, one to the right
+  // forward, and there is no week after this one.
+  swipe(tree, 80);
+  assert.deepEqual(picked, []);
+  swipe(tree, -80);
+  tree = strip.render({ ...props, day: "2024-01-03" });
+  swipe(tree, 5, 900);
+  assert.deepEqual(picked, ["2024-01-03", "2024-01-10"]);
+  sqlite.close();
+});
+
 /** The compiled quick-log bar with a keyboard, app state and router that tests can drive. */
 function barHarness({ os = "ios", keyboardUp = false, status = null } = {}) {
   const keyboard = { visible: keyboardUp, listeners: {} };
@@ -1128,6 +978,7 @@ function barHarness({ os = "ios", keyboardUp = false, status = null } = {}) {
     {
       "react-native": {
         View: "View",
+        Pressable: "Pressable",
         Platform: { OS: os },
         AppState: {
           addEventListener: (_, listener) => {
@@ -1155,7 +1006,6 @@ function barHarness({ os = "ios", keyboardUp = false, status = null } = {}) {
         photoLoggingOffered: (value) =>
           !!value && (value.state !== "unavailable" || value.reason === "disabled"),
       },
-      "./ai-mark": { AiMark: "AiMark" },
     }
   );
   const bar = harness.load("src/components/nutrition/quick-log-bar.tsx");
@@ -1174,20 +1024,17 @@ test("compiled quick-log bar searches, scans, and offers AI only where the model
     });
   let tree = render();
   harness.effects.forEach((effect) => effect());
-  // The pill names what it does; the primary button scans.
-  const pill = find(tree, "Button", "Search for a food");
-  assert.equal(
-    nodes(pill.props.children).find((node) => node.type === "Text").props.children,
-    "Search for a food"
-  );
-  assert.equal(nodes(pill.props.children).filter((node) => node.type === "IconButton").length, 0);
+  // The search row (the kit's field-look button) names what it does; the primary button scans.
+  const pill = tree.find((node) => node.type === "SearchTrigger");
+  assert.equal(pill.props.label, "Search for a food");
   pill.props.onPress();
   const scan = find(tree, "IconButton", "Scan barcode");
-  assert.deepEqual([scan.props.icon, scan.props.variant], ["barcode-outline", "primary"]);
+  assert.deepEqual([scan.props.icon, scan.props.variant], ["scan", "primary"]);
   scan.props.onPress();
   assert.equal(find(tree, "IconButton", "Log food"), undefined, "search already opens the logger");
   assert.deepEqual(pressed.splice(0), ["search", "scan"]);
-  const mark = (tree) => tree.find((node) => node.props?.icon?.type === "AiMark");
+  const mark = (tree) =>
+    tree.find((node) => node.type === "IconButton" && node.props.icon === "analysis");
   assert.equal(mark(tree), undefined, "no model, no AI mark");
   tree = render({ ai: { state: "unavailable", engine: "none", vision: false, reason: "device" } });
   assert.equal(mark(tree), undefined);
@@ -1203,19 +1050,19 @@ test("compiled quick-log bar searches, scans, and offers AI only where the model
   });
   assert.ok(find(tree, "IconButton", "Log a meal from a photo"));
   assert.deepEqual(pressed.splice(0), ["photo", "photo"]);
-  // The button wears the mark of the model on this phone, Apple Intelligence or Gemini.
-  assert.equal(find(tree, "IconButton", "Log a meal from a photo").props.icon.type, "AiMark");
+  // One analysis mark, whichever model runs on this phone.
+  assert.equal(find(tree, "IconButton", "Log a meal from a photo").props.icon, "analysis");
 
-  // Another day is named on the pill.
+  // Another day is named on the search row.
   tree = render({ label: "Log to Yesterday" });
-  assert.ok(find(tree, "Button", "Log to Yesterday"));
+  assert.equal(tree.find((node) => node.type === "SearchTrigger").props.label, "Log to Yesterday");
   assert.ok(find(tree, "IconButton", "Scan barcode"));
 
   // The keyboard hides it, so it never sits over the field being typed in.
   keyboard.listeners.keyboardWillShow();
   assert.deepEqual(render(), []);
   keyboard.listeners.keyboardWillHide();
-  assert.ok(find(render(), "Button", "Search for a food"));
+  assert.ok(render().some((node) => node.type === "SearchTrigger"));
 
   // Android lifts it above the keyboard, so it listens once the keyboard is up there too.
   const android = barHarness({ os: "android", keyboardUp: true });
@@ -1228,36 +1075,6 @@ test("compiled quick-log bar searches, scans, and offers AI only where the model
     "keyboardDidHide",
     "keyboardDidShow",
   ]);
-});
-
-test("the AI mark is Apple Intelligence on iOS and Gemini on Android", () => {
-  const jsx = (type, props) => ({ type, props });
-  const mark = (os) =>
-    load("src/components/nutrition/ai-mark.tsx", {
-      "react/jsx-runtime": { jsx, jsxs: jsx },
-      "react-native": { Platform: { OS: os } },
-      "expo-symbols": { SymbolView: "SymbolView" },
-      "heroui-native": { useThemeColor: (color) => `theme:${color}` },
-      "react-native-svg": {
-        __esModule: true,
-        default: "Svg",
-        Defs: "Defs",
-        LinearGradient: "LinearGradient",
-        Path: "Path",
-        Stop: "Stop",
-      },
-    }).AiMark;
-  const apple = mark("ios")({ size: 22 });
-  assert.equal(apple.type, "SymbolView");
-  assert.deepEqual(apple.props, {
-    name: "apple.intelligence",
-    size: 22,
-    tintColor: "theme:foreground",
-  });
-  const gemini = mark("android")({ size: 22 });
-  const svg = gemini.type({ size: 22 });
-  assert.equal(svg.type, "Svg");
-  assert.deepEqual([svg.props.width, svg.props.height], [22, 22]);
 });
 
 test("compiled tab bar opens Today's sheets through the app action, with the model's status", async () => {
@@ -1323,7 +1140,9 @@ test("compiled Home pins the quick-log bar above the tab bar in place of its Log
   logger(tree).props.close();
   // A fresh day hides its empty hours, so no hour offers a +.
   tree = render();
-  assert.ok(tree.some((node) => node.props?.children === "Nothing logged yet."));
+  assert.ok(
+    tree.some((node) => node.type === "SystemState" && node.props.message === "Nothing logged yet.")
+  );
   assert.equal(
     tree.find((node) => /^Log food (at|to) /.test(node.props?.accessibilityLabel ?? "")),
     undefined
@@ -1354,7 +1173,7 @@ test("compiled Home pins the quick-log bar above the tab bar in place of its Log
   logger(render()).props.close();
 
   // Choosing foods puts the selection bar in its place; Cancel brings it back.
-  find(render(), "Button", `Edit ${food.name}`).props.onLongPress();
+  find(render(), "RecordRow", `Edit ${food.name}`).props.onLongPress();
   tree = render();
   assert.equal(bar(tree), undefined);
   assert.ok(find(tree, "Button", "Cancel"));
@@ -1378,6 +1197,7 @@ test("compiled Home opens the logger ready to type from a search link", (t) => {
       "@/lib/local-ai": { modelStatus: async () => available, prewarmModel: () => {} },
       "react-native": {
         View: "View",
+        Pressable: "Pressable",
         Platform: { OS: "ios" },
         AppState: { addEventListener: () => ({ remove: () => {} }) },
         AccessibilityInfo: {
@@ -1415,7 +1235,7 @@ test("compiled logger opened from the bar has the search focused and the shortcu
   search(tree).onFocus();
   tree = typing.render();
   assert.equal(search(tree).autoFocus, false);
-  find(tree, "Button", `Adjust ${food.name}`).props.onPress();
+  find(tree, "Pressable", `Adjust ${food.name}`).props.onPress();
   editor(typing.render()).close();
   assert.equal(search(typing.render()).autoFocus, false);
 
@@ -1434,7 +1254,6 @@ function loadScreen(provided) {
   const react = {
     createContext: (value) => ({ value }),
     useContext: (context) => (context === ui.ScreenFooter ? provided : context.value),
-    useId: () => "id",
     useRef: (current) => ({ current }),
     useState: (initial) => [initial, () => {}],
   };
@@ -1444,52 +1263,34 @@ function loadScreen(provided) {
       jsx: (type, props) => ({ type, props }),
       jsxs: (type, props) => ({ type, props }),
     },
-    "react-native": {
-      Platform: { OS: "ios" },
-      ScrollView: "ScrollView",
-      View: "View",
-      useWindowDimensions: () => ({ width: 390 }),
-    },
-    "react-native-safe-area-context": {
-      SafeAreaView: "SafeAreaView",
-      useSafeAreaInsets: () => ({ top: 47, bottom: 83 }),
-    },
-    uniwind: { withUniwind: (component) => component },
-    "heroui-native": {},
-    "heroui-native/portal": {},
+    "react-native": {},
     "heroui-native-pro": {},
-    "react-native-gesture-handler": {},
     "react-native-gesture-handler/ReanimatedSwipeable": { __esModule: true },
-    "./system": { SystemText: "Text" },
+    "@/vector": { Screen: "KitScreen" },
+    "./system": {},
     "@/lib/app-actions": load("src/lib/app-actions.ts"),
-    "@/lib/metrics": metrics,
     "@/lib/store": { useStore: () => ({ t: (key) => key }) },
+    "@/lib/translations": { isMessage: () => false },
   });
   return ui;
 }
 
-test("Screen floats a tab's footer above the tab bar and keeps the page clear of it", () => {
+test("Screen docks a tab's footer above the tab bar, unless the screen brings its own", () => {
   const bar = { type: "TabQuickLogBar", props: {} };
   const render = (provided, footer) =>
-    nodes(loadScreen(provided).Screen({ title: "Plan", children: "Plan", footer }));
-  const padding = (tree) =>
-    tree.find((node) => node.type === "ScrollView").props.contentContainerStyle.paddingBottom;
-  const floating = (tree) => {
-    const view = tree.find(
-      (node) => node.type === "View" && node.props.style?.bottom !== undefined
-    );
-    return view && { bottom: view.props.style.bottom, content: view.props.children.props.children };
-  };
-  let tree = render(null);
-  assert.equal(padding(tree), 123, "clear of the floating tab bar");
-  assert.equal(floating(tree), undefined);
-  tree = render(bar);
-  // Above the floating tab bar, which is part of the safe area on iOS, with room to scroll past.
-  assert.deepEqual(floating(tree), { bottom: 83 + 8, content: bar });
-  assert.equal(padding(tree), 160);
+    loadScreen(provided).Screen({ title: "Plan", children: "Plan", footer });
+  let screen = render(null);
+  assert.equal(screen.type, "KitScreen");
+  assert.equal(screen.props.footer, null);
+  // The kit Screen docks it below the list and above the floating tab bar (see diary tests).
+  screen = render(bar);
+  assert.deepEqual(
+    { title: screen.props.title, children: screen.props.children, footer: screen.props.footer },
+    { title: "Plan", children: "Plan", footer: bar }
+  );
   // A screen's own footer, such as Today's, takes the place.
   const own = { type: "Undo", props: {} };
-  assert.equal(floating(render(bar, own)).content, own);
+  assert.equal(render(bar, own).props.footer, own);
 });
 
 test("Progress and Plan mount the tab bar; Library and Settings don't", () => {
@@ -1553,11 +1354,18 @@ test("widget snapshot covers today and the week ahead, rounded, with each day's 
     },
     "./metrics": metrics,
     "./nutrition": nutrition,
+    "./translations": translations,
+    "@/vector": load("src/vector/format.ts"),
+    "expo-localization": { getLocales: () => [{ languageCode: "en", regionCode: "GB" }] },
   });
-  const snapshot = widget.widgetSnapshot("2026-12-29", (day) => ({
-    eaten: { calories: day === "2026-12-29" ? 1260.4 : 0, protein: 91.6, carbs: 0, fat: 0 },
-    target: day === "2027-01-01" ? null : target,
-  }));
+  const snapshot = widget.widgetSnapshot(
+    "2026-12-29",
+    (day) => ({
+      eaten: { calories: day === "2026-12-29" ? 1260.4 : 0, protein: 91.6, carbs: 0, fat: 0 },
+      target: day === "2027-01-01" ? null : target,
+    }),
+    "en"
+  );
   assert.deepEqual(Object.keys(snapshot.days), [
     "2026-12-29",
     "2026-12-30",
@@ -1575,11 +1383,57 @@ test("widget snapshot covers today and the week ahead, rounded, with each day's 
   });
   assert.equal(snapshot.days["2027-01-01"].target, null);
 
-  widget.updateWidget();
-  widget.updateWidget();
+  widget.updateWidget("en");
+  widget.updateWidget("en");
   // Unchanged numbers don't spend another widget reload.
   assert.equal(writes.filter((write) => write === "reload").length, 1);
-  const today = JSON.parse(writes[0][1]).days[metrics.localDay()];
+  const written = JSON.parse(writes[0][1]);
+  const today = written.days[metrics.localDay()];
   assert.deepEqual(today.eaten, { calories: 411, protein: 30, carbs: 41, fat: 12 });
   assert.deepEqual(today.target, target);
+  // The phone's region carries into number formatting for the app's language.
+  assert.equal(written.locale, "en-GB");
+
+  // A language change rewrites the widget's words even when the numbers are the same.
+  widget.updateWidget("de");
+  assert.equal(writes.filter((write) => write === "reload").length, 2);
+  assert.equal(JSON.parse(writes.at(-2)[1]).locale, "de-DE");
+});
+
+test("widget snapshot carries its locale and every string the widget shows, translated", () => {
+  const widget = load("src/lib/widget.ts", {
+    "@bacons/apple-targets": { ExtensionStorage: class {} },
+    "./diary": {},
+    "./metrics": metrics,
+    "./nutrition": nutrition,
+    "./translations": translations,
+    "@/vector": load("src/vector/format.ts"),
+    "expo-localization": {},
+  });
+  const read = () => ({ eaten: { calories: 0, protein: 0, carbs: 0, fat: 0 }, target: null });
+  // Field names match `WidgetText` in targets/widget/Widgets.swift; the widget decodes by name.
+  const swift = readFileSync("targets/widget/Widgets.swift", "utf8");
+  const fields = [
+    ...swift.match(/struct WidgetText: Codable \{\n([\s\S]*?)\n\}/)[1].matchAll(/var (\w+)/g),
+  ]
+    .map((match) => match[1])
+    .sort();
+  assert.ok(fields.length > 0);
+  for (const language of Object.keys(translations.languages)) {
+    const snapshot = widget.widgetSnapshot("2026-12-29", read, language, [
+      { languageCode: "de", regionCode: "CH" },
+    ]);
+    assert.deepEqual(Object.keys(snapshot.text).sort(), fields, language);
+    for (const [name, text] of Object.entries(snapshot.text))
+      assert.ok(typeof text === "string" && text.trim(), `${language}.${name}`);
+    assert.equal(typeof snapshot.locale, "string");
+  }
+  const de = widget.widgetSnapshot("2026-12-29", read, "de", [
+    { languageCode: "de", regionCode: "CH" },
+  ]);
+  assert.equal(de.locale, "de-CH");
+  assert.equal(de.text.scan, translations.translate("de", "scan"));
+  assert.equal(de.text.protein, translations.translate("de", "macroProtein"));
+  assert.equal(widget.widgetSnapshot("2026-12-29", read, "zh").locale, "zh-Hans-CN");
+  assert.equal(widget.widgetSnapshot("2026-12-29", read, "ja").text.kcalLeft, "kcal 残り");
 });

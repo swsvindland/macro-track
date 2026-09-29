@@ -8,8 +8,9 @@ import {
 } from "@/lib/food-time";
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import { SystemButton } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
+import { ListRow, Meta, Note, Panel, Text, Value, useKitFormat } from "@/vector";
 import {
   copyEntries,
   copyMeal,
@@ -25,6 +26,9 @@ import { meals, totalNutrients, type Meal } from "@/lib/nutrition";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
 import type { SavedMeal } from "@/db";
+
+/** Stands in for a total that cannot be worked out yet: never 0, which would be a claim. */
+const unknownMark = "—";
 
 export function MealEditor({
   source,
@@ -45,7 +49,8 @@ export function MealEditor({
   onLogged?: (receipt: DiaryReceipt) => void;
 }) {
   const { refresh } = useNutrition();
-  const { number, date, diaryLayout, language } = useStore();
+  const { number, date, diaryLayout, t } = useStore();
+  const format = useKitFormat();
   const available = useNutritionQuery(listSavedMeals);
   const sourceItems = useNutritionQuery(
     () =>
@@ -59,7 +64,7 @@ export function MealEditor({
     [source?.day, source?.meal, source?.group, source?.ids]
   );
   const [selected, setSelected] = useState(saved);
-  const [mode, setMode] = useState<"Save meal" | "Copy meal">("Save meal");
+  const [mode, setMode] = useState<"save" | "copy">("save");
   const [name, setName] = useState(source?.meal ?? "");
   const [day, setDay] = useState(initialDay);
   const [loggedTime, setLoggedTime] = useState(initialTime || currentFoodTime());
@@ -67,6 +72,10 @@ export function MealEditor({
   const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  // The choices the sheet opened with; changing any holds it until Cancel or the action.
+  const [opened] = useState(() => JSON.stringify([mode, name, day, loggedTime, meal, quantity]));
+  const dirty =
+    !success && JSON.stringify([mode, name, day, loggedTime, meal, quantity]) !== opened;
   const locked = useRef(false);
   const items = source ? sourceItems : (selected?.items ?? []);
   const totals = totalNutrients(items.map((item) => item.nutrients));
@@ -76,10 +85,10 @@ export function MealEditor({
     if (locked.current) return;
     locked.current = true;
     try {
-      if (source && mode === "Save meal") {
+      if (source && mode === "save") {
         const result = saveMeal(name, source.day, source.meal, source.group, source.ids);
         refresh();
-        setSuccess(`${result.name} is ready in your library.`);
+        setSuccess(t("mealSavedToLibrary", { name: result.name }));
       } else {
         const destinationMeal = diaryLayout === "timeline" ? mealAtTime(loggedTime) : meal;
         let receipt: DiaryReceipt;
@@ -95,7 +104,7 @@ export function MealEditor({
           );
         else if (selected)
           receipt = logSavedMeal(selected.id, day, destinationMeal, factor, loggedTime);
-        else throw new Error("Choose a saved meal first.");
+        else throw new Error(t("chooseSavedMealFirst"));
         refresh();
         onLogged?.(receipt);
         close();
@@ -103,69 +112,74 @@ export function MealEditor({
       setError("");
     } catch (e) {
       locked.current = false;
-      setError(e instanceof Error ? e.message : "Couldn't save this meal.");
+      setError(e instanceof Error ? e.message : t("couldNotSaveMeal"));
     }
   }
-  const locale = language === "zh" ? "zh-CN" : language;
+  const locale = format.tag;
   const clock = validFoodTime(loggedTime) ? formatClock(loggedTime, locale) : loggedTime;
+  const destination = diaryLayout === "timeline" ? clock : meal.toLowerCase();
   return (
     <Editor
       title={
         source?.ids
-          ? `Reuse ${source.ids.length === 1 ? "1 food" : `${source.ids.length} foods`}`
+          ? t(format.plural(source.ids.length) === "one" ? "reuseFoodsOne" : "reuseFoods", {
+              count: format.number(source.ids.length),
+            })
           : source
-            ? `Reuse ${source.group && source.group !== "untimed" ? formatClock(`${source.group}:00`, locale) : source.meal.toLowerCase()}`
+            ? t("reuseNamed", {
+                name:
+                  source.group && source.group !== "untimed"
+                    ? formatClock(`${source.group}:00`, locale)
+                    : source.meal.toLowerCase(),
+              })
             : selected
               ? selected.name
-              : "Saved meals"
+              : t("savedMeals")
       }
       open
       close={close}
+      dirty={dirty}
     >
       {success ? (
         <View className="gap-4">
-          <Text className="text-success" accessibilityLiveRegion="polite">
+          <Text tone="success" accessibilityLiveRegion="polite">
             {success}
           </Text>
-          <SystemButton onPress={close}>Done</SystemButton>
+          <SystemButton onPress={close}>{t("done")}</SystemButton>
         </View>
       ) : !source && !selected ? (
         <View className="gap-3">
-          <Text className="text-muted">Your usual meals, ready in a few taps.</Text>
-          {!available.length && (
-            <Text className="text-muted">
-              Log a meal in your diary, then tap Reuse to save it here.
-            </Text>
+          <Text tone="muted">{t("savedMealsIntro")}</Text>
+          {!available.length && <Text tone="muted">{t("savedMealsEmpty")}</Text>}
+          {!!available.length && (
+            <Panel inset="none">
+              {available.map((item) => (
+                <ListRow
+                  key={item.id}
+                  title={item.name}
+                  description={t("mealSummary", {
+                    count: format.number(item.items.length),
+                    kcal: format.number(
+                      totalNutrients(item.items.map((food) => food.nutrients)).calories
+                    ),
+                  })}
+                  onPress={() => setSelected(item)}
+                />
+              ))}
+            </Panel>
           )}
-          {available.map((item) => (
-            <SystemButton
-              key={item.id}
-              variant="secondary"
-              className="justify-start"
-              onPress={() => setSelected(item)}
-            >
-              <View className="flex-1 gap-1">
-                <Text className="font-semibold">{item.name}</Text>
-                <Text className="text-sm text-muted">
-                  {item.items.length} foods ·{" "}
-                  {number(totalNutrients(item.items.map((food) => food.nutrients)).calories, 0)}{" "}
-                  kcal
-                </Text>
-              </View>
-            </SystemButton>
-          ))}
         </View>
       ) : (
         <>
           {source && (
             <Choices
-              values={["Save meal", "Copy meal"] as const}
+              values={["save", "copy"] as const}
               value={mode}
               onChange={(value) => {
                 setMode(value);
                 setError("");
               }}
-              label={(value) => value}
+              label={(value) => t(value === "save" ? "saveMeal" : "copyMeal")}
             />
           )}
           {!source && !saved && (
@@ -177,68 +191,69 @@ export function MealEditor({
                 setError("");
               }}
             >
-              All saved meals
+              {t("allSavedMeals")}
             </SystemButton>
           )}
-          <SystemPanel>
-            <SystemPanel.Body className="gap-4">
+          <Panel>
+            <Panel.Body className="gap-4">
               <View className="gap-1">
-                <Text className="text-sm text-muted">
-                  {source?.ids
-                    ? date(source.day)
-                    : source
-                      ? `${source.meal} · ${date(source.day)}`
-                      : "Meal preview"}
-                </Text>
-                <Text className="text-3xl font-semibold tabular-nums">
-                  {validFactor ? number(totals.calories * factor, 0) : "—"}{" "}
-                  <Text className="text-base text-muted">kcal</Text>
-                </Text>
+                {source ? (
+                  <Meta items={source.ids ? [date(source.day)] : [source.meal, date(source.day)]} />
+                ) : (
+                  <Note>{t("mealPreview")}</Note>
+                )}
+                <Value
+                  size="l"
+                  value={validFactor ? format.number(totals.calories * factor) : unknownMark}
+                  unit={t("kcal")}
+                />
                 {validFactor && (
-                  <Text className="text-sm text-muted">
-                    {number(totals.protein * factor)} g protein · {number(totals.carbs * factor)} g
-                    carbs · {number(totals.fat * factor)} g fat
-                  </Text>
+                  <Meta
+                    items={[
+                      t("proteinGrams", { value: format.number(totals.protein * factor, 1) }),
+                      t("carbsGrams", { value: format.number(totals.carbs * factor, 1) }),
+                      t("fatGrams", { value: format.number(totals.fat * factor, 1) }),
+                    ]}
+                  />
                 )}
               </View>
               {items.map((item, index) => (
                 <View key={index} className="gap-1">
                   <Text>{item.food.name}</Text>
-                  <Text className="text-sm text-muted">
-                    {item.portionLabel}
-                    {factor !== 1 && validFactor ? ` × ${number(factor, 2)}` : ""}
-                  </Text>
+                  <Note>
+                    {factor !== 1 && validFactor
+                      ? t("portionTimes", { portion: item.portionLabel, factor: number(factor, 2) })
+                      : item.portionLabel}
+                  </Note>
                 </View>
               ))}
-            </SystemPanel.Body>
-          </SystemPanel>
-          {source && mode === "Save meal" ? (
+            </Panel.Body>
+          </Panel>
+          {source && mode === "save" ? (
             <>
               <Field
-                label="Meal name"
+                label={t("mealName")}
                 value={name}
                 onChange={setName}
-                placeholder="e.g. My usual breakfast"
+                placeholder={t("mealNamePlaceholder")}
               />
-              <Text className="text-sm text-muted">
-                Keep this combination of foods and portions for next time.
-              </Text>
+              <Note>{t("saveMealNote")}</Note>
             </>
           ) : (
             <>
               {!source && (
                 <Field
-                  label="Meal quantity"
+                  label={t("mealQuantity")}
                   value={quantity}
                   onChange={setQuantity}
                   numeric
-                  placeholder="1"
+                  placeholder={format.number(1)}
                 />
               )}
               {!source && (
-                <Text className="text-sm text-muted">
-                  Use 0.5 for half this meal, or 2 for double.
-                </Text>
+                <Note>
+                  {t("mealQuantityNote", { half: format.number(0.5, 1), double: format.number(2) })}
+                </Note>
               )}
               <TimeField
                 value={loggedTime}
@@ -249,48 +264,46 @@ export function MealEditor({
               {diaryLayout !== "timeline" && (
                 <Choices values={meals} value={meal} onChange={setMeal} label={(value) => value} />
               )}
-              <Text className="text-sm text-muted">
-                Adds {items.length} food entries to{" "}
-                {diaryLayout === "timeline" ? clock : meal.toLowerCase()} on {date(day)}. Existing
-                food stays in place.
-              </Text>
+              <Note>
+                {t(format.plural(items.length) === "one" ? "copyMealNoteOne" : "copyMealNote", {
+                  count: format.number(items.length),
+                  destination,
+                  date: date(day),
+                })}
+              </Note>
             </>
           )}
           <ErrorText message={error} />
           <SystemButton onPress={submit}>
-            {source && mode === "Save meal"
-              ? "Save to library"
+            {source && mode === "save"
+              ? t("saveToLibraryAction")
               : diaryLayout === "timeline"
-                ? `Log at ${clock}`
-                : `Add to ${meal.toLowerCase()}`}
+                ? t("logAtTime", { time: clock })
+                : t("addToNamedMeal", { meal: destination })}
           </SystemButton>
           {!source && selected && (
             <SystemButton
               variant="danger-soft"
               onPress={() =>
-                Alert.alert(
-                  "Remove saved meal?",
-                  "Previously logged food will stay in your diary.",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Remove",
-                      style: "destructive",
-                      onPress: () => {
-                        try {
-                          deleteSavedMeal(selected.id);
-                          refresh();
-                          close();
-                        } catch {
-                          setError("Couldn't remove this meal. Try again.");
-                        }
-                      },
+                Alert.alert(t("removeSavedMealTitle"), t("removeSavedMealBody"), [
+                  { text: t("cancel"), style: "cancel" },
+                  {
+                    text: t("remove"),
+                    style: "destructive",
+                    onPress: () => {
+                      try {
+                        deleteSavedMeal(selected.id);
+                        refresh();
+                        close();
+                      } catch {
+                        setError(t("couldNotRemoveMeal"));
+                      }
                     },
-                  ]
-                )
+                  },
+                ])
               }
             >
-              Remove from library
+              {t("removeFromLibrary")}
             </SystemButton>
           )}
         </>

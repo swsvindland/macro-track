@@ -1,15 +1,10 @@
 import { useEffect, useState } from "react";
 import { AppState, Keyboard, Platform, View } from "react-native";
 import { router } from "expo-router";
-import {
-  SystemButton,
-  SystemIcon,
-  SystemIconButton,
-  SystemText as Text,
-} from "@/components/system";
+import { IconButton, ScreenFooter, SearchTrigger } from "@/vector";
 import { requestAppAction, type AppAction } from "@/lib/app-actions";
 import { modelStatus, type ModelStatus } from "@/lib/local-ai";
-import { AiMark } from "./ai-mark";
+import { useStore } from "@/lib/store";
 import { photoLoggingOffered } from "./photo-logger";
 
 export type QuickLogAction = Extract<AppAction, "search" | "scan" | "photo">;
@@ -32,11 +27,12 @@ function useKeyboardShown() {
 }
 
 /**
- * Pinned above the tab bar: the pill opens the logger ready to search, the AI mark the photo or
- * description logger where this phone can run it, and the barcode button the scanner.
+ * The docked strip above the tab bar: the search row opens the logger ready to type, the
+ * analysis mark the photo or description logger where this phone can run it, and the barcode
+ * button (the screen's one primary action) the scanner.
  */
 export function QuickLogBar({
-  label = "Search for a food",
+  label,
   ai,
   onAction,
 }: {
@@ -45,46 +41,32 @@ export function QuickLogBar({
   ai: ModelStatus | null;
   onAction: (action: QuickLogAction) => void;
 }) {
+  const { t } = useStore();
   const keyboard = useKeyboardShown();
   if (keyboard) return null;
+  const search = label ?? t("searchForFood");
   return (
-    <View className="flex-row items-center gap-2">
-      <View className="flex-1 flex-row items-center rounded-full border border-border bg-overlay shadow-overlay">
-        <SystemButton
-          variant="ghost"
-          className="min-h-12 flex-1 justify-start gap-3 rounded-full px-4"
-          accessibilityLabel={label}
-          onPress={() => onAction("search")}
-        >
-          <SystemIcon name="search" size={20} color="muted" />
-          <Text numberOfLines={1} maxFontSizeMultiplier={1.3} className="shrink text-muted">
-            {label}
-          </Text>
-        </SystemButton>
+    <ScreenFooter>
+      {/* A field-look button, not a field: it opens the logger's own search. */}
+      <View className="min-w-0 flex-1">
+        <SearchTrigger label={search} onPress={() => onAction("search")} />
       </View>
       {photoLoggingOffered(ai) && (
-        <View className="rounded-full border border-border bg-overlay shadow-overlay">
-          <SystemIconButton
-            icon={<AiMark />}
-            className="h-12 w-12 min-w-12"
-            accessibilityLabel={
-              ai?.vision ? "Log a meal from a photo" : "Describe a meal to log it"
-            }
-            onPress={() => onAction("photo")}
-          />
-        </View>
-      )}
-      <View className="rounded-full shadow-overlay">
-        <SystemIconButton
-          icon="barcode-outline"
-          variant="primary"
-          iconSize={24}
-          className="h-12 w-12 min-w-12"
-          accessibilityLabel="Scan barcode"
-          onPress={() => onAction("scan")}
+        <IconButton
+          icon="analysis"
+          variant="secondary"
+          tone="tint"
+          accessibilityLabel={ai?.vision ? t("logMealFromPhoto") : t("describeMealToLog")}
+          onPress={() => onAction("photo")}
         />
-      </View>
-    </View>
+      )}
+      <IconButton
+        icon="scan"
+        variant="primary"
+        accessibilityLabel={t("scanBarcode")}
+        onPress={() => onAction("scan")}
+      />
+    </ScreenFooter>
   );
 }
 

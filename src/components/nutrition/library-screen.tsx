@@ -1,7 +1,18 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Linking, View } from "react-native";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Screen } from "@/components/ui";
+import {
+  Button,
+  ErrorText,
+  IconButton,
+  Label,
+  LinkButton,
+  ListRow,
+  Meta,
+  Note,
+  Panel,
+  Screen,
+  useKitFormat,
+} from "@/vector";
 import {
   favoriteFoods,
   personalFoods,
@@ -10,26 +21,83 @@ import {
   listRecipes,
 } from "@/lib/diary";
 import { catalogManifest } from "@/lib/food-catalog";
-import { mealIcon } from "@/lib/food-icons";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import type { Message } from "@/lib/translations";
 import type { SavedMeal } from "@/db";
 import { recipeFood, type Recipe, type Food, totalNutrients } from "@/lib/nutrition";
 import { RecipeEditor } from "./recipe-editor";
 import { MealEditor } from "./meal-editor";
 import { FoodEditor, FoodRow } from "./food-editor";
-import { FoodIcon } from "./food-icon";
+
+// The catalogs' own names are the same in every language; the license and download links are
+// translated.
+const catalogLinks: ({ key: string; url: string } & ({ name: string } | { label: Message }))[] = [
+  { key: "usda", name: "USDA FoodData Central", url: "https://fdc.nal.usda.gov/" },
+  { key: "off", name: "Open Food Facts", url: "https://world.openfoodfacts.org" },
+  {
+    key: "odbl",
+    label: "databaseLicense",
+    url: "https://opendatacommons.org/licenses/odbl/1-0/",
+  },
+  {
+    key: "dbcl",
+    label: "contentsLicense",
+    url: "https://opendatacommons.org/licenses/dbcl/1-0/",
+  },
+  {
+    key: "download",
+    label: "downloadFoodDatabase",
+    url: "https://github.com/swsvindland/macro-track/tree/main/assets/food",
+  },
+];
+const catalogNames = { usda: "USDA", off: "Open Food Facts" };
+
+/** An eyebrow over a row list, or over the sentence that says why the list is empty. */
+function Section({
+  eyebrow,
+  action,
+  note,
+  empty,
+  children,
+}: {
+  eyebrow: string;
+  action?: ReactNode;
+  /** Said above the rows when there are some. */
+  note?: string;
+  empty: string;
+  children: ReactNode[];
+}) {
+  return (
+    <View className="gap-2">
+      <View className="min-h-11 flex-row items-center justify-between gap-3">
+        <Label accessibilityRole="header" className="shrink">
+          {eyebrow}
+        </Label>
+        {action}
+      </View>
+      {!!children.length && !!note && <Note>{note}</Note>}
+      {children.length ? <Panel inset="none">{children}</Panel> : <Note>{empty}</Note>}
+    </View>
+  );
+}
 
 export function LibraryScreen() {
+  const { t } = useStore();
+  const format = useKitFormat();
   const sections = useNutritionQuery(
     () =>
       [
-        ["Saved foods", favoriteFoods()],
-        ["My foods", personalFoods()],
-        ["Recently logged", recentFoods()],
-      ] as [string, Food[]][]
+        ["saved", favoriteFoods()],
+        ["mine", personalFoods()],
+        ["recent", recentFoods()],
+      ] as ["saved" | "mine" | "recent", Food[]][]
   );
-  const { number } = useStore();
+  const titles = {
+    saved: { eyebrow: t("savedFoods"), empty: t("savedFoodsEmpty") },
+    mine: { eyebrow: t("myFoods"), empty: t("myFoodsEmpty") },
+    recent: { eyebrow: t("recentlyLogged"), empty: t("recentlyLoggedEmpty") },
+  };
   const savedMeals = useNutritionQuery(listSavedMeals);
   const recipes = useNutritionQuery(listRecipes);
   const [recipeEditor, setRecipeEditor] = useState<{ recipe?: Recipe } | null>(null);
@@ -41,172 +109,103 @@ export function LibraryScreen() {
       await Linking.openURL(url);
       setSourceError("");
     } catch {
-      setSourceError("Source links require an internet connection.");
+      setSourceError(t("sourceLinksOffline"));
     }
   }
   return (
     <>
-      <Screen title="Library" subtitle="Foods you know. Ready to log again.">
-        <SystemButton onPress={() => setEditor({})}>Find or create a food</SystemButton>
-        <View className="gap-3">
-          <View className="flex-row items-center justify-between">
-            <Text className="text-xl font-semibold">Recipes</Text>
-            <SystemButton variant="secondary" onPress={() => setRecipeEditor({})}>
-              Create recipe
-            </SystemButton>
-          </View>
-          {!recipes.length && (
-            <Text className="text-sm text-muted">
-              Your own ingredients. Nutrition worked out per serving.
-            </Text>
-          )}
+      <Screen title={t("library")} subtitle={t("librarySubtitle")}>
+        <Button onPress={() => setEditor({})}>{t("findOrCreateFood")}</Button>
+        <Section
+          eyebrow={t("recipes")}
+          empty={t("recipesEmpty")}
+          action={<LinkButton onPress={() => setRecipeEditor({})}>{t("createRecipe")}</LinkButton>}
+        >
           {recipes.map((recipe) => (
-            <View key={recipe.id} className="gap-1">
-              <FoodRow
-                food={recipeFood(recipe)}
-                onPress={() => setEditor({ food: recipeFood(recipe) })}
-              />
-              <SystemButton
-                variant="ghost"
-                className="self-start"
-                accessibilityLabel={`Edit ${recipe.name}`}
-                onPress={() => setRecipeEditor({ recipe })}
-              >
-                Edit recipe
-              </SystemButton>
-            </View>
+            <FoodRow
+              key={recipe.id}
+              food={recipeFood(recipe)}
+              onPress={() => setEditor({ food: recipeFood(recipe) })}
+              trailing={
+                <IconButton
+                  icon="edit"
+                  accessibilityLabel={t("editFoodNamed", { name: recipe.name })}
+                  onPress={() => setRecipeEditor({ recipe })}
+                />
+              }
+              accessibilityActions={[
+                { name: "edit", label: t("editFoodNamed", { name: recipe.name }) },
+              ]}
+              onAccessibilityAction={() => setRecipeEditor({ recipe })}
+            />
           ))}
-        </View>
-        <View className="gap-3">
-          <Text className="text-xl font-semibold">Saved meals</Text>
-          <Text className="text-sm text-muted">
-            {savedMeals.length
-              ? "Your usuals, ready to log again."
-              : "On Today, open a meal’s ··· menu and choose Save or copy this meal."}
-          </Text>
+        </Section>
+        <Section eyebrow={t("savedMeals")} empty={t("savedMealsEmpty")} note={t("savedMealsHint")}>
           {savedMeals.map((meal) => (
-            <SystemButton
+            <ListRow
               key={meal.id}
-              variant="secondary"
-              className="justify-start gap-3 bg-surface p-5"
+              title={meal.name}
+              description={t("mealSummary", {
+                count: format.number(meal.items.length),
+                kcal: format.number(
+                  totalNutrients(meal.items.map((item) => item.nutrients)).calories
+                ),
+              })}
               onPress={() => setMealEditor(meal)}
-            >
-              <FoodIcon icon={mealIcon(meal.name)} />
-              <View className="flex-1 gap-1">
-                <Text className="font-semibold">{meal.name}</Text>
-                <Text className="text-sm text-muted">
-                  {meal.items.length} foods ·{" "}
-                  {number(totalNutrients(meal.items.map((item) => item.nutrients)).calories, 0)}{" "}
-                  kcal
-                </Text>
-              </View>
-              <Text className="text-sm text-accent-soft-foreground">Log meal</Text>
-            </SystemButton>
+            />
           ))}
-        </View>
-        {sections.map(([title, foods]) => (
-          <View key={title} className="gap-2">
-            <Text className="text-xl font-semibold">{title}</Text>
-            {foods.length ? (
-              foods.map((food) => (
-                <FoodRow key={food.id} food={food} onPress={() => setEditor({ food })} />
-              ))
-            ) : (
-              <Text className="text-sm text-muted">
-                {title === "Saved foods"
-                  ? "Save a food while logging to keep it here."
-                  : title === "My foods"
-                    ? "Foods you create from a label will appear here."
-                    : "Your recent foods will appear after you log a meal."}
-              </Text>
-            )}
-          </View>
+        </Section>
+        {sections.map(([key, foods]) => (
+          <Section key={key} eyebrow={titles[key].eyebrow} empty={titles[key].empty}>
+            {foods.map((food) => (
+              <FoodRow key={food.id} food={food} onPress={() => setEditor({ food })} />
+            ))}
+          </Section>
         ))}
-        <SystemPanel>
-          <SystemPanel.Body className="gap-3">
-            <Text className="text-lg font-semibold">Your offline food catalog</Text>
-            <Text className="text-muted">
-              {number(catalogManifest.usda.included, 0)} USDA foods ·{" "}
-              {number(catalogManifest.off.included, 0)} US packaged foods
-            </Text>
-            <Text className="text-sm text-muted">
-              {number((catalogManifest.usda.bytes + catalogManifest.off.bytes) / 1000000, 1)} MB of
-              food data. Bundled with the app; no account or connection needed for food search.
-            </Text>
-            <Text className="text-sm text-muted">
-              Food updates arrive with app updates. Your diary keeps its original nutrition when the
-              catalog changes.
-            </Text>
-            <Text className="text-xs text-muted">
-              USDA · {catalogManifest.usda.version}
-              {"\n"}Open Food Facts · {catalogManifest.off.version}
-            </Text>
-            {catalogManifest.off.developmentSample && (
-              <Text className="text-sm text-muted">
-                The packaged catalog is a development sample. Create a custom food when a barcode is
-                missing.
-              </Text>
-            )}
-            <Text className="text-sm text-muted">
-              Generic foods from USDA FoodData Central (SR Legacy 2018), in the public domain under
-              CC0.
-            </Text>
-            <Text className="text-sm text-muted">
-              Contains information from Open Food Facts, which is made available here under the Open
-              Database License (ODbL). Individual contents are under the Database Contents License.
-              The packaged-food database in this app, and the recipe that builds it, are free to
-              download under the same license.
-            </Text>
-            <Text className="text-sm text-muted">
-              Check package labels; database records may be incomplete or outdated.
-            </Text>
-            <SystemButton
-              variant="ghost"
-              onPress={() => {
-                void openSource("https://fdc.nal.usda.gov/");
-              }}
-            >
-              USDA FoodData Central
-            </SystemButton>
-            <SystemButton
-              variant="ghost"
-              onPress={() => {
-                void openSource("https://world.openfoodfacts.org");
-              }}
-            >
-              Open Food Facts
-            </SystemButton>
-            <SystemButton
-              variant="ghost"
-              onPress={() => {
-                void openSource("https://opendatacommons.org/licenses/odbl/1-0/");
-              }}
-            >
-              Database license (ODbL)
-            </SystemButton>
-            <SystemButton
-              variant="ghost"
-              onPress={() => {
-                void openSource("https://opendatacommons.org/licenses/dbcl/1-0/");
-              }}
-            >
-              Contents license (DbCL)
-            </SystemButton>
-            <SystemButton
-              variant="ghost"
-              onPress={() => {
-                void openSource("https://github.com/swsvindland/macro-track/tree/main/assets/food");
-              }}
-            >
-              Download the food database
-            </SystemButton>
-            {!!sourceError && (
-              <Text accessibilityRole="alert" className="text-sm text-muted">
-                {sourceError}
-              </Text>
-            )}
-          </SystemPanel.Body>
-        </SystemPanel>
+        <Panel>
+          <Panel.Title>{t("offlineCatalog")}</Panel.Title>
+          <Panel.Body>
+            <Meta
+              tone="default"
+              items={[
+                t("usdaFoods", { count: format.number(catalogManifest.usda.included) }),
+                t("packagedFoods", { count: format.number(catalogManifest.off.included) }),
+              ]}
+            />
+            <Note>
+              {t("catalogSize", {
+                size: format.number(
+                  (catalogManifest.usda.bytes + catalogManifest.off.bytes) / 1000000,
+                  1
+                ),
+              })}
+            </Note>
+            <Note>{t("catalogUpdates")}</Note>
+            <View className="gap-1">
+              <Meta items={[catalogNames.usda, catalogManifest.usda.version]} />
+              <Meta items={[catalogNames.off, catalogManifest.off.version]} />
+            </View>
+            {catalogManifest.off.developmentSample && <Note>{t("catalogSample")}</Note>}
+            <Note>{t("usdaLicense")}</Note>
+            <Note>{t("offLicense")}</Note>
+            <Note>{t("checkLabels")}</Note>
+            <View>
+              {catalogLinks.map((link) => (
+                <LinkButton
+                  key={link.key}
+                  icon="external"
+                  accessibilityRole="link"
+                  onPress={() => {
+                    void openSource(link.url);
+                  }}
+                >
+                  {"label" in link ? t(link.label) : link.name}
+                </LinkButton>
+              ))}
+            </View>
+            <ErrorText message={sourceError} />
+          </Panel.Body>
+        </Panel>
       </Screen>
       {recipeEditor && (
         <RecipeEditor recipe={recipeEditor.recipe} close={() => setRecipeEditor(null)} />

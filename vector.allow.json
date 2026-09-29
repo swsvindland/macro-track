@@ -1,0 +1,28 @@
+{
+  "rules": {
+    "alert": {
+      "src/components/measurements/use-measurement-log.ts": 1,
+      "src/components/nutrition/coaching-panel.tsx": 1,
+      "src/components/nutrition/fast-logger.tsx": 1,
+      "src/components/nutrition/meal-editor.tsx": 1,
+      "src/components/nutrition/recipe-editor.tsx": 1,
+      "src/components/screens/photos-screen.tsx": 1
+    }
+  },
+  "eslintFiles": [
+    "src/components/nutrition/copy-day.tsx",
+    "src/components/nutrition/quick-add.tsx",
+    "src/components/nutrition/time-field.tsx"
+  ],
+  "reasons": {
+    "src/components/measurements/use-measurement-log.ts#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/nutrition/coaching-panel.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/nutrition/fast-logger.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/nutrition/meal-editor.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/nutrition/recipe-editor.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/screens/photos-screen.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/nutrition/copy-day.tsx#eslint": "L4 long-tail strings (not in the P1.3 table; Foundation edits here are mechanical only)",
+    "src/components/nutrition/quick-add.tsx#eslint": "L4 long-tail strings: Screens A replaced the uppercased macro field labels with t(); the rest of the form copy remains",
+    "src/components/nutrition/time-field.tsx#eslint": "L4 long-tail strings (not in the P1.3 table; Foundation edits here are mechanical only)"
+  }
+}

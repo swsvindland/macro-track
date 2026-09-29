@@ -40,11 +40,13 @@ export function NutritionProvider({ children }: { children: ReactNode }) {
     const timer = setTimeout(() => void syncHealthFood(), 3000);
     return () => clearTimeout(timer);
   }, [revision]);
+  const { language } = useStore();
   useEffect(() => {
-    // Launch, every write and each new day; a burst of edits reloads the widget once.
-    const timer = setTimeout(updateWidget, 500);
+    // Launch, every write, each new day and a language change; a burst of edits reloads the
+    // widget once.
+    const timer = setTimeout(() => updateWidget(language), 500);
     return () => clearTimeout(timer);
-  }, [revision]);
+  }, [revision, language]);
   return (
     <Context.Provider value={{ revision, refresh: () => setRevision((value) => value + 1) }}>
       {children}

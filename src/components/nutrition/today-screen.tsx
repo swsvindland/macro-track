@@ -1,17 +1,35 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { AccessibilityInfo, AppState, Platform, View, type ScrollView } from "react-native";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { AccessibilityInfo, AppState, Pressable, View, type ScrollView } from "react-native";
 import { router, useIsFocused } from "expo-router";
+import { PaceBar } from "@/components/system";
 import {
-  MiniBar,
-  PaceBar,
-  SystemButton,
-  SystemIcon,
-  SystemIconButton,
-  SystemLabel,
-  SystemPanel,
-  SystemText as Text,
-} from "@/components/system";
-import { ActionMenu, Screen, SwipeRow } from "@/components/ui";
+  ActionMenu,
+  Button,
+  Callout,
+  ErrorText,
+  Icon,
+  IconButton,
+  Label,
+  LinkButton,
+  Meta,
+  Meter,
+  Note,
+  Panel,
+  RecordRow,
+  RowRule,
+  Screen,
+  ScreenFooter,
+  Status,
+  SwipeRow,
+  SystemState,
+  Text,
+  Value,
+  useKitFormat,
+  useKitStrings,
+  useUndo,
+  type IconName,
+  type MenuAction,
+} from "@/vector";
 import {
   HomeSheets,
   pendingAppAction,
@@ -35,7 +53,6 @@ import {
   type DiaryReceipt,
 } from "@/lib/diary";
 import { openCatalogs } from "@/lib/food-catalog";
-import { foodIcon } from "@/lib/food-icons";
 import { modelStatus, prewarmModel, type ModelStatus } from "@/lib/local-ai";
 import { localDay } from "@/lib/metrics";
 import {
@@ -57,12 +74,12 @@ import {
 } from "@/lib/food-time";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import type { Message } from "@/lib/translations";
 import { undoWeight, weighInDue } from "@/lib/weigh-in";
 import type { FoodEntry } from "@/db";
 import { useMeasurementLog } from "@/components/measurements/use-measurement-log";
 import { WeightForm } from "@/components/measurements/weight-form";
 import { FoodEditor } from "./food-editor";
-import { FoodIcon } from "./food-icon";
 import { FastLogger } from "./fast-logger";
 import { HomeCheckIn } from "./home-check-in";
 import { MealEditor } from "./meal-editor";
@@ -73,28 +90,54 @@ import { CopyDay, MoveEntries } from "./copy-day";
 import { WeighInCard } from "./weigh-in-card";
 import { WeekStrip } from "./week-strip";
 
-const statusLabels: Record<DayState, string> = {
-  "in-progress": "In progress",
-  complete: "Complete",
-  partial: "Not fully logged",
-  fasting: "Fasted (counts as 0 kcal)",
+const statusLabels: Record<DayState, Message> = {
+  "in-progress": "inProgress",
+  complete: "statusComplete",
+  partial: "statusPartial",
+  fasting: "statusFasting",
 };
-type Toast = { message: string; undo?: () => string };
+// What marking a day says, per state, so no status word is lowercased into a sentence.
+const markedMessages: Record<DayState, Message> = {
+  "in-progress": "dayMarkedInProgress",
+  complete: "dayMarkedComplete",
+  partial: "dayMarkedPartial",
+  fasting: "dayMarkedFasting",
+};
 type WeightSheet = { open: () => void; close: () => void };
-// The swipe actions, for screen readers.
-const rowActions = [
-  { name: "delete", label: "Delete" },
-  { name: "again", label: "Log again now" },
-  { name: "select", label: "Select" },
+type SelectionKey = "move" | "copy" | "meal" | "delete";
+const selectionActions: {
+  key: SelectionKey;
+  label: Message;
+  icon: IconName;
+  destructive?: boolean;
+}[] = [
+  { key: "move", label: "moveTo", icon: "move" },
+  { key: "copy", label: "copyToToday", icon: "copy" },
+  { key: "meal", label: "saveAsMeal", icon: "bookmark" },
+  { key: "delete", label: "delete", icon: "delete", destructive: true },
 ];
-const selectionActions = [
-  { key: "move", label: "Move to…", icon: "arrow-redo-outline" },
-  { key: "copy", label: "Copy to today", icon: "copy-outline" },
-  { key: "meal", label: "Save as meal", icon: "bookmark-outline" },
-  { key: "delete", label: "Delete", icon: "trash-outline", destructive: true },
-] as const;
-const named = (rows: FoodEntry[]) =>
-  rows.length === 1 ? rows[0].food.name : `${rows.length} foods`;
+const macroKeys = ["protein", "carbs", "fat"] as const;
+const macroLabels = { protein: "macroProtein", carbs: "macroCarbs", fat: "macroFat" } as const;
+
+/**
+ * A short hold after a tap: `take()` answers false while held, else starts the hold. Kept behind
+ * a hook so menu actions built during render can check it without touching a ref there.
+ */
+function useHold(ms: number) {
+  const until = useRef(0);
+  return useMemo(
+    () => ({
+      take() {
+        const now = Date.now();
+        if (now < until.current) return false;
+        until.current = now + ms;
+        return true;
+      },
+      held: () => Date.now() < until.current,
+    }),
+    [ms]
+  );
+}
 
 /** The Log weight sheet keeps its own state, so typing a weight doesn't re-render Home. */
 function HomeWeightSheet({ ref }: { ref: Ref<WeightSheet> }) {
@@ -109,9 +152,14 @@ function HomeWeightSheet({ ref }: { ref: Ref<WeightSheet> }) {
 /** Home: how today is going, one-tap repeats and the day's food, in that order. */
 export function TodayScreen() {
   const store = useStore();
-  const { number, diaryLayout, hideEmptyHours, countLoggedDays, language } = store;
-  const locale = language === "zh" ? "zh-CN" : language;
+  const { diaryLayout, hideEmptyHours, countLoggedDays, t } = store;
+  const format = useKitFormat();
+  const strings = useKitStrings();
+  const locale = format.tag;
   const { refresh } = useNutrition();
+  const undo = useUndo();
+  // The mount effect below outlives renders; it reaches the latest Undo through this.
+  const undoRef = useRef(undo);
   const weightSheet = useRef<WeightSheet>(null);
   const [today, setToday] = useState(localDay()),
     [day, setDay] = useState(localDay()),
@@ -130,7 +178,10 @@ export function TodayScreen() {
   // On-device AI availability decides whether Home offers photo logging at all.
   const [ai, setAi] = useState<ModelStatus | null>(null);
   const [error, setError] = useState("");
-  const [toast, setToast] = useState<Toast | null>(null);
+  // A confirmation with nothing to undo, shown where the check-in or weigh-in was.
+  const [notice, setNotice] = useState("");
+  // Each log runs the signal pulse on the day's hero readout.
+  const [pulse, setPulse] = useState(0);
   const [mealEditor, setMealEditor] = useState<{
     source: { day: string; meal: Meal; group?: string; ids?: number[] };
     meal: Meal;
@@ -139,10 +190,9 @@ export function TodayScreen() {
   const [selected, setSelected] = useState<number[] | null>(null);
   const [moving, setMoving] = useState<FoodEntry[] | null>(null);
   // One-tap answers: a double tap must not land on whatever moved into place.
-  const tapLock = useRef(false);
-  // The selection bar gives way to the Undo message in the same spot.
-  const undoLock = useRef(false);
-  const undone = useRef(new WeakSet<Toast>());
+  const tapHold = useHold(900);
+  // The quick-log bar comes back where the selection bar was, under a finger that may tap again.
+  const dockHold = useHold(600);
   useEffect(() => {
     const warm = setTimeout(() => {
       void openCatalogs().catch(() => {});
@@ -157,7 +207,8 @@ export function TodayScreen() {
       todayRef.current = current;
       setToday(current);
       setDay((selected) => (selected === previous ? current : selected));
-      setToast(null);
+      undoRef.current.dismiss();
+      setNotice("");
     }
     // On the minute, so the pace line uses the same clock as food logged "now".
     let timer: ReturnType<typeof setTimeout>;
@@ -185,7 +236,8 @@ export function TodayScreen() {
         hiddenAt = 0;
       } else if (!hiddenAt) {
         hiddenAt = Date.now();
-        setToast(null);
+        undoRef.current.dismiss();
+        setNotice("");
       }
     });
     // Links from Shortcuts or the Action Button (app-actions.ts), on a cold start or while
@@ -204,7 +256,8 @@ export function TodayScreen() {
       weightSheet.current?.close();
       setDay(localDay());
       setSelected(null);
-      setToast(null);
+      undoRef.current.dismiss();
+      setNotice("");
       setError("");
       scrollRef.current?.scrollTo({ y: 0, animated: false });
       clearTimeout(opening);
@@ -233,6 +286,9 @@ export function TodayScreen() {
       unsubscribe();
     };
   }, []);
+  useEffect(() => {
+    undoRef.current = undo;
+  }, [undo]);
   // The model loads before Photo is tapped; it is released after a while, so coming back
   // to the app loads it again, at most every 10 minutes.
   const warmedAt = useRef(0);
@@ -241,20 +297,10 @@ export function TodayScreen() {
     warmedAt.current = Date.now();
     prewarmModel();
   }, [ai]);
+  // An error sits at the top of the list, so it scrolls into view from anywhere below.
   useEffect(() => {
-    if (!toast) return;
-    if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(toast.message);
-    let active = true,
-      timer: ReturnType<typeof setTimeout> | undefined;
-    // Screen-reader users need time to reach Undo, so it stays until the next action.
-    void AccessibilityInfo.isScreenReaderEnabled().then((reading) => {
-      if (active && !reading) timer = setTimeout(() => setToast(null), 8000);
-    });
-    return () => {
-      active = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [toast]);
+    if (error) scrollRef.current?.scrollTo({ y: 0, animated: true });
+  }, [error]);
   const live = day === today;
   // Read once per write or day change. The minute clock only moves the pace line, which
   // is worked out below from these rows, so a tick doesn't touch the database.
@@ -315,11 +361,28 @@ export function TodayScreen() {
       ...group,
       sum: totalNutrients(group.entries.map((entry) => entry.nutrients)),
     }));
-  // "45P 24F 50C", in the order the list shows them, and the same spelled out for screen readers.
-  const macros = (value: Nutrients) =>
-    `${number(value.protein, 0)}P ${number(value.fat, 0)}F ${number(value.carbs, 0)}C`;
+  // Calories, then P · C · F as the list shows them, and the same spelled out for screen readers.
+  const macros = (value: Nutrients) => [
+    t("kcalValue", { value: format.number(value.calories) }),
+    t("proteinShort", { value: format.number(value.protein) }),
+    t("carbsShort", { value: format.number(value.carbs) }),
+    t("fatShort", { value: format.number(value.fat) }),
+  ];
   const spoken = (value: Nutrients) =>
-    `${number(value.calories, 0)} kcal, protein ${number(value.protein, 0)} g, fat ${number(value.fat, 0)} g, carbs ${number(value.carbs, 0)} g`;
+    t("spokenMacros", {
+      kcal: format.number(value.calories),
+      protein: format.number(value.protein),
+      carbs: format.number(value.carbs),
+      fat: format.number(value.fat),
+    });
+  // The swipe actions, for screen readers.
+  const rowActions = [
+    { name: "delete", label: t("delete") },
+    { name: "again", label: t("logAgainNow") },
+    { name: "select", label: t("select") },
+  ];
+  const named = (rows: FoodEntry[]) =>
+    rows.length === 1 ? rows[0].food.name : t("foodCount", { count: format.number(rows.length) });
   /** Opens the logger on a group: an hour at its latest food (or o'clock), a meal now. */
   function addTo(group: (typeof groups)[number]) {
     const hour = !!group.group && group.group !== "untimed";
@@ -330,8 +393,8 @@ export function TodayScreen() {
   }
 
   function label(value: string) {
-    if (value === today) return "Today";
-    if (value === shiftDay(today, -1)) return "Yesterday";
+    if (value === today) return t("today");
+    if (value === shiftDay(today, -1)) return t("yesterday");
     return new Date(`${value}T12:00:00`).toLocaleDateString(locale, {
       weekday: "short",
       month: "short",
@@ -340,58 +403,89 @@ export function TodayScreen() {
   }
   function go(value: string) {
     setDay(value);
-    setToast(null);
+    undo.dismiss();
+    setNotice("");
     setError("");
     setSelected(null);
   }
-  function show(message: string, undo?: () => string) {
-    setToast({ message, undo });
+  /**
+   * Undo for a write, in the dock; what Undo did is spoken, since the list itself shows it. Said
+   * here, only once the revert holds: the kit's `undoneMessage` is spoken even when it fails.
+   */
+  function offerUndo(message: string, undoneMessage: string, revert: () => void) {
+    setNotice("");
     setError("");
+    undo.show({
+      message,
+      onUndo: () => {
+        try {
+          revert();
+          AccessibilityInfo.announceForAccessibility(undoneMessage);
+        } catch (e) {
+          fail(e, t("couldNotUndo"));
+        }
+      },
+    });
+  }
+  /** A confirmation with nothing to undo: said in place, and the last Undo becomes final. */
+  function confirmed(message: string) {
+    undo.dismiss();
+    setError("");
+    setNotice(message);
   }
   function fail(e: unknown, fallback: string) {
     setError(e instanceof Error ? e.message : fallback);
   }
   function undoable(receipt: DiaryReceipt, message: string, undoneMessage: string) {
-    show(message, () => {
+    offerUndo(message, undoneMessage, () => {
       undoReceipt(receipt);
       refresh();
-      return undoneMessage;
     });
   }
   function logged(receipt: DiaryReceipt) {
     const rows = receipt.inserted;
     if (!rows.length) return;
     setDay(rows[0].day);
+    setPulse((n) => n + 1);
     const kcal = totalNutrients(rows.map((entry) => entry.nutrients)).calories;
     const left = rows[0].day === day && targets ? targets.calories - totals.calories - kcal : null;
+    const values = {
+      what: named(rows),
+      kcal: format.number(kcal),
+      rest: left === null ? "" : format.number(Math.abs(left)),
+    };
     undoable(
       receipt,
-      `${named(rows)} · ${number(kcal, 0)} kcal` +
-        (left === null
-          ? " logged"
-          : ` · ${number(Math.abs(left), 0)} ${left >= 0 ? "left" : "over"}`),
-      "Log undone."
+      t(left === null ? "loggedKcal" : left >= 0 ? "loggedKcalLeft" : "loggedKcalOver", values),
+      t("logUndone")
     );
   }
   function removed(receipt: DiaryReceipt) {
     const what = named(receipt.deleted);
-    undoable(receipt, `${what} deleted.`, `${what} restored.`);
+    undoable(receipt, t("foodDeleted", { what }), t("foodRestored", { what }));
   }
   function moved(receipt: DiaryReceipt) {
     setSelected(null);
     const rows = receipt.moved.map((row) => row.after);
     const time = rows.every((row) => row.loggedTime === rows[0].loggedTime) && rows[0].loggedTime;
+    const what = named(rows),
+      when = label(rows[0].day);
     undoable(
       receipt,
-      `${named(rows)} moved to ${label(rows[0].day)}` +
-        (time ? ` at ${formatClock(time, locale)}.` : "."),
-      "Move undone."
+      time
+        ? t("movedToAt", { what, day: when, time: formatClock(time, locale) })
+        : t("movedTo", { what, day: when }),
+      t("moveUndone")
     );
   }
   function changed(receipt: DiaryReceipt, change: "saved" | "deleted") {
     if (change === "deleted") removed(receipt);
     else if (receipt.moved.length)
-      undoable(receipt, `${receipt.moved[0].after.food.name} updated.`, "Change undone.");
+      undoable(
+        receipt,
+        t("foodUpdated", { name: receipt.moved[0].after.food.name }),
+        t("changeUndone")
+      );
     else logged(receipt);
   }
   function remove(rows: FoodEntry[]) {
@@ -401,7 +495,7 @@ export function TodayScreen() {
       setSelected(null);
       removed(receipt);
     } catch (e) {
-      fail(e, "Could not delete this food.");
+      fail(e, t("couldNotDeleteFood"));
     }
   }
   /** Logs the same foods again, eaten now. */
@@ -416,48 +510,34 @@ export function TodayScreen() {
       setSelected(null);
       logged(receipt);
     } catch (e) {
-      fail(e, "Could not log this again.");
+      fail(e, t("couldNotLogAgain"));
     }
+  }
+  /** Selection mode: choosing foods is a new action, which makes the last one final. */
+  function startSelecting(ids: number[]) {
+    undo.dismiss();
+    setSelected(ids);
   }
   function toggle(id: number) {
     setSelected(
       (ids) => ids && (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id])
     );
   }
-  function locked() {
-    if (tapLock.current) return true;
-    tapLock.current = true;
-    setTimeout(() => {
-      tapLock.current = false;
-    }, 900);
-    return false;
-  }
-  function undo() {
-    if (!toast?.undo || undone.current.has(toast) || undoLock.current) return;
-    undone.current.add(toast);
-    try {
-      show(toast.undo());
-    } catch (e) {
-      fail(e, "Could not undo.");
-    }
-  }
+  const locked = () => !tapHold.take();
   function mark(target: string, value: DayState) {
     const before = dayStatus(target);
     try {
       setDayStatus(target, value);
       refresh();
-      show(
-        `${label(target)} marked ${value === "complete" ? "complete" : statusLabels[value].toLowerCase()}.`,
-        before === value
-          ? undefined
-          : () => {
-              setDayStatus(target, before);
-              refresh();
-              return "Change undone.";
-            }
-      );
+      const message = t(markedMessages[value], { day: label(target) });
+      if (before === value) confirmed(message);
+      else
+        offerUndo(message, t("changeUndone"), () => {
+          setDayStatus(target, before);
+          refresh();
+        });
     } catch (e) {
-      fail(e, "Could not update this day.");
+      fail(e, t("couldNotUpdateDay"));
     }
   }
   function answer(target: string, value: "complete" | "partial") {
@@ -472,81 +552,84 @@ export function TodayScreen() {
         const receipt = countLoggedDay();
         refresh();
         if (receipt)
-          setToast({
-            message: "Yesterday counted as complete.",
-            undo: () => {
-              undoReceipt(receipt);
-              refresh();
-              return "Change undone.";
+          undoRef.current.show({
+            message: t("yesterdayCounted"),
+            onUndo: () => {
+              try {
+                undoReceipt(receipt);
+                refresh();
+                AccessibilityInfo.announceForAccessibility(t("changeUndone"));
+              } catch (e) {
+                setError(e instanceof Error ? e.message : t("couldNotUndo"));
+              }
             },
           });
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not update yesterday.");
+        setError(e instanceof Error ? e.message : t("couldNotUpdateYesterday"));
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [countable, refresh]);
+  }, [countable, refresh, t]);
 
-  const hero =
-    projection.status === "over"
-      ? { value: projection.over, unit: " kcal over", className: "text-danger" }
-      : projection.status === "no-target"
-        ? { value: projection.eaten, unit: " kcal eaten", className: "" }
-        : { value: projection.left, unit: " kcal left", className: "" };
+  const over = projection.status === "over";
+  const hero = over
+    ? { label: t("heroOver"), value: projection.over }
+    : projection.status === "no-target"
+      ? { label: t("heroEaten"), value: projection.eaten }
+      : { label: t("heroRemaining"), value: projection.left };
   const pace =
     projection.status === "heading-over"
       ? {
-          className: "text-warning",
-          text: `Heading ~${number(roughly(projection.projected - projection.target), 0)} over`,
+          tone: "warning" as const,
+          text: t("paceHeadingOver", {
+            value: format.number(roughly(projection.projected - projection.target)),
+          }),
         }
       : projection.status === "on-pace"
         ? projection.projected > projection.target
-          ? {
-              className: "text-foreground",
-              text: "Tracking right at your target",
-            }
+          ? { tone: "default" as const, text: t("paceAtTarget") }
           : {
-              className: "text-success",
-              text: `On pace for ~${number(roughly(projection.projected), 0)}`,
+              tone: "success" as const,
+              text: t("paceOnPace", { value: format.number(roughly(projection.projected)) }),
             }
         : null;
+  const eatenOfTarget =
+    targets &&
+    t("kcalOfTarget", {
+      eaten: format.number(totals.calories),
+      target: format.number(targets.calories),
+    });
 
   // The week strip moves between days; the rest of the day's controls live here.
+  const dayActions: MenuAction[] = [
+    ...(live
+      ? []
+      : [
+          { key: "today", label: t("goToToday"), icon: "today" as const, onPress: () => go(today) },
+        ]),
+    {
+      key: "weight",
+      label: t("logWeight"),
+      icon: "scale",
+      onPress: () => weightSheet.current?.open(),
+    },
+    {
+      key: "copy",
+      label: live ? t("copyDayIntoToday") : t("copyDayInto", { day: label(day) }),
+      icon: "copy",
+      onPress: () => setCopying(true),
+    },
+  ];
   const dayMenu = (
     <ActionMenu
-      accessibilityLabel="Day options"
+      accessibilityLabel={t("dayOptions")}
       sections={[
+        { actions: dayActions },
         {
-          actions: [
-            ...(live
-              ? []
-              : [
-                  {
-                    key: "today",
-                    label: "Go to today",
-                    icon: "today-outline" as const,
-                    onPress: () => go(today),
-                  },
-                ]),
-            {
-              key: "weight",
-              label: "Log weight",
-              icon: "scale-outline",
-              onPress: () => weightSheet.current?.open(),
-            },
-            {
-              key: "copy",
-              label: live ? "Copy a day into today" : `Copy a day into ${label(day)}`,
-              icon: "copy-outline",
-              onPress: () => setCopying(true),
-            },
-          ],
-        },
-        {
-          title: "Mark day as",
+          title: t("markDayAs"),
           actions: (["in-progress", "complete", "partial", "fasting"] as const).map((value) => ({
             key: value,
-            label: statusLabels[value],
+            label: t(statusLabels[value]),
             selected: status === value,
             disabled:
               status === value ||
@@ -559,7 +642,7 @@ export function TodayScreen() {
   );
 
   const chosen = entries.filter((entry) => selected?.includes(entry.id));
-  function selectionAction(key: (typeof selectionActions)[number]["key"]) {
+  function selectionAction(key: SelectionKey) {
     if (key === "move") return setMoving(chosen);
     if (key === "meal") {
       setMealEditor({
@@ -568,132 +651,83 @@ export function TodayScreen() {
       });
       return setSelected(null);
     }
-    // The bar gives way to the Undo message, so a double tap must not repeat the
-    // action or land on Undo.
+    // The bar gives way to the quick-log bar, so a double tap must not repeat the action or
+    // open a logger.
     if (locked()) return;
-    undoLock.current = true;
-    setTimeout(() => {
-      undoLock.current = false;
-    }, 600);
+    dockHold.take();
     if (key === "copy") again(chosen);
     else remove(chosen);
   }
-  // Pinned above the tab bar, so logging and Undo stay in reach wherever the list is scrolled.
-  const footer = (
-    <View className="gap-2">
-      {!!error && (
-        <View className="flex-row items-center gap-2 rounded-2xl border border-border bg-overlay py-1 pl-4 pr-1 shadow-overlay">
-          <Text className="flex-1 text-sm text-danger" accessibilityRole="alert">
-            {error}
+  // Docked above the tab bar, so logging and Undo stay in reach wherever the list is scrolled.
+  const footer = selected ? (
+    <ScreenFooter>
+      <View className="flex-1 gap-1">
+        <View className="flex-row items-center gap-3">
+          <Text variant="bodyStrong" className="flex-1" accessibilityLiveRegion="polite">
+            {t("selectedCount", { count: format.number(chosen.length) })}
           </Text>
-          <SystemIconButton
-            icon="close"
-            iconSize={18}
-            color="muted"
-            accessibilityLabel="Dismiss"
-            onPress={() => setError("")}
-          />
+          <LinkButton onPress={() => setSelected(null)}>{strings.cancel}</LinkButton>
         </View>
-      )}
-      {toast && (
-        <View className="flex-row items-center gap-2 rounded-2xl border border-border bg-overlay py-1 pl-4 pr-1 shadow-overlay">
-          <Text className="flex-1 text-sm" numberOfLines={2} accessibilityLiveRegion="polite">
-            {toast.message}
-          </Text>
-          {toast.undo ? (
-            <SystemButton
-              variant="ghost"
-              labelClassName="text-accent-soft-foreground"
-              onPress={undo}
+        <View className="flex-row">
+          {selectionActions.map((action) => (
+            <Pressable
+              key={action.key}
+              accessibilityRole="button"
+              accessibilityLabel={t(action.label)}
+              accessibilityState={{ disabled: !chosen.length }}
+              disabled={!chosen.length}
+              onPress={() => selectionAction(action.key)}
+              className={`min-h-11 flex-1 items-center gap-1 rounded-control px-1 py-2 active:bg-surface-secondary ${chosen.length ? "" : "opacity-disabled"}`}
             >
-              Undo
-            </SystemButton>
-          ) : (
-            <SystemIconButton
-              icon="close"
-              iconSize={18}
-              color="muted"
-              accessibilityLabel="Dismiss"
-              onPress={() => setToast(null)}
-            />
-          )}
-        </View>
-      )}
-      {selected ? (
-        <View className="gap-1 rounded-3xl border border-border bg-overlay p-2 shadow-overlay">
-          <View className="flex-row items-center pl-3">
-            <Text className="flex-1 font-semibold" accessibilityLiveRegion="polite">
-              {chosen.length} selected
-            </Text>
-            <SystemButton
-              variant="ghost"
-              labelClassName="text-accent-soft-foreground"
-              onPress={() => setSelected(null)}
-            >
-              Cancel
-            </SystemButton>
-          </View>
-          <View className="flex-row">
-            {selectionActions.map((action) => (
-              <SystemButton
-                key={action.key}
-                variant="ghost"
-                className="flex-1 flex-col gap-1 px-1 py-2"
-                isDisabled={!chosen.length}
-                accessibilityLabel={action.label}
-                onPress={() => selectionAction(action.key)}
+              <Icon name={action.icon} tone={action.destructive ? "danger" : "tint"} />
+              {/* A long translation wraps under its glyph; the dock grows to fit it. */}
+              <Text
+                variant="caption"
+                tone={action.destructive ? "danger" : "tint"}
+                className="text-center"
               >
-                <SystemIcon
-                  name={action.icon}
-                  size={20}
-                  color={"destructive" in action ? "danger" : "accent-soft-foreground"}
-                />
-                <Text
-                  className={`text-xs ${"destructive" in action ? "text-danger" : "text-accent-soft-foreground"}`}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                  maxFontSizeMultiplier={1.3}
-                >
-                  {action.label}
-                </Text>
-              </SystemButton>
-            ))}
-          </View>
+                {t(action.label)}
+              </Text>
+            </Pressable>
+          ))}
         </View>
-      ) : (
-        <QuickLogBar
-          label={live ? undefined : `Log to ${label(day)}`}
-          ai={ai}
-          onAction={(action) => {
-            if (action === "photo") setPhotoLog(true);
-            else setLogger({ start: action === "scan" ? "barcode" : "typing" });
-          }}
-        />
-      )}
-    </View>
+      </View>
+    </ScreenFooter>
+  ) : (
+    <QuickLogBar
+      label={live ? undefined : t("logToDay", { day: label(day) })}
+      ai={ai}
+      onAction={(action) => {
+        if (dockHold.held()) return;
+        if (action === "photo") setPhotoLog(true);
+        else setLogger({ start: action === "scan" ? "barcode" : "typing" });
+      }}
+    />
   );
 
   return (
     <HomeSheets value>
       <Screen
-        title="Today"
+        title={t("today")}
         compact
         scrollRef={scrollRef}
         header={<WeekStrip day={day} today={today} onChange={go} />}
         footer={footer}
       >
-        <SystemPanel className="p-4">
-          <SystemPanel.Body className="gap-3">
-            <View className="-mr-2 -mt-1 flex-row items-start gap-2">
-              <Text
-                className={`flex-1 text-4xl font-semibold tabular-nums ${hero.className}`}
-                maxFontSizeMultiplier={1.35}
-                numberOfLines={1}
-              >
-                {number(hero.value, 0)}
-                <Text className="text-base font-medium text-muted">{hero.unit}</Text>
-              </Text>
+        <ErrorText message={error} />
+        <Panel>
+          <Panel.Body>
+            <View className="flex-row items-start gap-3">
+              <View className="flex-1 gap-1">
+                <Label tone={over ? "warning" : "muted"}>{hero.label}</Label>
+                <Value
+                  size="xl"
+                  value={format.number(hero.value)}
+                  unit={t("kcal")}
+                  tone={over ? "warning" : "default"}
+                  pulseKey={pulse}
+                />
+              </View>
               {dayMenu}
             </View>
             {targets ? (
@@ -707,305 +741,299 @@ export function TodayScreen() {
                       : null
                   }
                   warn={projection.status === "heading-over"}
-                  description={
-                    pace?.text ?? `${Math.round(totals.calories)} of ${targets.calories} kcal`
-                  }
+                  description={pace?.text ?? eatenOfTarget ?? ""}
                 />
                 {pace ? (
-                  <Text className={`text-sm font-medium ${pace.className}`}>{pace.text}</Text>
+                  <Note tone={pace.tone}>{pace.text}</Note>
                 ) : (
-                  <Text
-                    className={`text-sm ${projection.status === "over" ? "text-danger" : "text-muted"}`}
-                  >
-                    {number(totals.calories, 0)} of {number(targets.calories, 0)} kcal
-                  </Text>
+                  <Note tone={over ? "warning" : "muted"}>{eatenOfTarget}</Note>
                 )}
               </>
             ) : (
               live && (
-                <SystemButton
+                <Button
                   variant="secondary"
-                  icon="flag-outline"
+                  icon="flag"
                   className="self-start"
                   onPress={() => router.push("/(tabs)/plan")}
                 >
-                  Set calorie & macro targets
-                </SystemButton>
+                  {t("setTargets")}
+                </Button>
               )
             )}
             <View className="flex-row gap-4 pt-1">
-              {(["protein", "carbs", "fat"] as const).map((key) => (
+              {macroKeys.map((key) => (
                 <View key={key} className="flex-1 gap-1">
-                  <SystemLabel>{key}</SystemLabel>
-                  <Text
-                    className="font-semibold tabular-nums"
-                    maxFontSizeMultiplier={1.3}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.75}
-                  >
-                    {number(totals[key], 0)}
-                    <Text className="text-sm font-normal text-muted">
-                      {targets ? ` / ${number(targets[key], 0)} g` : " g"}
-                    </Text>
+                  {/* A column header that wraps rather than clips: "Kohlenhydrate" is a long word. */}
+                  <Text variant="label" tone="muted">
+                    {t(macroLabels[key])}
                   </Text>
+                  <Value
+                    value={format.number(totals[key])}
+                    unit={
+                      targets
+                        ? t("ofTargetGrams", { target: format.number(targets[key]) })
+                        : t("grams")
+                    }
+                  />
                   {targets && targets[key] > 0 && (
-                    <MiniBar value={totals[key]} max={targets[key]} />
+                    <Meter
+                      size="sm"
+                      value={totals[key]}
+                      max={targets[key]}
+                      accessibilityLabel={t(macroLabels[key])}
+                      valueText={t("gramsOfTarget", {
+                        value: format.number(totals[key]),
+                        target: format.number(targets[key]),
+                      })}
+                    />
                   )}
                 </View>
               ))}
             </View>
-          </SystemPanel.Body>
-        </SystemPanel>
+          </Panel.Body>
+        </Panel>
 
         {!live && (
-          <View className="flex-row flex-wrap items-center gap-2 px-1">
-            <Text className="flex-1 text-sm text-muted">
+          <View className="flex-row flex-wrap items-center gap-2">
+            <Note className="flex-1">
               {status === "complete"
-                ? "Marked complete"
+                ? t("markedComplete")
                 : status === "in-progress"
                   ? entries.length
-                    ? "Was this day fully logged?"
-                    : "Nothing logged on this day"
-                  : statusLabels[status]}
-            </Text>
+                    ? t("wasDayFullyLogged")
+                    : t("nothingLoggedOnDay")
+                  : t(statusLabels[status])}
+            </Note>
             {status !== "complete" && !!entries.length && (
-              <SystemButton variant="secondary" onPress={() => mark(day, "complete")}>
-                Mark complete
-              </SystemButton>
+              <Button variant="secondary" onPress={() => mark(day, "complete")}>
+                {t("markComplete")}
+              </Button>
             )}
             {status === "in-progress" && !!entries.length && (
-              <SystemButton variant="secondary" onPress={() => mark(day, "partial")}>
-                Not all
-              </SystemButton>
+              <Button variant="secondary" onPress={() => mark(day, "partial")}>
+                {t("notAll")}
+              </Button>
             )}
           </View>
         )}
+
+        {!!notice && <Callout tone="success">{notice}</Callout>}
 
         {live &&
           (weighIn ? (
             <WeighInCard
               today={today}
               onSaved={(entry, message) =>
-                show(message, () => {
+                offerUndo(message, t("weightRemoved"), () => {
                   undoWeight(entry);
                   store.refresh();
                   refresh();
-                  return "Weight removed.";
                 })
               }
             />
           ) : confirm ? (
             askConfirm &&
             !countable && (
-              <SystemPanel className="p-4">
-                <SystemPanel.Body className="gap-3">
-                  <SystemLabel className="text-accent-soft-foreground">
-                    Finish {label(confirm.day)}
-                  </SystemLabel>
-                  <SystemButton
-                    variant="ghost"
-                    className="-my-2 justify-start px-0"
-                    accessibilityLabel={`Review ${label(confirm.day)}: ${number(confirm.calories, 0)} kcal logged. Is that everything?`}
+              <Panel>
+                <Panel.Header eyebrow={t("finishDay", { day: label(confirm.day) })} />
+                <Panel.Body>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={t("reviewDayLogged", {
+                      day: label(confirm.day),
+                      kcal: format.number(confirm.calories),
+                    })}
                     onPress={() => go(confirm.day)}
+                    className="min-h-11 flex-row items-center gap-3 active:opacity-60"
                   >
-                    <Text className="flex-1 font-semibold">
-                      {number(confirm.calories, 0)} kcal logged. Is that everything?
+                    <Text variant="bodyStrong" className="flex-1">
+                      {t("kcalLoggedQuestion", { kcal: format.number(confirm.calories) })}
                     </Text>
-                    <SystemIcon name="chevron-forward" size={18} color="muted" />
-                  </SystemButton>
+                    <Icon name="forward" size={17} tone="muted" />
+                  </Pressable>
                   <View className="flex-row gap-2">
-                    <SystemButton
+                    <Button
+                      variant="secondary"
                       className="flex-1"
                       onPress={() => answer(confirm.day, "complete")}
                     >
-                      Yes, complete
-                    </SystemButton>
-                    <SystemButton
+                      {t("yesComplete")}
+                    </Button>
+                    <Button
                       variant="secondary"
                       className="flex-1"
                       onPress={() => answer(confirm.day, "partial")}
                     >
-                      Not all
-                    </SystemButton>
+                      {t("notAll")}
+                    </Button>
                   </View>
-                </SystemPanel.Body>
-              </SystemPanel>
+                </Panel.Body>
+              </Panel>
             )
           ) : (
             <HomeCheckIn
-              onDone={(message) => show(message)}
+              onDone={confirmed}
               onWeighIn={() => weightSheet.current?.open()}
               onReviewLogs={go}
             />
           ))}
 
         <View className="gap-2">
-          <View className="flex-row items-center justify-between gap-2 px-1">
-            <SystemLabel accessibilityRole="header">{live ? "Today’s food" : "Food"}</SystemLabel>
-            {status === "complete" && (
-              <View className="flex-row items-center gap-1">
-                <SystemIcon name="checkmark-circle" size={14} color="success" />
-                <Text className="text-xs text-success">Day complete</Text>
-              </View>
-            )}
+          <View className="flex-row items-center justify-between gap-2">
+            <Label accessibilityRole="header">{live ? t("todaysFood") : t("food")}</Label>
+            {status === "complete" && <Status state="ok" label={t("dayComplete")} />}
           </View>
           {entries.length || !hideEmptyHours ? (
-            <SystemPanel className="p-0">
-              <SystemPanel.Body className="gap-0 pb-1">
-                {groups.map((group, index) => (
-                  <View key={group.key} className={index ? "border-t border-separator" : ""}>
-                    <View className="flex-row items-center pl-4 pr-1">
-                      <Text
-                        accessibilityRole="header"
-                        accessibilityLabel={
-                          group.entries.length
-                            ? `${group.title}, ${spoken(group.sum)}`
-                            : group.title
-                        }
-                        className="flex-1 text-sm font-semibold text-muted tabular-nums"
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.85}
-                      >
-                        {group.title}
-                        {!!group.entries.length && (
-                          <Text className="text-sm font-normal text-muted tabular-nums">
-                            {` · ${number(group.sum.calories, 0)} kcal · ${macros(group.sum)}`}
-                          </Text>
-                        )}
-                      </Text>
-                      {!!group.entries.length && (
-                        <ActionMenu
-                          accessibilityLabel={`Options for ${group.title}`}
-                          sections={[
-                            {
-                              actions: [
-                                {
-                                  key: "save",
-                                  label: "Save or copy this meal",
-                                  icon: "bookmark-outline",
-                                  onPress: () =>
-                                    setMealEditor({
-                                      source: { day, meal: group.meal, group: group.group },
-                                      meal: group.meal,
-                                    }),
-                                },
-                                {
-                                  key: "move",
-                                  label: "Move all to…",
-                                  icon: "arrow-redo-outline",
-                                  onPress: () => setMoving(group.entries),
-                                },
-                                {
-                                  key: "select",
-                                  label: "Select these foods",
-                                  icon: "checkmark-circle-outline",
-                                  onPress: () =>
-                                    setSelected(group.entries.map((entry) => entry.id)),
-                                },
-                              ],
-                            },
-                          ]}
-                        />
-                      )}
-                      <SystemIconButton
-                        icon="add"
-                        color="accent-soft-foreground"
-                        accessibilityLabel={
-                          group.group && group.group !== "untimed"
-                            ? `Log food at ${group.title}`
-                            : `Log food to ${group.meal}`
-                        }
-                        onPress={() => addTo(group)}
-                      />
+            <Panel inset="none">
+              {/* Group headers and foods are rows of one panel, so each rules like a list row. */}
+              {groups.flatMap((group) => [
+                <View key={`group:${group.key}`}>
+                  <RowRule />
+                  <View className="min-h-11 flex-row items-center gap-1 ps-4 pe-1">
+                    <View
+                      accessible
+                      accessibilityRole="header"
+                      accessibilityLabel={
+                        group.entries.length
+                          ? t("groupSpoken", { group: group.title, macros: spoken(group.sum) })
+                          : group.title
+                      }
+                      className="flex-1 gap-0.5 py-2"
+                    >
+                      <Text variant="h4">{group.title}</Text>
+                      {!!group.entries.length && <Meta items={macros(group.sum)} />}
                     </View>
-                    {group.entries.map((entry) => {
-                      const picked = !!selected?.includes(entry.id);
-                      return (
-                        <SwipeRow
-                          key={entry.id}
-                          enabled={!selected}
-                          swipeLeft={{
-                            label: "Delete",
-                            icon: "trash-outline",
-                            destructive: true,
-                            onAction: () => remove([entry]),
-                          }}
-                          swipeRight={{
-                            label: "Log again",
-                            icon: "repeat",
-                            onAction: () => again([entry]),
-                          }}
-                        >
-                          <SystemButton
-                            variant="ghost"
-                            className="justify-start gap-3 rounded-none px-4 py-2"
-                            accessibilityLabel={
-                              selected ? entry.food.name : `Edit ${entry.food.name}`
-                            }
-                            accessibilityState={selected ? { selected: picked } : undefined}
-                            accessibilityActions={selected ? undefined : rowActions}
-                            onAccessibilityAction={({ nativeEvent }) =>
-                              nativeEvent.actionName === "delete"
-                                ? remove([entry])
-                                : nativeEvent.actionName === "again"
-                                  ? again([entry])
-                                  : setSelected([entry.id])
-                            }
-                            onPress={() => (selected ? toggle(entry.id) : setEditor(entry))}
-                            onLongPress={() =>
-                              selected ? toggle(entry.id) : setSelected([entry.id])
-                            }
-                          >
-                            {selected && (
-                              <SystemIcon
-                                name={picked ? "checkmark-circle" : "ellipse-outline"}
-                                size={22}
-                                color={picked ? "accent-soft-foreground" : "muted"}
-                              />
-                            )}
-                            <FoodIcon icon={foodIcon(entry.food)} />
-                            <View className="flex-1 gap-0.5">
-                              <Text numberOfLines={1}>{entry.food.name}</Text>
-                              <Text numberOfLines={1} className="text-sm text-muted tabular-nums">
-                                <Text className="text-sm font-medium tabular-nums">
-                                  {number(entry.nutrients.calories, 0)} kcal
-                                </Text>
-                                {` · ${macros(entry.nutrients)}`}
-                              </Text>
-                              <Text numberOfLines={1} className="text-sm text-muted">
-                                {entry.loggedTime
-                                  ? `${formatClock(entry.loggedTime, locale)} · `
-                                  : ""}
-                                {entry.portionLabel}
-                              </Text>
-                            </View>
-                          </SystemButton>
-                        </SwipeRow>
-                      );
-                    })}
+                    {!!group.entries.length && (
+                      <ActionMenu
+                        accessibilityLabel={t("optionsFor", { group: group.title })}
+                        sections={[
+                          {
+                            actions: [
+                              {
+                                key: "save",
+                                label: t("saveOrCopyMeal"),
+                                icon: "bookmark",
+                                onPress: () =>
+                                  setMealEditor({
+                                    source: { day, meal: group.meal, group: group.group },
+                                    meal: group.meal,
+                                  }),
+                              },
+                              {
+                                key: "move",
+                                label: t("moveAllTo"),
+                                icon: "move",
+                                onPress: () => setMoving(group.entries),
+                              },
+                              {
+                                key: "select",
+                                label: t("selectTheseFoods"),
+                                icon: "check",
+                                onPress: () =>
+                                  startSelecting(group.entries.map((entry) => entry.id)),
+                              },
+                            ],
+                          },
+                        ]}
+                      />
+                    )}
+                    <IconButton
+                      icon="add"
+                      tone="tint"
+                      accessibilityLabel={
+                        group.group && group.group !== "untimed"
+                          ? t("logFoodAt", { time: group.title })
+                          : t("logFoodTo", { meal: group.meal })
+                      }
+                      onPress={() => addTo(group)}
+                    />
                   </View>
-                ))}
-              </SystemPanel.Body>
-            </SystemPanel>
+                </View>,
+                ...group.entries.map((entry) => {
+                  const picked = !!selected?.includes(entry.id);
+                  return (
+                    <SwipeRow
+                      key={`entry:${entry.id}`}
+                      enabled={!selected}
+                      trailingAction={{
+                        label: t("delete"),
+                        icon: "delete",
+                        destructive: true,
+                        onAction: () => remove([entry]),
+                      }}
+                      leadingAction={{
+                        label: t("logAgain"),
+                        icon: "repeat",
+                        onAction: () => again([entry]),
+                      }}
+                    >
+                      {/* A long press starts choosing several foods; the mark shows which. */}
+                      <RecordRow
+                        time={entry.loggedTime ? formatClock(entry.loggedTime, locale) : ""}
+                        title={entry.food.name}
+                        description={
+                          <Meta items={[entry.portionLabel, ...macros(entry.nutrients).slice(1)]} />
+                        }
+                        value={
+                          <Value value={format.number(entry.nutrients.calories)} unit={t("kcal")} />
+                        }
+                        leading={
+                          selected ? (
+                            <Icon
+                              name={picked ? "done" : "unselected"}
+                              tone={picked ? "tint" : "muted"}
+                            />
+                          ) : undefined
+                        }
+                        accessibilityLabel={
+                          selected ? entry.food.name : t("editFoodNamed", { name: entry.food.name })
+                        }
+                        accessibilityState={selected ? { selected: picked } : undefined}
+                        accessibilityActions={selected ? undefined : rowActions}
+                        onAccessibilityAction={({ nativeEvent }) =>
+                          nativeEvent.actionName === "delete"
+                            ? remove([entry])
+                            : nativeEvent.actionName === "again"
+                              ? again([entry])
+                              : startSelecting([entry.id])
+                        }
+                        onPress={() => (selected ? toggle(entry.id) : setEditor(entry))}
+                        onLongPress={() =>
+                          selected ? toggle(entry.id) : startSelecting([entry.id])
+                        }
+                      />
+                    </SwipeRow>
+                  );
+                }),
+              ])}
+            </Panel>
           ) : (
-            <Text className="px-1 text-sm text-muted">
-              {live ? "Nothing logged yet." : "Nothing logged on this day."}
-            </Text>
+            <SystemState
+              kind="empty"
+              message={live ? t("nothingLoggedYet") : t("nothingLoggedOnDay")}
+            />
           )}
           {!!entries.length && (
-            <SystemButton
-              variant="ghost"
-              className="self-start px-1"
-              accessibilityHint="Shows vitamins, minerals and other nutrients for the day"
-              onPress={() => setNutrientsOpen(true)}
-            >
-              <Text className="text-xs text-muted">
-                Fiber {totals.fiber === null ? "—" : `${number(totals.fiber, 0)} g`} · Sodium{" "}
-                {totals.sodium === null ? "—" : `${number(totals.sodium, 0)} mg`} · All nutrients ›
-              </Text>
-            </SystemButton>
+            <View className="gap-1">
+              <Meta
+                items={[
+                  totals.fiber === null
+                    ? t("fiberUnknown")
+                    : t("fiberGrams", { value: format.number(totals.fiber) }),
+                  totals.sodium === null
+                    ? t("sodiumUnknown")
+                    : t("sodiumMilligrams", { value: format.number(totals.sodium) }),
+                ]}
+              />
+              <LinkButton
+                icon="forward"
+                accessibilityHint={t("allNutrientsHint")}
+                onPress={() => setNutrientsOpen(true)}
+              >
+                {t("allNutrients")}
+              </LinkButton>
+            </View>
           )}
         </View>
       </Screen>
@@ -1043,7 +1071,7 @@ export function TodayScreen() {
       <HomeWeightSheet ref={weightSheet} />
       {nutrientsOpen && (
         <DayNutrients
-          title={day === today ? "Today's nutrients" : `Nutrients · ${store.date(day)}`}
+          title={day === today ? t("todaysNutrients") : t("nutrientsOn", { date: store.date(day) })}
           items={entries.map((entry) => entry.nutrients)}
           open
           close={() => setNutrientsOpen(false)}

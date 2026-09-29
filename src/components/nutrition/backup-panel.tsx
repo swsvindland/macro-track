@@ -1,7 +1,17 @@
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Choices, ErrorText, Field } from "@/components/ui";
+import {
+  Button,
+  Callout,
+  ErrorText,
+  Field,
+  Heading,
+  Label,
+  Meta,
+  Note,
+  Panel,
+  useKitFormat,
+} from "@/vector";
 import {
   exportBackup,
   importBackup,
@@ -12,11 +22,16 @@ import {
 import type { Backup } from "@/lib/backup-data";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
+import type { Message } from "@/lib/translations";
+
+type Mode = "create" | "restore";
 
 export function BackupPanel() {
-  const { refresh } = useStore();
+  const { refresh, t } = useStore();
+  const format = useKitFormat();
   const { refresh: refreshNutrition } = useNutrition();
-  const [mode, setMode] = useState<"Create backup" | "Restore backup">("Create backup");
+  // Null until Create or Restore is chosen; each opens its own password step.
+  const [mode, setMode] = useState<Mode | null>(null);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [preview, setPreview] = useState<Backup | null>(null);
@@ -34,158 +49,145 @@ export function BackupPanel() {
     try {
       await work();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The backup operation failed.");
+      setError(e instanceof Error ? e.message : t("backupFailed"));
     } finally {
       locked.current = false;
       setBusy(false);
     }
   }
+  const count = (n: number, one: Message, other: Message) =>
+    t(format.plural(n) === "one" ? one : other, { count: format.number(n) });
+  const created = preview ? new Date(preview.createdAt) : null;
+  function choose(next: Mode | null) {
+    setMode(next);
+    setPreview(null);
+    setError("");
+    if (next) setMessage("");
+    setPassword("");
+    setConfirmation("");
+  }
   return (
-    <SystemPanel>
-      <SystemPanel.Body className="gap-4">
-        <Text className="text-xl font-semibold">Backup & restore</Text>
-        {!busy && (
-          <Choices
-            values={["Create backup", "Restore backup"] as const}
-            value={mode}
-            label={(value) => value}
-            onChange={(value) => {
-              setMode(value);
-              setPreview(null);
-              setError("");
-              setMessage("");
-              setPassword("");
-              setConfirmation("");
-            }}
-          />
-        )}
-        {!preview && (
-          <>
-            <Field
-              label="Backup password"
-              value={password}
-              onChange={setPassword}
-              secure
-              disabled={busy}
-            />
-            {mode === "Create backup" && (
+    <View className="gap-2">
+      <Label accessibilityRole="header">{t("backupAndRestore")}</Label>
+      <Panel>
+        <Panel.Body>
+          {!mode && (
+            <View className="flex-row flex-wrap gap-2">
+              <Button variant="secondary" onPress={() => choose("create")}>
+                {t("createBackup")}
+              </Button>
+              <Button variant="secondary" onPress={() => choose("restore")}>
+                {t("restoreBackup")}
+              </Button>
+            </View>
+          )}
+          {mode && !preview && (
+            <>
               <Field
-                label="Confirm password"
-                value={confirmation}
-                onChange={setConfirmation}
+                label={t("backupPassword")}
+                value={password}
+                onChange={setPassword}
                 secure
                 disabled={busy}
               />
-            )}
-            <Text className="text-sm text-muted">
-              At least 10 characters. It can’t be recovered.
-            </Text>
-            <SystemButton
-              isDisabled={busy}
-              onPress={() =>
-                void run(async () => {
-                  if (password.length < 10 || password.length > 256)
-                    throw new Error("Use a password between 10 and 256 characters.");
-                  if (mode === "Create backup") {
-                    if (password !== confirmation) throw new Error("The passwords don’t match.");
-                    await exportBackup(password);
-                    setPassword("");
-                    setConfirmation("");
-                    setMessage(
-                      "The share sheet closed. Your backup is saved only if you chose a destination."
-                    );
-                  } else {
-                    const selected = await importBackup(password);
-                    setPreview(selected);
-                  }
-                })
-              }
-            >
-              {busy
-                ? "Working…"
-                : mode === "Create backup"
-                  ? "Save encrypted backup"
-                  : "Choose backup file"}
-            </SystemButton>
-          </>
-        )}
-        {preview && (
-          <View className="gap-3">
-            <Text className="font-semibold">
-              Backup from {new Date(preview.createdAt).toLocaleString()}
-            </Text>
-            <Text>
-              {preview.data.entries.length} food entries · {preview.data.weights.length} weights
-            </Text>
-            <Text>
-              {preview.data.recipes.length} recipes · {preview.data.savedMeals.length} saved meals
-            </Text>
-            <Text className="text-sm text-muted">
-              Replaces your current food and weight records and turns off Health sync. A recovery
-              copy is saved first.
-            </Text>
-            <SystemButton
-              variant="danger-soft"
-              isDisabled={busy}
-              onPress={() =>
-                Alert.alert(
-                  "Replace local records?",
-                  "Your current nutrition records and weights will be replaced by this backup. A recovery copy will be saved first.",
-                  [
-                    { text: "Cancel", style: "cancel" },
+              {mode === "create" && (
+                <Field
+                  label={t("confirmPassword")}
+                  value={confirmation}
+                  onChange={setConfirmation}
+                  secure
+                  disabled={busy}
+                />
+              )}
+              <Note>{t("backupPasswordHint")}</Note>
+              <Button
+                loading={busy}
+                loadingLabel={t("working")}
+                onPress={() =>
+                  void run(async () => {
+                    if (password.length < 10 || password.length > 256)
+                      throw new Error(t("backupPasswordLength"));
+                    if (mode === "create") {
+                      if (password !== confirmation) throw new Error(t("backupPasswordsDiffer"));
+                      await exportBackup(password);
+                      choose(null);
+                      setMessage(t("backupSavedNote"));
+                    } else {
+                      const selected = await importBackup(password);
+                      setPreview(selected);
+                    }
+                  })
+                }
+              >
+                {t(mode === "create" ? "saveEncryptedBackup" : "chooseBackupFile")}
+              </Button>
+              <Button variant="ghost" disabled={busy} onPress={() => choose(null)}>
+                {t("cancel")}
+              </Button>
+            </>
+          )}
+          {preview && created && (
+            <View className="gap-3">
+              <Heading level={4}>
+                {t("backupFrom", { date: format.date(created), time: format.time(created) })}
+              </Heading>
+              <Meta
+                tone="default"
+                items={[
+                  count(preview.data.entries.length, "foodEntryCountOne", "foodEntryCount"),
+                  count(preview.data.weights.length, "weightCountOne", "weightCount"),
+                  count(preview.data.recipes.length, "recipeCountOne", "recipeCount"),
+                  count(preview.data.savedMeals.length, "savedMealCountOne", "savedMealCount"),
+                ]}
+              />
+              <Note>{t("restoreReplacesNote")}</Note>
+              <Button
+                variant="destructive"
+                loading={busy}
+                loadingLabel={t("restoring")}
+                onPress={() =>
+                  // vector: irreversible
+                  Alert.alert(t("replaceRecordsQuestion"), t("replaceRecordsBody"), [
+                    { text: t("cancel"), style: "cancel" },
                     {
-                      text: "Restore backup",
+                      text: t("restoreBackup"),
                       style: "destructive",
                       onPress: () =>
                         void run(async () => {
                           await restoreWithRecovery(preview, password);
                           refresh();
                           refreshNutrition();
-                          setPreview(null);
-                          setPassword("");
-                          setMessage(
-                            "Restore complete. Your previous records are available in the recovery backup below, with the same password."
-                          );
+                          choose(null);
+                          setMessage(t("restoredNote"));
                         }),
                     },
-                  ]
-                )
+                  ])
+                }
+              >
+                {t("replaceWithBackup")}
+              </Button>
+              <Button variant="ghost" disabled={busy} onPress={() => choose(null)}>
+                {t("cancelRestore")}
+              </Button>
+            </View>
+          )}
+          {recovery && (
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onPress={() =>
+                void run(async () => {
+                  await shareBackupFile(recovery);
+                })
               }
             >
-              {busy ? "Restoring…" : "Replace with this backup"}
-            </SystemButton>
-            <SystemButton
-              variant="ghost"
-              isDisabled={busy}
-              onPress={() => {
-                setPreview(null);
-                setPassword("");
-              }}
-            >
-              Cancel restore
-            </SystemButton>
-          </View>
-        )}
-        {recovery && (
-          <SystemButton
-            variant="secondary"
-            isDisabled={busy}
-            onPress={() =>
-              void run(async () => {
-                await shareBackupFile(recovery);
-              })
-            }
-          >
-            Export previous-data recovery backup
-          </SystemButton>
-        )}
-        {!!message && (
-          <Text className="text-sm text-success" accessibilityLiveRegion="polite">
-            {message}
-          </Text>
-        )}
-        <ErrorText message={error} />
-      </SystemPanel.Body>
-    </SystemPanel>
+              {t("exportRecoveryBackup")}
+            </Button>
+          )}
+          {!!message && <Callout tone="success">{message}</Callout>}
+          <ErrorText message={error} />
+        </Panel.Body>
+      </Panel>
+    </View>
   );
 }

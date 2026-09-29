@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { router } from "expo-router";
-import { SystemButton, SystemIconButton } from "@/components/system";
+import { LinkButton } from "@/vector";
 import { DetailScreen } from "@/components/progress/detail-screen";
 import { useStore } from "@/lib/store";
 import { useMeasurementLog } from "./use-measurement-log";
@@ -12,31 +12,29 @@ export function WeightLog() {
   const { t, date, healthSyncEnabled, lastSync } = useStore();
   const log = useMeasurementLog("weight");
   const { launch } = log;
-  const health = Platform.OS === "ios" ? "Apple Health" : "Health Connect";
+  const provider = t(Platform.OS === "ios" ? "appleHealth" : "healthConnect");
   return (
     <>
       <DetailScreen
-        title="Weight history"
-        action={
-          <SystemIconButton
-            icon="add"
-            accessibilityLabel={`${t("add")} · ${t("weight")}`}
-            onPress={() => launch(null)}
-          />
-        }
+        title={t("weightHistory")}
+        action={{
+          icon: "add",
+          accessibilityLabel: t("logWeight"),
+          onPress: () => launch(null),
+        }}
       >
         <MeasurementHistory log={log} />
-        <SystemButton
-          variant="ghost"
-          className="self-start px-0"
-          labelClassName="text-accent-soft-foreground"
+        <LinkButton
+          icon="forward"
           // Back to the tabs underneath, rather than a second copy of them on top.
           onPress={() => router.dismissTo("/(tabs)/settings")}
         >
           {healthSyncEnabled
-            ? `${health} · ${lastSync ? `${t("lastSync")} ${date(lastSync)}` : "On"}`
-            : `Sync weights with ${health}`}
-        </SystemButton>
+            ? lastSync
+              ? t("healthLastSync", { provider, date: date(lastSync) })
+              : t("healthOn", { provider })
+            : t("syncWeightsWith", { provider })}
+        </LinkButton>
       </DetailScreen>
       <WeightForm log={log} />
     </>

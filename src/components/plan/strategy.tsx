@@ -1,19 +1,27 @@
 import type { ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { useThemeColor } from "heroui-native";
 import { twMerge } from "tailwind-merge";
-import { names, short, useWeekOrder } from "@/components/plan/calorie-shift";
+import { useWeekOrder, weekdayName } from "@/components/plan/calorie-shift";
 import {
-  SystemIcon,
-  SystemLabel,
-  SystemPanel,
-  SystemText as Text,
-  type IconName,
-} from "@/components/system";
+  Heading,
+  Icon,
+  Label,
+  Legend,
+  Meta,
+  Note,
+  Panel,
+  Text,
+  Value,
+  useKitFormat,
+  useKitStrings,
+  type Format,
+} from "@/vector";
 import { shortDay } from "@/lib/metrics";
 import type { Targets } from "@/lib/nutrition";
 import { useStore } from "@/lib/store";
+import type { Message } from "@/lib/translations";
 
 const RING = 184,
   GOAL_WIDTH = 5,
@@ -21,7 +29,7 @@ const RING = 184,
 const outer = (RING - GOAL_WIDTH) / 2,
   inner = outer - GOAL_WIDTH / 2 - 6 - WEEK_WIDTH / 2;
 
-/** One arc over its track, clockwise from the top once the ring is turned. */
+/** One arc over its track, clockwise from the top once the ring is turned (a clock never mirrors). */
 function Arc({
   radius,
   width,
@@ -54,7 +62,7 @@ function Arc({
           r={radius}
           stroke={color}
           strokeWidth={width}
-          strokeLinecap="round"
+          strokeLinecap="butt"
           strokeDasharray={`${length * shown} ${length}`}
           fill="none"
         />
@@ -63,24 +71,15 @@ function Arc({
   );
 }
 
-function Legend({
-  icon,
-  color,
-  label,
-  value,
-}: {
-  icon: IconName;
-  color: "success" | "foreground";
-  label: string;
-  value: string;
-}) {
+/** A ring's key: the arc's mark, what it measures and its readout. */
+function Key({ mark, label, value }: { mark: string; label: string; value: string }) {
   return (
-    <View className="flex-row items-center gap-1.5">
-      <SystemIcon name={icon} size={18} color={color} />
-      <Text className="text-sm" maxFontSizeMultiplier={1.3}>
+    <View className="flex-row items-center gap-2">
+      <View className={twMerge("h-2 w-4 rounded-mark", mark)} />
+      <Text variant="small" className="shrink">
         {label}
       </Text>
-      <Text className="text-sm text-muted tabular-nums" maxFontSizeMultiplier={1.3}>
+      <Text variant="readoutXS" tone="muted">
         {value}
       </Text>
     </View>
@@ -105,22 +104,30 @@ export function CheckInRing({
   goal: number | null;
   due: string;
 }) {
-  const { number, language } = useStore();
-  const [track, week, reached] = useThemeColor(["surface-secondary", "foreground", "success"]);
-  const weekday = (format: "short" | "long") =>
-    new Date(`${due}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
-      weekday: format,
-    });
-  const count = `${number(days, 0)} ${days === 1 ? "day" : "days"}`;
-  const percent = goal === null ? null : `${number(goal * 100, 0)}%`;
-  const label = [
-    days > 0
-      ? `${count} until check-in on ${weekday("long")}`
-      : days === 0
-        ? "Check-in today"
-        : `Check-in due since ${weekday("long")}`,
-    ...(percent ? [`${percent} of the way to your goal weight`] : []),
-  ].join(". ");
+  const { t } = useStore();
+  const format = useKitFormat();
+  const strings = useKitStrings();
+  const [track, week, reached] = useThemeColor(["surface-tertiary", "foreground", "link"]);
+  const weekday = (style: "short" | "long") => {
+    const day = new Date(`${due}T12:00:00`);
+    return style === "long" ? format.weekdayLong(day) : format.weekdayShort(day);
+  };
+  const one = format.plural(days) === "one";
+  const percent = goal === null ? null : format.percent(goal);
+  const label = sentences(
+    [
+      days > 0
+        ? t("checkInCountdown", {
+            days: t(one ? "dayCountOne" : "dayCount", { count: format.number(days) }),
+            day: weekday("long"),
+          })
+        : days === 0
+          ? t("checkInToday")
+          : t("checkInOverdue", { day: weekday("long") }),
+      ...(percent ? [t("goalProgress", { percent })] : []),
+    ],
+    t
+  );
   return (
     <View accessible accessibilityLabel={label} className="items-center gap-3 py-2">
       <View className="items-center justify-center" style={{ width: RING, height: RING }}>
@@ -134,46 +141,33 @@ export function CheckInRing({
           )}
           <Arc radius={inner} width={WEEK_WIDTH} value={progress} color={week} track={track} />
         </Svg>
+        {/* A fixed slot inside the ring: one line that shrinks before it clips. */}
         <View className="items-center" style={{ width: inner * 2 - 32 }}>
           {days > 0 ? (
             <>
-              <Text
-                className="text-4xl font-semibold tabular-nums"
+              <Value
+                size="xl"
+                value={format.number(days)}
+                unit={t(one ? "dayUnitOne" : "dayUnit")}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 maxFontSizeMultiplier={1.2}
-              >
-                {count}
-              </Text>
-              <Text className="text-sm text-muted" maxFontSizeMultiplier={1.2}>
-                until check-in
-              </Text>
+              />
+              <Note maxFontSizeMultiplier={1.2}>{t("untilCheckIn")}</Note>
             </>
           ) : (
             <>
-              <Text className="text-sm text-muted" maxFontSizeMultiplier={1.2}>
-                Check-in
-              </Text>
-              <Text
-                className="text-4xl font-semibold"
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                maxFontSizeMultiplier={1.2}
-              >
-                {days === 0 ? "Today" : "Due"}
+              <Note maxFontSizeMultiplier={1.2}>{t("checkIn")}</Note>
+              <Text variant="h1" numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>
+                {t(days === 0 ? "today" : "due")}
               </Text>
             </>
           )}
         </View>
       </View>
       <View className="flex-row flex-wrap justify-center gap-x-5 gap-y-1">
-        {percent && <Legend icon="radio-button-on" color="success" label="Goal" value={percent} />}
-        <Legend
-          icon="calendar-outline"
-          color="foreground"
-          label="Check-in"
-          value={weekday("short")}
-        />
+        {percent && <Key mark="bg-tint" label={strings.goal} value={percent} />}
+        <Key mark="bg-foreground" label={t("checkIn")} value={weekday("short")} />
       </View>
     </View>
   );
@@ -181,108 +175,138 @@ export function CheckInRing({
 
 const COLUMN = 150,
   GAP = 2;
+// P · C · F from the top, on the ink ramp.
 const parts = [
-  { key: "protein", unit: "P", kcal: 4, fill: "bg-chart-protein" },
-  { key: "fat", unit: "F", kcal: 9, fill: "bg-chart-fat" },
-  { key: "carbs", unit: "C", kcal: 4, fill: "bg-chart-carbs" },
+  { key: "protein", name: "macroProtein", kcal: 4, fill: "bg-cat-1", legend: "cat-1" },
+  { key: "carbs", name: "macroCarbs", kcal: 4, fill: "bg-cat-2", legend: "cat-2" },
+  { key: "fat", name: "macroFat", kcal: 9, fill: "bg-cat-3", legend: "cat-3" },
 ] as const;
 
 /** The week for screen readers: days with the same targets together, in the week's order. */
+/** Spoken sentences in a row, with the script's spacing between them (none in Chinese or Japanese). */
+const sentences = (
+  parts: string[],
+  t: (key: Message, values?: Record<string, string | number>) => string
+) => parts.reduce((all, part) => t("joinSentences", { first: all, second: part }));
+
 function describeWeek(
   week: Targets[],
   order: number[],
-  number: (value: number, digits?: number) => string
+  format: Format,
+  t: (key: Message, values?: Record<string, string | number>) => string
 ) {
   const groups: { days: number[]; targets: Targets }[] = [];
   for (const weekday of order) {
     const targets = week[weekday];
     const same = groups.find((group) =>
-      (["calories", "protein", "fat", "carbs"] as const).every(
+      (["calories", "protein", "carbs", "fat"] as const).every(
         (key) => group.targets[key] === targets[key]
       )
     );
     if (same) same.days.push(weekday);
     else groups.push({ days: [weekday], targets });
   }
-  const amounts = ({ calories, protein, fat, carbs }: Targets) =>
-    `${number(calories, 0)} kcal, ${number(protein, 0)} g protein, ${number(fat, 0)} g fat, ${number(carbs, 0)} g carbs`;
+  const amounts = ({ calories, protein, carbs, fat }: Targets) =>
+    t("spokenMacros", {
+      kcal: format.number(calories),
+      protein: format.number(protein),
+      carbs: format.number(carbs),
+      fat: format.number(fat),
+    });
   return groups.length === 1
-    ? `Every day ${amounts(groups[0].targets)}`
-    : groups
-        .map(
-          (group) => `${group.days.map((day) => names[day]).join(", ")}: ${amounts(group.targets)}`
-        )
-        .join(". ");
+    ? t("everyDayTargets", { targets: amounts(groups[0].targets) })
+    : sentences(
+        groups.map((group) =>
+          t("daysTargets", {
+            days: format.list(group.days.map((day) => weekdayName(format, day, "long"))),
+            targets: amounts(group.targets),
+          })
+        ),
+        t
+      );
 }
 
 /**
- * Each weekday's targets as a column: calories on top, then protein, fat and carbs in grams, each
- * as tall as its share of the calories. Columns share one scale, so higher days stand taller.
+ * Each weekday's targets as a column: calories on top, then protein, carbs and fat in grams, each
+ * as tall as its share of the calories. Columns share one scale, so higher days stand taller. The
+ * grams sit beside each bar on the surface, where they read in every theme.
  */
 export function ProgramWeek({ week, today }: { week: Targets[]; today: number }) {
-  const { number } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
   const order = useWeekOrder();
   const most = Math.max(...week.map((day) => day.calories), 1);
   return (
-    <View
-      accessible
-      accessibilityRole="image"
-      accessibilityLabel={describeWeek(week, order, number)}
-      className="flex-row items-end gap-1.5"
-    >
-      {order.map((weekday) => {
-        const targets = week[weekday];
-        const shown = parts.filter((part) => targets[part.key] > 0);
-        const energy = shown.reduce((sum, part) => sum + targets[part.key] * part.kcal, 0);
-        const height = (COLUMN * Math.max(targets.calories, 0)) / most;
-        const room = Math.max(height - GAP * (shown.length - 1), 0);
-        return (
-          <View key={weekday} className="min-w-0 flex-1 items-center gap-1">
-            <View className="max-w-full rounded-full bg-chart-calories px-1.5 py-0.5">
+    <View className="gap-3">
+      <View
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={describeWeek(week, order, format, t)}
+        className="flex-row items-end gap-1.5"
+      >
+        {order.map((weekday) => {
+          const targets = week[weekday];
+          const shown = parts.filter((part) => targets[part.key] > 0);
+          const energy = shown.reduce((sum, part) => sum + targets[part.key] * part.kcal, 0);
+          const height = (COLUMN * Math.max(targets.calories, 0)) / most;
+          const room = Math.max(height - GAP * (shown.length - 1), 0);
+          const size = (part: (typeof parts)[number]) =>
+            energy > 0 ? (room * targets[part.key] * part.kcal) / energy : 0;
+          return (
+            <View key={weekday} className="min-w-0 flex-1 items-center gap-1">
+              {/* Fixed column slots: one line that shrinks before it clips. */}
               <Text
-                className="text-xs font-semibold text-background tabular-nums"
+                variant="readoutXS"
+                tone="tint"
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 maxFontSizeMultiplier={1.2}
               >
-                {number(targets.calories, 0)}
+                {format.number(targets.calories)}
+              </Text>
+              <View className="w-full flex-row gap-1" style={{ height }}>
+                <View className="w-3" style={{ gap: GAP }}>
+                  {shown.map((part) => (
+                    <View
+                      key={part.key}
+                      className={`rounded-mark ${part.fill}`}
+                      style={{ height: size(part) }}
+                    />
+                  ))}
+                </View>
+                <View className="min-w-0 flex-1" style={{ gap: GAP }}>
+                  {shown.map((part) => (
+                    <View key={part.key} className="justify-center" style={{ height: size(part) }}>
+                      {size(part) >= 16 && (
+                        <Text
+                          variant="readoutXS"
+                          tone="secondary"
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          maxFontSizeMultiplier={1.2}
+                        >
+                          {format.number(targets[part.key])}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              </View>
+              <Text
+                variant="caption"
+                tone={weekday === today ? "default" : "muted"}
+                maxFontSizeMultiplier={1.2}
+              >
+                {weekdayName(format, weekday, "short")}
               </Text>
             </View>
-            <View className="w-full" style={{ height, gap: GAP }}>
-              {shown.map((part) => {
-                const size = energy > 0 ? (room * targets[part.key] * part.kcal) / energy : 0;
-                return (
-                  <View
-                    key={part.key}
-                    className={`items-center justify-center overflow-hidden rounded-[6px] ${part.fill}`}
-                    style={{ height: size }}
-                  >
-                    {size >= 16 && (
-                      <Text
-                        className="text-xs font-medium text-background tabular-nums"
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        maxFontSizeMultiplier={1.2}
-                      >
-                        {`${number(targets[part.key], 0)} ${part.unit}`}
-                      </Text>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-            <Text
-              className={twMerge(
-                "text-xs",
-                weekday === today ? "font-semibold text-foreground" : "text-muted"
-              )}
-              maxFontSizeMultiplier={1.2}
-            >
-              {short[weekday]}
-            </Text>
-          </View>
-        );
-      })}
+          );
+        })}
+      </View>
+      {/* The chart's own label already names each macro for screen readers. */}
+      <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+        <Legend items={parts.map((part) => ({ label: t(part.name), style: part.legend }))} />
+      </View>
     </View>
   );
 }
@@ -312,62 +336,57 @@ export function ProgramCard({
   week: Targets[] | null;
   /** Today's weekday, 0 for Sunday. */
   today: number;
-  /** Short lines under the week, read with the card. */
-  notes?: string[];
+  /** Short lines under the week, read with the card; a list is one line of facets. */
+  notes?: (string | string[])[];
   onPress?: () => void;
   action?: ReactNode;
   children?: ReactNode;
 }) {
-  const { number, language } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
   const order = useWeekOrder();
-  const subtitle = [since ? `${shortDay(since, language)} – now` : "", detail ?? ""]
-    .filter(Boolean)
-    .join(" · ");
-  const panel = (pressed = false) => (
-    <SystemPanel className={twMerge("p-4", pressed && "opacity-70")}>
-      <SystemPanel.Body className="gap-3">
-        <SystemLabel className={action ? "pr-10" : undefined}>In progress</SystemLabel>
-        <View className="gap-0.5">
-          <View className="flex-row items-center gap-1">
-            <Text accessibilityRole="header" className="shrink text-xl font-semibold">
-              {name}
-            </Text>
-            {onPress && <SystemIcon name="chevron-forward" size={18} color="muted" />}
-          </View>
-          {!!subtitle && <Text className="text-sm text-muted tabular-nums">{subtitle}</Text>}
-        </View>
-        {week && <ProgramWeek week={week} today={today} />}
-        {notes.map((note) => (
-          <Text key={note} className="text-sm text-muted">
-            {note}
-          </Text>
-        ))}
-        {children}
-      </SystemPanel.Body>
-    </SystemPanel>
-  );
+  const facets = [since ? t("sinceDay", { day: shortDay(since, format.tag) }) : "", detail ?? ""];
+  const spoken = format.list([name, ...facets, ...notes.flat()].filter(Boolean));
   return (
     <View>
-      {onPress ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={[
-            name,
-            subtitle,
-            week ? describeWeek(week, order, number) : "",
-            ...notes,
-          ]
-            .filter(Boolean)
-            .join(". ")}
-          accessibilityHint="Edits your program"
-          onPress={onPress}
-        >
-          {({ pressed }) => panel(pressed)}
-        </Pressable>
-      ) : (
-        panel()
-      )}
-      {action && <View className="absolute right-1 top-1">{action}</View>}
+      <Panel
+        onPress={onPress}
+        // The card's words, then the week in sentences.
+        accessibilityLabel={
+          onPress
+            ? week
+              ? t("programCardSpoken", {
+                  summary: spoken,
+                  week: describeWeek(week, order, format, t),
+                })
+              : spoken
+            : undefined
+        }
+        accessibilityHint={onPress ? t("editsYourProgram") : undefined}
+      >
+        <Panel.Body>
+          <Label className={action ? "pe-10" : undefined}>{t("inProgress")}</Label>
+          <View className="gap-0.5">
+            <View className="flex-row items-center gap-1">
+              <Heading level={3} className="shrink">
+                {name}
+              </Heading>
+              {onPress && <Icon name="forward" size={17} tone="muted" />}
+            </View>
+            {facets.some(Boolean) && <Meta items={facets} />}
+          </View>
+          {week && <ProgramWeek week={week} today={today} />}
+          {notes.map((note) =>
+            Array.isArray(note) ? (
+              <Meta key={note.join()} items={note} />
+            ) : (
+              <Note key={note}>{note}</Note>
+            )
+          )}
+          {children}
+        </Panel.Body>
+      </Panel>
+      {action && <View className="absolute end-1 top-1">{action}</View>}
     </View>
   );
 }

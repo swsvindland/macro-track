@@ -44,6 +44,16 @@ export const dictionaries = { en, es, fr, de, it, pt, nl, sv, ja, ko, zh } satis
   Language,
   Record<keyof typeof en, string>
 >;
-export function translate(language: Language, key: string): string {
-  return Object.hasOwn(en, key) ? dictionaries[language][key as keyof typeof en] : key;
+/** Every translation key; an unknown key is a type error. */
+export type Message = keyof typeof en;
+/** Narrows stored or computed text to a key, for values that are keys only some of the time. */
+export const isMessage = (key: string): key is Message => Object.hasOwn(en, key);
+export function translate(language: Language, key: Message): string {
+  return dictionaries[language][key];
+}
+/** Fills `{name}` placeholders in a translated template; unknown names stay as written. */
+export function interpolate(text: string, values: Record<string, string | number>) {
+  return text.replace(/\{(\w+)\}/g, (match, name: string) =>
+    Object.hasOwn(values, name) ? String(values[name]) : match
+  );
 }

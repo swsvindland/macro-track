@@ -11,3 +11,10 @@ bun.lockb
 expo-env.d.ts
 uniwind-types.d.ts
 .DS_Store
+src/vector/
+src/global.css
+src/app/vector-gallery.tsx
+docs/design-system.md
+scripts/vector-kit.mjs
+eslint.vector.cjs
+tests/vector.test.*

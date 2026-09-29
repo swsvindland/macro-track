@@ -18,6 +18,11 @@ import { useStore } from "@/lib/store";
 import { TimeField } from "./time-field";
 
 const macros = ["protein", "carbs", "fat"] as const;
+const macroFields = {
+  protein: "proteinGramsField",
+  carbs: "carbsGramsField",
+  fat: "fatGramsField",
+} as const;
 
 /**
  * Logs a calorie estimate straight to the diary, or with `onAdd` hands it back
@@ -39,7 +44,7 @@ export function QuickAdd({
   onAdd?: (item: MealItem) => void;
 }) {
   const { refresh } = useNutrition();
-  const { diaryLayout, number } = useStore();
+  const { diaryLayout, number, t } = useStore();
   const [loggedTime, setLoggedTime] = useState(() => time ?? currentFoodTime());
   const [meal, setMeal] = useState<Meal>(() => initialMeal ?? mealAtTime(loggedTime));
   const [name, setName] = useState("");
@@ -116,6 +121,7 @@ export function QuickAdd({
       title="Quick add"
       open
       close={close}
+      dirty={!!name.trim() || Object.values(values).some((value) => value.trim())}
       compact
       footer={
         <View className="gap-2">
@@ -136,7 +142,7 @@ export function QuickAdd({
         {macros.map((key) => (
           <View key={key} className="flex-1">
             <Field
-              label={`${key[0].toUpperCase()}${key.slice(1)} (g)`}
+              label={t(macroFields[key])}
               numeric
               value={values[key]}
               onChange={(value) => setValues((old) => ({ ...old, [key]: value }))}

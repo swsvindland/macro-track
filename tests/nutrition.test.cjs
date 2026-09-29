@@ -4,6 +4,7 @@ const { readFileSync, readdirSync } = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { createHash } = require("node:crypto");
+const { englishT, kitMock } = require("./kit-mock.cjs");
 const ts = require("typescript");
 const { drizzle } = require(
   path.join(path.dirname(require.resolve("drizzle-orm/expo-sqlite")), "driver.cjs")
@@ -89,8 +90,15 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
   };
   const jsx = (type, props) => ({ type, props });
+  const kit = kitMock(load);
+  const announced = [];
   const dependencies = {
     react,
+    "@/vector": kit,
+    "heroui-native": {
+      InputGroup: { Input: "InputGroup.Input", Suffix: "InputGroup.Suffix" },
+      useThemeColor: () => "#000000",
+    },
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
     "react/compiler-runtime": {
       c(size) {
@@ -102,13 +110,15 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     "react-native": {
       View: "View",
+      Pressable: "Pressable",
+      ScrollView: "ScrollView",
       TextInput: "TextInput",
       AppState: {},
       Platform: { OS: "ios" },
       Alert: { alert: () => {} },
       Keyboard: { dismiss: () => {} },
       AccessibilityInfo: {
-        announceForAccessibility: () => {},
+        announceForAccessibility: (message) => announced.push(message),
         isScreenReaderEnabled: async () => false,
       },
     },
@@ -131,9 +141,6 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       DateInput: "DateInput",
       ErrorText: "Error",
       Screen: "Screen",
-      ActionMenu: "ActionMenu",
-      DayPicker: "DayPicker",
-      SearchInput: "SearchInput",
     },
     "@/lib/diary": diary,
     "@/lib/metrics": metrics,
@@ -180,10 +187,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       catalogManifest: JSON.parse(readFileSync("assets/food/manifest.json", "utf8")),
     },
     "@/lib/food-rank": rank,
-    "@/lib/food-icons": load("src/lib/food-icons.ts"),
-    "./food-icon": { FoodIcon: "FoodIcon" },
     "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
-    "./ai-mark": { AiMark: "AiMark" },
   };
   Object.assign(dependencies, extraDependencies);
   const store = {
@@ -191,6 +195,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     hideEmptyHours: true,
     number: (n) => String(n),
     date: (day) => day,
+    t: englishT,
     ...storeOverrides,
   };
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
@@ -201,6 +206,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     context,
     store,
     effects,
+    kit,
+    announced,
     load: (file) => load(file, dependencies, true),
     render(Component, props) {
       cursor = 0;
@@ -218,6 +225,10 @@ function nodes(tree) {
     ...nodes(tree.props?.children),
     ...nodes(tree.props?.footer),
     ...nodes(tree.props?.header),
+    // A kit RecordRow draws the elements it is handed in these slots.
+    ...(tree.type === "RecordRow"
+      ? [tree.props.leading, tree.props.description, tree.props.value].flatMap(nodes)
+      : []),
   ];
 }
 /** Types into a portion screen's amount field, optionally in another of the food's units. */
@@ -413,18 +424,20 @@ test("compiled diary refreshes same-day meals, totals, targets and status after 
   harness.context.refresh();
   let tree = render();
   assert.equal(mealRows(tree).length, 1, "saved breakfast must appear without changing the date");
-  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "90"));
+  const value = (tree, shown) =>
+    tree.some((node) => node.type === "Value" && node.props.value === shown);
+  assert.ok(value(tree, "90"));
   diary.saveTargets(day, { calories: 2000, protein: 100, carbs: 250, fat: 60 });
   diary.setDayStatus(day, "complete");
   harness.context.refresh();
   tree = render();
-  assert.ok(tree.some((node) => node.props?.children === "Day complete"));
-  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "1910"));
+  assert.ok(tree.some((node) => node.type === "Status" && node.props.label === "Day complete"));
+  assert.ok(value(tree, "1,910"));
   const entry = diary.entriesForDay(day)[0];
   diary.saveEntry({ ...entry, amount: 100, portionLabel: "100 g" });
   harness.context.refresh();
   tree = render();
-  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "180"));
+  assert.ok(value(tree, "180"));
   diary.deleteEntry(entry);
   harness.context.refresh();
   assert.equal(mealRows(render()).length, 0);
@@ -1376,14 +1389,14 @@ test("compiled timeline moves an edited entry between hours without changing the
   const render = () => nodes(harness.render(TodayScreen));
   // Hour headings use the device clock style; only the entry's own hour is shown.
   const eight = foodTime.formatClock("08:00");
-  assert.ok(render().some((node) => node.props.children?.[0] === eight));
+  assert.ok(render().some((node) => node.props.children === eight));
   const entry = diary.entriesForDay(day)[0];
   diary.saveEntry({ ...entry, loggedTime: "17:25" });
   harness.context.refresh();
   const tree = render();
   const five = foodTime.formatClock("17:00");
-  assert.ok(tree.some((node) => node.props.children?.[0] === five));
-  assert.ok(!tree.some((node) => node.props.children?.[0] === eight));
+  assert.ok(tree.some((node) => node.props.children === five));
+  assert.ok(!tree.some((node) => node.props.children === eight));
   assert.equal(tree.filter((node) => node.props.accessibilityLabel === "Edit Test food").length, 1);
   tree.find((node) => node.props.accessibilityLabel === `Log food at ${five}`).props.onPress();
   assert.equal(render().find((node) => node.type === "FastLogger").props.initialTime, "17:25");
@@ -1417,8 +1430,8 @@ test("compiled guided setup previews generated targets and starts the program on
   for (const [label, value] of [
     ["Age", "30"],
     ["Height (cm)", "180"],
-    ["Starting weight (kg)", "80"],
-    ["Goal weight (kg)", "75"],
+    ["Starting weight", "80"],
+    ["Goal weight", "75"],
   ])
     render()
       .find((node) => node.type === "Field" && node.props.label === label)
@@ -1426,12 +1439,12 @@ test("compiled guided setup previews generated targets and starts the program on
   render()
     .find((node) => node.type === "Choices" && node.props.values.includes("female"))
     .props.onChange("male");
-  const start = render().find(
-    (node) => node.type === "Button" && node.props.children === "Start this program"
-  );
-  assert.equal(start.props.isDisabled, false);
-  start.props.onPress();
-  start.props.onPress();
+  // The editor's footer primary starts the program.
+  const start = render().find((node) => node.type === "Editor").props.primary;
+  assert.equal(start.label, "Start this program");
+  assert.equal(start.disabled, false);
+  start.onPress();
+  start.onPress();
   assert.equal(closed, 1);
   assert.equal(db.select().from(schema.coachingGoals).all().length, 1);
   assert.ok(diary.targetsForDay(metrics.localDay()).calories > 1500);
@@ -1873,7 +1886,7 @@ test("compiled entry editor keeps the amount and label when only the time change
     const render = () => nodes(harness.render(FoodEditor, { entry, close: () => {} }));
     // The day and time start folded into one line; a correction taps it open.
     render()
-      .find((node) => node.type === "Button" && node.props.icon === "time-outline")
+      .find((node) => node.type === "Button" && node.props.icon === "time")
       .props.onPress();
     change(render);
     amountAction(render(), "Save changes").onPress();
@@ -1916,11 +1929,11 @@ test("compiled entry editor keeps the amount and label when only the time change
   sqlite.close();
 });
 
-/** Types a keypad key into the amount field as the system keyboard would: a selected amount is replaced. */
+/** Types a keypad key into the amount field (a kit Field) as the system keyboard would: a selected amount is replaced. */
 function typeKey(input, key) {
   const { value, selection } = input.props;
   const selected = !!selection && selection.end > selection.start;
-  input.props.onChangeText(
+  input.props.onChange(
     key === "⌫" ? (selected ? "" : value.slice(0, -1)) : (selected ? "" : value) + key
   );
 }
@@ -1962,11 +1975,18 @@ function keypadLogger(diary, fastLog) {
     press: (...keys) => {
       for (const key of keys)
         typeKey(
-          pad().find((node) => node.type === "TextInput"),
+          pad().find((node) => node.type === "Field"),
           key
         );
     },
-    chip: (label) => pad().find((node) => node.props.unit?.label === label),
+    chip: (label) => {
+      // The kit ChipRow draws the unit chips; a chip press is its onChange with that unit.
+      const row = pad().find((node) => node.type === "ChipRow");
+      const key = row?.props.values.find((value) => row.props.label(value) === label);
+      return key === undefined
+        ? undefined
+        : { props: { selected: row.props.value === key, onPress: () => row.props.onChange(key) } };
+    },
     button: (label) =>
       pad().find(
         (node) =>
@@ -2197,7 +2217,7 @@ test("log again rows show calories and macros before the portion", () => {
   historyWriter(sqlite)(food, 1, "08:00", 50);
   const harness = screenHarness(diary, {}, { "@/lib/fast-log": fastLog });
   const { FastLogger } = harness.load("src/components/nutrition/fast-logger.tsx");
-  const texts = nodes(
+  const facets = nodes(
     harness.render(FastLogger, {
       initialDay: metrics.localDay(),
       initialTime: "08:00",
@@ -2205,10 +2225,10 @@ test("log again rows show calories and macros before the portion", () => {
       onLogged: () => {},
     })
   )
-    .filter((node) => node.type === "Text")
-    .map((node) => node.props.children);
-  assert.ok(texts.includes("90 kcal 5P 3F 10C · "));
-  assert.ok(texts.includes("50 g"));
+    .filter((node) => node.type === "Meta")
+    .map((node) => node.props.items);
+  // Calories, then P · C · F, then the portion.
+  assert.ok(facets.some((items) => items.join(" · ") === "90 kcal · P 5 · C 10 · F 3 · 50 g"));
   sqlite.close();
 });
 
@@ -2284,9 +2304,12 @@ test("search finds foods eaten beyond the top 40 with their last portion at any 
   await new Promise((resolve) => setTimeout(resolve, 200));
   tree = render();
   assert.deepEqual(titles(tree), [yogurt.name, strawberry.name], "listed once, first");
-  const texts = tree.filter((node) => node.type === "Text").map((node) => node.props.children);
-  assert.ok(texts.includes("Fage · 170 g"));
-  assert.ok(texts.includes("Chobani · 1 serving · 30 g"));
+  // The facets after calories and P · C · F: brand, then portion.
+  const about = tree
+    .filter((node) => node.type === "Meta")
+    .map((node) => node.props.items.slice(4).join(" · "));
+  assert.ok(about.includes("Fage · 170 g"));
+  assert.ok(about.includes("Chobani · 1 serving · 30 g"));
   sqlite.close();
 });
 
@@ -2469,12 +2492,30 @@ test("compiled Home opens the logger in place, refreshes totals and offers safe 
   logger.props.close();
   const tree = render();
   assert.ok(tree.some((node) => node.props.accessibilityLabel === `Edit ${food.name}`));
-  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "54"));
-  const undo = tree.find((node) => node.props.children === "Undo");
-  undo.props.onPress();
-  undo.props.onPress();
+  assert.ok(tree.some((node) => node.type === "Value" && node.props.value === "54"));
+  // A double tap on Undo undoes once.
+  harness.kit.pressUndo();
+  harness.kit.pressUndo();
   assert.equal(diary.entriesForDay(metrics.localDay()).length, 0);
-  assert.ok(render().some((node) => node.props.children === "Log undone."));
+  assert.deepEqual(harness.announced, ["Log undone."], "said by Home once the revert holds");
+  assert.deepEqual(harness.kit.spoken, [], "not by the kit, which would say it regardless");
+
+  // An Undo that no longer holds says why, and doesn't also claim it worked.
+  bar().onAction("search");
+  logger = render().find((node) => node.type === "FastLogger");
+  const again = fastLog.logBatch([fastLog.portionFor(food)], { time: "12:00" });
+  harness.context.refresh();
+  logger.props.onLogged(again);
+  logger.props.close();
+  render();
+  diary.deleteEntries(again.inserted.map((entry) => entry.id));
+  harness.kit.pressUndo();
+  assert.match(
+    render().find((node) => node.type === "Error")?.props.message ?? "",
+    /changed since/
+  );
+  assert.deepEqual(harness.announced, ["Log undone."]);
+  assert.deepEqual(harness.kit.spoken, []);
   sqlite.close();
 });
 
@@ -2552,7 +2593,7 @@ test("compiled Home reads the diary once per write; re-renders and the clock reu
   const stop = harness.effects[0]();
   const settled = counter.reads;
   assert.ok(settled > 0);
-  assert.ok(text(tree, "On pace for ~1800"), "the usual 1300 kcal after 12:00");
+  assert.ok(text(tree, "On pace for ~1,800"), "the usual 1300 kcal after 12:00");
 
   render()
     .find((node) => node.type === "QuickLogBar")
@@ -2568,14 +2609,14 @@ test("compiled Home reads the diary once per write; re-renders and the clock reu
   t.mock.timers.tick(50_000);
   tree = render();
   assert.equal(counter.reads, settled, "the minute tick only moves the pace cutoff");
-  assert.ok(text(tree, "On pace for ~1200"), "the 12:01 food no longer counts as still to come");
+  assert.ok(text(tree, "On pace for ~1,200"), "the 12:01 food no longer counts as still to come");
 
   fastLog.logBatch([fastLog.portionFor(food)], { time: "12:01" });
   harness.context.refresh();
   tree = render();
   assert.ok(counter.reads > settled);
-  assert.ok(tree.some((node) => node.type === "Text" && node.props.children?.[0] === "1446"));
-  assert.ok(text(tree, "On pace for ~1250"));
+  assert.ok(tree.some((node) => node.type === "Value" && node.props.value === "1,446"));
+  assert.ok(text(tree, "On pace for ~1,250"));
   stop();
   sqlite.close();
 });
@@ -2771,14 +2812,14 @@ test("compiled Plan check-in waits for the last open day, then accepts once in t
   const render = () => nodes(harness.render(CoachingPanel, { onTargetsChanged: () => changed++ }));
   const button = (label) =>
     render().find((node) => node.type === "Button" && node.props.children === label);
-  assert.equal(button("Keep current plan").props.isDisabled, true);
+  assert.equal(button("Keep current plan").props.disabled, true);
   assert.equal(button("Accept this week’s plan"), undefined);
   button("Complete").props.onPress();
   const accept = button("Accept this week’s plan");
-  assert.equal(accept.props.isDisabled, false);
+  assert.equal(accept.props.disabled, false);
   assert.match(
     render().find((node) => node.props.title === "Goal pace").props.value,
-    /^−0\.44\d* lb\/wk$/
+    /^\u22120\.4 lb\/wk$/
   );
   accept.props.onPress();
   accept.props.onPress();
@@ -2963,7 +3004,7 @@ test("compiled fast logger merges saved meals into usual foods and search, and c
   let tree = render();
   assert.ok(!tree.some((node) => node.props.children === "Meals"), "no Foods | Meals toggle");
   assert.deepEqual(titles(tree), ["Oat breakfast", food.name]);
-  assert.ok(tree.some((node) => node.type === "Text" && node.props.children === "Meal"));
+  assert.ok(tree.some((node) => node.type === "Label" && node.props.children === "Meal"));
   // Choices are cached between keystrokes but follow diary writes.
   diary.saveCustomFood({ ...food, id: "custom:later", name: "Later food" });
   assert.ok(!titles(render()).includes("Later food"));
@@ -2998,16 +3039,15 @@ test("compiled fast logger reopens a selected saved meal at its multiple and log
       .find((node) => node.props.accessibilityLabel === "Adjust Oats")
       .props.onPress();
   const shown = (tree) =>
-    tree.some((node) => node.type === "Text" && node.props.children === "3 × saved meal");
+    tree.some((node) => node.type === "Meta" && node.props.items.includes("3 × saved meal"));
   adjust();
   enterAmount(render(), "2");
   amountAction(render(), "Add").onPress();
   adjust();
-  assert.deepEqual(render().find((node) => node.type === "AmountPicker").props.value, {
-    unit: "meal",
-    text: "2",
-    fresh: true,
-  });
+  const picker = render().find((node) => node.type === "AmountPicker").props;
+  assert.deepEqual(picker.value, { unit: "meal", text: "2", fresh: true });
+  // Its only unit is "×", so the field isn't labelled "Amount in ×".
+  assert.equal(picker.label, "Meal quantity");
   assert.equal(
     render().find((node) => node.type === "PortionPreview").props.nutrients.calories,
     360
@@ -3079,9 +3119,14 @@ test("compiled fast logger search finds eaten foods by word and names each brand
       .map((node) => node.props.accessibilityLabel.slice(7));
   const texts = (tree) =>
     tree.filter((node) => node.type === "Text").map((node) => node.props.children);
+  // The facets after calories and P · C · F: brand (or catalog), then portion.
+  const about = (tree) =>
+    tree
+      .filter((node) => node.type === "Meta")
+      .map((node) => node.props.items.slice(4).join(" · "));
   let tree = render();
   assert.ok(
-    texts(tree).includes("1 large · 50 g"),
+    about(tree).includes("1 large · 50 g"),
     "a familiar food without a brand shows its portion"
   );
   tree.find((node) => node.type === "SearchInput").props.onChange("eggs");
@@ -3098,17 +3143,17 @@ test("compiled fast logger search finds eaten foods by word and names each brand
   );
   tree = render();
   assert.deepEqual(titles(tree), [egg.name, branded.name], "the eaten food is listed once, first");
-  assert.ok(texts(tree).includes("USDA · 1 large · 50 g"));
-  assert.ok(texts(tree).includes("Eggland's Best · 1 serving · 30 g"));
+  assert.ok(about(tree).includes("USDA · 1 large · 50 g"));
+  assert.ok(about(tree).includes("Eggland's Best · 1 serving · 30 g"));
   // VoiceOver hears the brand, portion and macros that tell same-named results apart.
   const labelled = (label) => tree.find((node) => node.props.accessibilityLabel === label);
   assert.match(
     labelled(`Adjust ${egg.name}`).props.accessibilityValue.text,
-    /^USDA, 1 large · 50 g, [\d.]+ kcal, [\d.]+ g protein, [\d.]+ g fat, [\d.]+ g carbs$/
+    /^USDA, 1 large · 50 g, and [\d.]+ kcal, protein [\d.]+ g, carbs [\d.]+ g, fat [\d.]+ g$/
   );
   assert.match(
     labelled(`Adjust ${branded.name}`).props.accessibilityValue.text,
-    /^Eggland's Best, 1 serving · 30 g, [\d.]+ kcal, /
+    /^Eggland's Best, 1 serving · 30 g, and [\d.]+ kcal, /
   );
   assert.deepEqual(labelled(`Add ${branded.name}`).props.accessibilityValue, {
     text: "Eggland's Best",
@@ -3456,9 +3501,7 @@ test("compiled photo logger keeps the reviewed draft when a re-run finds nothing
   enterAmount(render(), "200", "g");
   amountAction(render(), "Use").onPress();
   const portion = () =>
-    render().some(
-      (node) => typeof node.props.children === "string" && /^200 g · /.test(node.props.children)
-    );
+    render().some((node) => node.type === "Meta" && node.props.items[0] === "200 g");
   const kept = (why) => {
     assert.deepEqual(drafted(), ["Bananas, raw"], why);
     assert.ok(portion(), `${why}: the adjusted amount stays`);
@@ -3914,8 +3957,8 @@ test("compiled Home shows one task at a time and logs to the day on screen", asy
   assert.equal(diary.dayStatus(yesterday), "complete");
   harness.context.refresh();
   tree = render();
-  assert.ok(tree.some((node) => node.props.children === "Yesterday marked complete."));
-  tree.find((node) => node.props.children === "Undo").props.onPress();
+  assert.equal(harness.kit.currentUndo()?.message, "Yesterday marked complete.");
+  harness.kit.pressUndo();
   assert.equal(diary.dayStatus(yesterday), "in-progress");
   // A day that reopens later (a forgotten snack) can be answered again.
   // Real time for the press lock, mocked time for the entries written after it.
