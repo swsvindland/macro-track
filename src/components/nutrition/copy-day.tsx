@@ -26,7 +26,7 @@ export function CopyDay({
   const { date } = useStore();
   const entries = useNutritionQuery(() => entriesForDay(source), [source]);
   return (
-    <Editor title="Copy a day" open close={close}>
+    <Editor title="Copy a day" open close={close} dirty={source !== shiftDay(destination, -1)}>
       <DateInput label="Copy food from" value={source} onChange={setSource} />
       <Text>
         {entries.length} foods will be added to {date(destination)}, keeping their times, meals and
@@ -79,6 +79,8 @@ export function MoveEntries({
   const [time, setTime] = useState(entries[0].loggedTime ?? currentFoodTime());
   const [meal, setMeal] = useState<Meal | "keep">(mixedMeals ? "keep" : entries[0].meal);
   const [error, setError] = useState("");
+  // The choices the sheet opened with; changing any holds the sheet.
+  const [opened] = useState(() => JSON.stringify([day, keep, time, meal]));
   const locked = useRef(false);
   const count = entries.length === 1 ? entries[0].food.name : `${entries.length} foods`;
   function move() {
@@ -104,6 +106,7 @@ export function MoveEntries({
       title={`Move ${count}`}
       open
       close={close}
+      dirty={JSON.stringify([day, keep, time, meal]) !== opened}
       compact
       footer={
         <View className="gap-2">

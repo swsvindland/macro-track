@@ -1,56 +1,30 @@
 import { useState, type ReactNode } from "react";
-import { View } from "react-native";
-import { Stack } from "expo-router";
-import { useThemeColor } from "heroui-native";
-import { SystemButton, SystemIcon, SystemPanel, SystemText as Text } from "@/components/system";
-import { Screen } from "@/components/ui";
+import { Pressable, View } from "react-native";
+import { Icon, Panel, Text } from "@/vector";
 
-/** A pushed Progress screen with the native back button and optional header action. */
-export function DetailScreen({
-  title,
-  action,
-  children,
-}: {
-  title: string;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  const [background, foreground] = useThemeColor(["background", "foreground"]);
-  return (
-    <Screen title={title} nativeHeader>
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          title,
-          headerBackButtonDisplayMode: "minimal",
-          headerStyle: { backgroundColor: background },
-          headerTintColor: foreground,
-          headerShadowVisible: false,
-          contentStyle: { backgroundColor: background },
-          headerRight: action ? () => action : undefined,
-        }}
-      />
-      {children}
-    </Screen>
-  );
-}
+/** A pushed Progress screen: the native bar with the back button, and at most one header action. */
+export { DetailScreen } from "@/vector";
 
 /** A short explanation that stays closed until asked for. */
 export function Explainer({ title, children }: { title: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <SystemPanel className="p-2">
-      <SystemButton
-        variant="ghost"
-        className="justify-start px-3"
+    <Panel inset="none">
+      <Pressable
+        accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         onPress={() => setOpen((value) => !value)}
+        className="min-h-11 flex-row items-center gap-3 px-4 py-3 active:bg-surface-secondary"
       >
-        <SystemIcon name="bulb-outline" size={18} color="muted" />
-        <Text className="flex-1 font-semibold">{title}</Text>
-        <SystemIcon name={open ? "chevron-up" : "chevron-down"} size={16} color="muted" />
-      </SystemButton>
-      {open && <View className="gap-2 px-3 pb-3">{children}</View>}
-    </SystemPanel>
+        <Text variant="bodyStrong" className="flex-1">
+          {title}
+        </Text>
+        {/* The registry has one chevron: turned, it reads as "collapse". */}
+        <View style={open ? { transform: [{ rotate: "180deg" }] } : undefined}>
+          <Icon name="down" size={17} tone="muted" />
+        </View>
+      </Pressable>
+      {open && <View className="gap-2 px-4 pb-4">{children}</View>}
+    </Panel>
   );
 }

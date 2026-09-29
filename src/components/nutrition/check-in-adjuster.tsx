@@ -1,27 +1,30 @@
 import { useState } from "react";
 import { AccessibilityInfo, Platform, View } from "react-native";
-import { InputGroup } from "heroui-native";
 import {
-  SystemButton,
-  SystemIconButton,
-  SystemLabel,
-  SystemText as Text,
-} from "@/components/system";
-import { parseNumber } from "@/lib/metrics";
+  Button,
+  Field,
+  IconButton,
+  Value,
+  parseDecimal,
+  useKitFormat,
+  useKitStrings,
+} from "@/vector";
 import type { Targets } from "@/lib/nutrition";
 import { adjustedProgram, programTargets, stepTargets, type Program } from "@/lib/program";
 import { useStore } from "@/lib/store";
 
+/** P · C · F, each labelled by its full name above its field. */
 const macros = [
-  ["protein", "Protein"],
-  ["carbs", "Carbs"],
-  ["fat", "Fat"],
+  ["protein", "macroProtein"],
+  ["carbs", "macroCarbs"],
+  ["fat", "macroFat"],
 ] as const;
 const grams = (targets: Targets) => ({
   protein: String(targets.protein),
   carbs: String(targets.carbs),
   fat: String(targets.fat),
 });
+const STEP = 50;
 
 /**
  * Sets this week's targets by hand; typed grams recount the calories. With a program it starts
@@ -42,7 +45,9 @@ export function CheckInAdjuster({
   onSave: (targets: Targets) => void;
   onCancel: () => void;
 }) {
-  const { number } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
+  const strings = useKitStrings();
   const [origin] = useState(() =>
     program && weight !== undefined ? programTargets(start, weight, program) : start
   );
@@ -50,13 +55,19 @@ export function CheckInAdjuster({
     [values, setValues] = useState(() => grams(origin)),
     // The program with any typed protein or split, so steps allocate as its next review would.
     [plan, setPlan] = useState(program);
+  // Typed grams read in the locale's decimal and grouping; anything else is not a number.
+  const read = (text: string) => {
+    const value = parseDecimal(text, format.tag);
+    return value !== null && value >= 0 ? value : NaN;
+  };
   const parsed = {
-    protein: parseNumber(values.protein),
-    carbs: parseNumber(values.carbs),
-    fat: parseNumber(values.fat),
+    protein: read(values.protein),
+    carbs: read(values.carbs),
+    fat: read(values.fat),
   };
   const valid = Object.values(parsed).every(Number.isFinite);
-  function step(delta: number) {
+  const step = t("kcalValue", { value: format.number(STEP) });
+  function move(delta: number) {
     if (!valid) return;
     const moved = stepTargets({ calories, ...parsed }, delta, weight);
     const next = plan && weight !== undefined ? programTargets(moved, weight, plan) : moved;
@@ -65,13 +76,18 @@ export function CheckInAdjuster({
     // The live region below only speaks on Android.
     if (Platform.OS === "ios")
       AccessibilityInfo.announceForAccessibility(
-        `${number(next.calories, 0)} kcal a day: ${next.protein} g protein, ${next.carbs} g carbs, ${next.fat} g fat`
+        t("spokenMacros", {
+          kcal: format.number(next.calories),
+          protein: format.number(next.protein),
+          carbs: format.number(next.carbs),
+          fat: format.number(next.fat),
+        })
       );
   }
   function edit(key: keyof typeof values, value: string) {
     const next = { ...values, [key]: value };
     setValues(next);
-    const [protein, carbs, fat] = [next.protein, next.carbs, next.fat].map(parseNumber);
+    const [protein, carbs, fat] = [next.protein, next.carbs, next.fat].map(read);
     if (![protein, carbs, fat].every(Number.isFinite)) return;
     const typed = { calories: Math.round(protein * 4 + carbs * 4 + fat * 9), protein, carbs, fat };
     setCalories(typed.calories);
@@ -80,60 +96,56 @@ export function CheckInAdjuster({
   return (
     <View className="gap-3">
       <View className="flex-row items-center gap-2">
-        <SystemIconButton
+        <IconButton
           icon="remove"
           variant="secondary"
-          accessibilityLabel="50 kcal less"
-          isDisabled={!valid || calories - 50 < 1500}
-          onPress={() => step(-50)}
+          accessibilityLabel={t("decreaseBy", { amount: step })}
+          disabled={!valid || calories - STEP < 1500}
+          onPress={() => move(-STEP)}
         />
-        <Text
-          className="flex-1 text-center text-xl font-semibold tabular-nums"
-          accessibilityLiveRegion="polite"
-          maxFontSizeMultiplier={1.4}
-        >
-          {number(calories, 0)} kcal/day
-        </Text>
-        <SystemIconButton
+        <View className="flex-1 items-center" accessibilityLiveRegion="polite">
+          <Value
+            size="m"
+            value={format.number(calories)}
+            unit={t("kcalPerDay")}
+            maxFontSizeMultiplier={1.4}
+          />
+        </View>
+        <IconButton
           icon="add"
           variant="secondary"
-          accessibilityLabel="50 kcal more"
-          isDisabled={!valid || calories + 50 > 5000}
-          onPress={() => step(50)}
+          accessibilityLabel={t("increaseBy", { amount: step })}
+          disabled={!valid || calories + STEP > 5000}
+          onPress={() => move(STEP)}
         />
       </View>
       <View className="flex-row gap-2">
         {macros.map(([key, label]) => (
-          <View key={key} className="flex-1 gap-1">
-            <SystemLabel>{label}</SystemLabel>
-            <InputGroup>
-              <InputGroup.Input
-                value={values[key]}
-                onChangeText={(value) => edit(key, value)}
-                keyboardType="number-pad"
-                selectTextOnFocus
-                accessibilityLabel={`${label} in grams`}
-                className="font-mono tabular-nums"
-                maxFontSizeMultiplier={1.4}
-              />
-              <InputGroup.Suffix pointerEvents="none">
-                <Text className="text-muted">g</Text>
-              </InputGroup.Suffix>
-            </InputGroup>
+          <View key={key} className="flex-1">
+            <Field
+              label={t(label)}
+              unit={t("grams")}
+              value={values[key]}
+              onChange={(value) => edit(key, value)}
+              numeric
+              selectTextOnFocus
+            />
           </View>
         ))}
       </View>
+      {/* Secondary: Home's dock and Plan's dock carry each screen's one primary action. */}
       <View className="flex-row gap-2">
-        <SystemButton
+        <Button
+          variant="secondary"
           className="flex-1"
-          isDisabled={!valid}
+          disabled={!valid}
           onPress={() => onSave({ calories, ...parsed })}
         >
-          Save targets
-        </SystemButton>
-        <SystemButton variant="secondary" onPress={onCancel}>
-          Cancel
-        </SystemButton>
+          {t("saveTargets")}
+        </Button>
+        <Button variant="ghost" onPress={onCancel}>
+          {strings.cancel}
+        </Button>
       </View>
     </View>
   );

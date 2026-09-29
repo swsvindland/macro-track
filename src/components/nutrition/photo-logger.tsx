@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Platform, View } from "react-native";
-import {
-  SystemButton,
-  SystemIconButton,
-  SystemLabel,
-  SystemText as Text,
-} from "@/components/system";
+import { Image, Platform, View } from "react-native";
+import { SystemButton, SystemIconButton } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
+import { Heading, Label, Meta, Note, ProcessLine, Text, useKitFormat } from "@/vector";
 import { favoriteFoods, personalFoods, recentFoods, recipeFoods, targetsForDay } from "@/lib/diary";
 import { logBatch, type LogReceipt } from "@/lib/fast-log";
 import { searchCatalogMatch } from "@/lib/food-catalog";
@@ -36,7 +32,7 @@ import {
 } from "@/lib/nutrition";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
-import { AiMark } from "./ai-mark";
+import type { Message } from "@/lib/translations";
 import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
 import { discardPhoto, PhotoCapture } from "./photo-capture";
@@ -55,32 +51,29 @@ export function photoLoggingOffered(status: ModelStatus | null) {
   return !!status && (status.state !== "unavailable" || status.reason === "disabled");
 }
 
-function unavailableText(status: ModelStatus) {
-  if (status.state === "downloading")
-    return `${engineName(status)} is still installing its on-device model. Try again in a few minutes.`;
+type Translate = (key: Message, values?: Record<string, string | number>) => string;
+
+function unavailableText(status: ModelStatus, t: Translate) {
+  if (status.state === "downloading") return t("aiInstalling", { engine: engineName(status) });
   switch (status.reason) {
     case "disabled":
-      return "Turn on Apple Intelligence in Settings › Apple Intelligence & Siri to log meals from photos and descriptions. It runs on this iPhone.";
+      return t("aiDisabled");
     case "os":
-      return "Photo logging needs iOS 26 or later with Apple Intelligence.";
+      return t("aiNeedsNewerIos");
     case "missing":
-      return "This version of the app doesn't include on-device AI.";
+      return t("aiMissing");
     default:
-      return Platform.OS === "ios"
-        ? "This iPhone doesn't support Apple Intelligence, which runs the food model on the phone. Search, Scan and Quick add still work."
-        : "This phone doesn't support Gemini Nano, which runs the food model on the phone. Search, Scan and Quick add still work.";
+      return t(Platform.OS === "ios" ? "aiUnsupportedIphone" : "aiUnsupportedAndroid");
   }
 }
 
-function describeError(error: unknown) {
+function describeError(error: unknown, t: Translate) {
   const code = errorCode(error);
   if (code.startsWith("ERR_LOCAL_AI_") && error instanceof Error && error.message)
     return error.message;
   if (error instanceof SyntaxError || (error instanceof Error && /JSON/.test(error.message)))
-    return "The on-device model gave an answer that couldn't be read. Try again.";
-  return error instanceof Error && error.message
-    ? error.message
-    : "Couldn't analyze this meal. Try again.";
+    return t("aiUnreadable");
+  return error instanceof Error && error.message ? error.message : t("aiFailed");
 }
 
 /** The amount field for a drafted item: the unit and count the photo was read as. */
@@ -121,7 +114,8 @@ export function PhotoLogger({
   onLogged?: (receipt: LogReceipt) => void;
   onAdd?: (items: MealItem[]) => void;
 }) {
-  const { number, diaryLayout } = useStore();
+  const { diaryLayout, t } = useStore();
+  const format = useKitFormat();
   const { refresh } = useNutrition();
   const [status, setStatus] = useState<ModelStatus | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -161,7 +155,7 @@ export function PhotoLogger({
     try {
       await downloadModel();
     } catch (e) {
-      setError(describeError(e));
+      setError(describeError(e, t));
     } finally {
       setInstalling(false);
       check();
@@ -170,7 +164,7 @@ export function PhotoLogger({
 
   async function analyze(image = photo, text = description) {
     if (!image && !text.trim()) {
-      setError("Take a photo or describe what you ate.");
+      setError(t("photoNeedsInput"));
       return;
     }
     const id = ++run.current;
@@ -192,11 +186,9 @@ export function PhotoLogger({
       if (run.current !== id) return;
       if (!result.length) {
         back(
-          drafts.length
-            ? "No food found with that description."
-            : image
-              ? "No food recognized in this photo. Describe what you ate and tap Find foods, or retake it closer."
-              : "No food found in that description."
+          t(
+            drafts.length ? "noFoodForDescription" : image ? "noFoodInPhoto" : "noFoodInDescription"
+          )
         );
         return;
       }
@@ -205,7 +197,7 @@ export function PhotoLogger({
       setPhase({ step: "review" });
     } catch (e) {
       if (run.current !== id) return;
-      back(describeError(e));
+      back(describeError(e, t));
     }
   }
   // A re-run that fails, finds nothing or is cancelled leaves the draft it would have replaced.
@@ -237,6 +229,8 @@ export function PhotoLogger({
   }
   const changed =
     asked !== null && description.trim() !== asked && (!!photo || !!description.trim());
+  // A photo, a description or a draft holds the sheet, so a swipe can't lose them.
+  const held = !!photo || !!description.trim() || drafts.length > 0;
   // Describe-only: return finds the foods, or finds them again for an edited description.
   function submit() {
     if (phase.step === "capture" ? description.trim() : changed) void analyze();
@@ -270,7 +264,7 @@ export function PhotoLogger({
       close();
     } catch (e) {
       locked.current = false;
-      setError(e instanceof Error ? e.message : "Could not save this meal.");
+      setError(e instanceof Error ? e.message : t("couldNotSaveMeal"));
     }
   }
   function cancel() {
@@ -284,8 +278,8 @@ export function PhotoLogger({
       <FoodEditor
         initialMode="search"
         initialQuery={searching.query}
-        pickerTitle={searching.key ? "Replace food" : "Add to meal"}
-        pickLabel={searching.key ? "Use this food" : "Add to meal"}
+        pickerTitle={t(searching.key ? "replaceFood" : "addToMeal")}
+        pickLabel={t(searching.key ? "useThisFood" : "addToMeal")}
         close={() => setSearching(null)}
         onPick={(food, amount, item) => {
           if (searching.key)
@@ -327,13 +321,20 @@ export function PhotoLogger({
     } catch {
       /* Shown on save. */
     }
-    const seen = `${draft.seen.brand ? `${draft.seen.brand} ` : ""}${draft.seen.name} · ${draft.seen.quantity} ${draft.seen.unit}`;
+    const seen = t("seenFood", {
+      food: draft.seen.brand
+        ? t("brandedFood", { brand: draft.seen.brand, name: draft.seen.name })
+        : draft.seen.name,
+      amount: t("amountUnit", { count: draft.seen.quantity, unit: draft.seen.unit }),
+    });
     return (
       <Editor
-        title="Adjust food"
+        title={t("adjustFood")}
         open
         compact
         close={() => setEditing(null)}
+        // Cancel steps back to the review.
+        guarded
         footer={
           current ? (
             <View className="gap-2">
@@ -347,9 +348,9 @@ export function PhotoLogger({
                 }}
                 actions={[
                   {
-                    label: "Use",
+                    label: t("use"),
                     onPress: () => {
-                      if (!next) return setError("Enter a valid quantity.");
+                      if (!next) return setError(t("enterValidQuantity"));
                       update(draft.key, (row) => ({ ...row, item: next }));
                       setEditing(null);
                     },
@@ -360,16 +361,12 @@ export function PhotoLogger({
           ) : undefined
         }
       >
-        <Text accessibilityRole="header" numberOfLines={3} className="text-xl font-semibold">
-          {current?.food.name ?? draft.seen.name}
-        </Text>
-        <Text className="-mt-2 text-sm text-muted">Seen: {seen}</Text>
+        <Heading level={3}>{current?.food.name ?? draft.seen.name}</Heading>
+        <Note>{seen}</Note>
         {current && <PortionPreview nutrients={next?.nutrients ?? null} targets={targets} />}
         {draft.options.length > (current ? 1 : 0) && (
           <View className="gap-1">
-            <SystemLabel className="px-1 pt-2">
-              {current ? "Other matches" : "Possible matches"}
-            </SystemLabel>
+            <Label className="pt-2">{t(current ? "otherMatches" : "possibleMatches")}</Label>
             {draft.options
               .filter((food) => food.id !== current?.food.id)
               .slice(0, 7)
@@ -377,8 +374,8 @@ export function PhotoLogger({
                 <SystemButton
                   key={food.id}
                   variant="ghost"
-                  className="justify-start rounded-2xl bg-surface px-3 py-2"
-                  accessibilityLabel={`Use ${food.name}`}
+                  className="justify-start border border-border bg-surface px-3 py-2"
+                  accessibilityLabel={t("useNamed", { name: food.name })}
                   onPress={() => {
                     const item = draftItem(draft.seen, food);
                     update(draft.key, (row) => ({ ...row, item }));
@@ -386,12 +383,18 @@ export function PhotoLogger({
                   }}
                 >
                   <View className="flex-1 gap-0.5">
-                    <Text numberOfLines={2}>{food.name}</Text>
-                    <Text className="text-xs text-muted">
-                      {food.brand ? `${food.brand} · ` : ""}
-                      {number(food.nutrients.calories, 0)} kcal /{" "}
-                      {food.basis === "serving" ? "serving" : `100 ${food.basis}`}
-                    </Text>
+                    <Text>{food.name}</Text>
+                    <Meta
+                      items={[
+                        food.brand,
+                        food.basis === "serving"
+                          ? t("kcalPerServing", { value: format.number(food.nutrients.calories) })
+                          : t("kcalPer100", {
+                              value: format.number(food.nutrients.calories),
+                              basis: food.basis,
+                            }),
+                      ]}
+                    />
                   </View>
                 </SystemButton>
               ))}
@@ -402,7 +405,7 @@ export function PhotoLogger({
           icon="search"
           onPress={() => setSearching({ key: draft.key, query: draft.seen.name })}
         >
-          Search all foods
+          {t("searchAllFoods")}
         </SystemButton>
         <SystemButton
           variant="danger-soft"
@@ -411,7 +414,7 @@ export function PhotoLogger({
             setEditing(null);
           }}
         >
-          Remove from meal
+          {t("removeFromThisMeal")}
         </SystemButton>
       </Editor>
     );
@@ -419,7 +422,7 @@ export function PhotoLogger({
 
   const describe = status && (
     <Field
-      label={status.vision ? "Description (optional)" : "What did you eat?"}
+      label={t(status.vision ? "descriptionOptional" : "whatDidYouEat")}
       multiline
       value={description}
       onChange={(next) => {
@@ -427,16 +430,12 @@ export function PhotoLogger({
         setError("");
       }}
       onSubmit={status.vision ? undefined : submit}
-      placeholder="e.g. large pepperoni from Domino's, ate 3 slices"
+      placeholder={t("mealDescriptionPlaceholder")}
     />
   );
   const rerun = changed && (
-    <SystemButton
-      variant="secondary"
-      icon={<AiMark size={18} color="accent-soft-foreground" />}
-      onPress={() => void analyze()}
-    >
-      Update with description
+    <SystemButton variant="secondary" icon="analysis" onPress={() => void analyze()}>
+      {t("updateWithDescription")}
     </SystemButton>
   );
 
@@ -444,35 +443,49 @@ export function PhotoLogger({
     const today = localDay();
     const dayLabel =
       day === today
-        ? "Today"
+        ? t("today")
         : day === shiftDay(today, -1)
-          ? "Yesterday"
-          : new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
+          ? t("yesterday")
+          : new Date(`${day}T12:00:00`).toLocaleDateString(format.tag, {
               weekday: "short",
               month: "short",
               day: "numeric",
             });
     const sum = totalNutrients(items.map((item) => item.nutrients));
+    const one = format.plural(items.length) === "one";
+    const action = t(
+      onAdd ? (one ? "addFoodsOne" : "addFoods") : one ? "logFoodsOne" : "logFoods",
+      {
+        count: format.number(items.length),
+      }
+    );
+    const commitLabel = unmatched
+      ? t("skipUnmatched", { action, count: format.number(unmatched) })
+      : action;
     return (
       <Editor
-        title="Review meal"
+        title={t("reviewMeal")}
         open
         compact
         close={cancel}
+        dirty={held}
         footer={
           <View className="gap-2">
             <ErrorText message={error} />
             {rerun}
             {!!items.length && (
-              <Text className="text-sm font-semibold tabular-nums">
-                {number(sum.calories, 0)} kcal · {number(sum.protein, 0)} g protein ·{" "}
-                {number(sum.carbs, 0)} g carbs · {number(sum.fat, 0)} g fat
-              </Text>
+              <Meta
+                tone="default"
+                items={[
+                  t("kcalValue", { value: format.number(sum.calories) }),
+                  t("proteinGrams", { value: format.number(sum.protein) }),
+                  t("carbsGrams", { value: format.number(sum.carbs) }),
+                  t("fatGrams", { value: format.number(sum.fat) }),
+                ]}
+              />
             )}
             <SystemButton isDisabled={!items.length} onPress={commit}>
-              {items.length
-                ? `${onAdd ? "Add" : "Log"} ${items.length} ${items.length === 1 ? "food" : "foods"}${unmatched ? ` · skip ${unmatched}` : ""}`
-                : "Nothing to log yet"}
+              {items.length ? commitLabel : t("nothingToLogYet")}
             </SystemButton>
           </View>
         }
@@ -480,42 +493,57 @@ export function PhotoLogger({
         {!onAdd && (
           <SystemButton
             variant="ghost"
-            icon="time-outline"
+            icon="time"
             className="self-start px-2"
-            accessibilityHint="Changes the day and time for this meal"
+            accessibilityHint={t("changeMealTimeHint")}
             accessibilityState={{ expanded: when }}
             onPress={() => setWhen((open) => !open)}
           >
-            {`${dayLabel} · ${validFoodTime(time) ? formatClock(time) : time}${diaryLayout === "meals" ? ` · ${meal}` : ""}`}
+            {t(diaryLayout === "meals" ? "whenMeal" : "whenTime", {
+              day: dayLabel,
+              time: validFoodTime(time) ? formatClock(time, format.tag) : time,
+              meal,
+            })}
           </SystemButton>
         )}
         {when && (
           <>
             <TimeField value={time} onChange={setTime} day={day} onDayChange={setDay} />
-            {diaryLayout === "meals" && <Choices values={meals} value={meal} onChange={setMeal} />}
+            {diaryLayout === "meals" && (
+              <Choices
+                values={meals}
+                value={meal}
+                onChange={setMeal}
+                label={(value) => value}
+                accessibilityLabel={t("meal")}
+              />
+            )}
           </>
         )}
         {photo && (
           <Image
             source={{ uri: photo }}
             accessibilityIgnoresInvertColors
-            accessibilityLabel="Your meal photo"
-            style={{ width: "100%", height: 150, borderRadius: 16 }}
+            accessibilityLabel={t("yourMealPhoto")}
+            className="rounded-control border border-border"
+            style={{ width: "100%", height: 150 }}
             resizeMode="cover"
           />
         )}
-        <SystemLabel accessibilityRole="header" className="px-1 pt-1">
-          {`${drafts.length} ${drafts.length === 1 ? "food" : "foods"} found · tap to adjust`}
-        </SystemLabel>
+        <Label accessibilityRole="header" className="pt-1">
+          {t(format.plural(drafts.length) === "one" ? "foundFoodsOne" : "foundFoods", {
+            count: format.number(drafts.length),
+          })}
+        </Label>
         {drafts.map((row) => (
           <View
             key={row.key}
-            className="flex-row items-center gap-2 rounded-2xl bg-surface py-1 pl-3 pr-1.5"
+            className="flex-row items-center gap-2 rounded-control border border-border bg-surface py-1 ps-3 pe-1.5"
           >
             <SystemButton
               variant="ghost"
               className="flex-1 justify-start px-0 py-2"
-              accessibilityLabel={`Adjust ${row.item?.food.name ?? row.seen.name}`}
+              accessibilityLabel={t("adjustNamed", { name: row.item?.food.name ?? row.seen.name })}
               onPress={() => {
                 setEditing(row.key);
                 setAmount(draftOf(row.item));
@@ -523,24 +551,26 @@ export function PhotoLogger({
               }}
             >
               <View className="flex-1 gap-0.5">
-                <Text numberOfLines={2} className="shrink font-medium">
+                <Text variant="bodyStrong" className="shrink">
                   {row.item?.food.name ?? row.seen.name}
                 </Text>
-                <Text
-                  numberOfLines={1}
-                  className={`text-sm tabular-nums ${row.item ? "text-muted" : "text-warning"}`}
-                >
-                  {row.item
-                    ? `${row.item.portionLabel} · ${number(row.item.nutrients.calories, 0)} kcal`
-                    : "No match yet · tap to choose"}
-                </Text>
+                {row.item ? (
+                  <Meta
+                    items={[
+                      row.item.portionLabel,
+                      t("kcalValue", { value: format.number(row.item.nutrients.calories) }),
+                    ]}
+                  />
+                ) : (
+                  <Note tone="warning">{t("noMatchYet")}</Note>
+                )}
               </View>
             </SystemButton>
             <SystemIconButton
               icon="close"
               color="muted"
               iconSize={20}
-              accessibilityLabel={`Remove ${row.item?.food.name ?? row.seen.name}`}
+              accessibilityLabel={t("removeNamed", { name: row.item?.food.name ?? row.seen.name })}
               onPress={() => update(row.key, () => null)}
             />
           </View>
@@ -552,16 +582,15 @@ export function PhotoLogger({
             className="px-3"
             onPress={() => setSearching({ query: "" })}
           >
-            Add a food
+            {t("addAFood")}
           </SystemButton>
           <SystemButton variant="ghost" icon="refresh" className="px-3" onPress={startOver}>
-            Start over
+            {t("startOver")}
           </SystemButton>
         </View>
         {describe}
-        <Text className="px-1 text-xs text-muted">
-          Foods and amounts are estimates made on this phone. Nutrition comes from the food catalog;
-          check portions before logging.
+        <Text variant="caption" tone="muted">
+          {t("photoEstimateNote")}
         </Text>
       </Editor>
     );
@@ -570,27 +599,28 @@ export function PhotoLogger({
   const ready = status?.state === "available";
   return (
     <Editor
-      title={status && !status.vision && ready ? "Describe a meal" : "Photo log"}
+      title={t(status && !status.vision && ready ? "describeAMeal" : "photoLog")}
       open
       compact
       close={cancel}
+      dirty={held}
       footer={
         phase.step === "analyzing" ? (
           <View className="gap-2">
             {rerun}
             <SystemButton variant="secondary" onPress={stop}>
-              Cancel
+              {t("cancel")}
             </SystemButton>
           </View>
         ) : ready ? (
           <View className="gap-2">
             <ErrorText message={error} />
             <SystemButton
-              icon={<AiMark size={18} color="accent-foreground" />}
+              icon="analysis"
               isDisabled={!photo && !description.trim()}
               onPress={() => void analyze()}
             >
-              {photo || description.trim() ? "Find foods" : "Add a photo or description"}
+              {t(photo || description.trim() ? "findFoods" : "addPhotoOrDescription")}
             </SystemButton>
           </View>
         ) : undefined
@@ -603,52 +633,55 @@ export function PhotoLogger({
               <Image
                 source={{ uri: photo }}
                 accessibilityIgnoresInvertColors
-                accessibilityLabel="Your meal photo"
-                style={{ width: "100%", height: 200, borderRadius: 16 }}
+                accessibilityLabel={t("yourMealPhoto")}
+                className="rounded-control border border-border"
+                style={{ width: "100%", height: 200 }}
                 resizeMode="cover"
               />
             )}
-            <View className="flex-row items-center gap-3">
-              <ActivityIndicator />
-              <Text className="font-medium">
-                {phase.stage === "reading"
-                  ? photo
-                    ? "Looking at your meal…"
-                    : "Reading your description…"
-                  : `Matching ${phase.seen.length} ${phase.seen.length === 1 ? "food" : "foods"} to the food list…`}
-              </Text>
-            </View>
+            <ProcessLine
+              label={
+                phase.stage === "reading"
+                  ? t(photo ? "lookingAtMeal" : "readingDescription")
+                  : t(
+                      format.plural(phase.seen.length) === "one"
+                        ? "matchingFoodsOne"
+                        : "matchingFoods",
+                      {
+                        count: format.number(phase.seen.length),
+                      }
+                    )
+              }
+            />
             {phase.seen.map((food, i) => (
-              <Text key={i} className="px-1 text-sm text-muted">
-                {`${food.quantity} ${food.unit} · ${food.brand ? `${food.brand} ` : ""}${food.name}`}
-              </Text>
+              <Meta
+                key={i}
+                items={[
+                  t("amountUnit", { count: food.quantity, unit: food.unit }),
+                  food.brand,
+                  food.name,
+                ]}
+              />
             ))}
           </View>
           {describe}
         </>
       ) : !status ? (
-        <Text className="text-muted">Checking on-device AI…</Text>
+        <Text tone="muted">{t("checkingAi")}</Text>
       ) : status.state === "downloadable" ? (
         <View className="gap-3">
-          <Text>
-            Photo logging uses Gemini Nano, which Android installs on the phone. After a one-time
-            download, analysis works offline and photos never leave the phone.
-          </Text>
-          <SystemButton
-            isDisabled={installing}
-            icon="download-outline"
-            onPress={() => void install()}
-          >
-            {installing ? "Downloading…" : "Download Gemini Nano"}
+          <Text>{t("geminiDownloadIntro")}</Text>
+          <SystemButton isDisabled={installing} icon="download" onPress={() => void install()}>
+            {t(installing ? "downloading" : "downloadGeminiNano")}
           </SystemButton>
           <ErrorText message={error} />
         </View>
       ) : !ready ? (
         <View className="gap-3">
-          <Text>{unavailableText(status)}</Text>
+          <Text>{unavailableText(status, t)}</Text>
           {status.state === "downloading" && (
             <SystemButton variant="secondary" icon="refresh" onPress={check}>
-              Check again
+              {t("checkAgain")}
             </SystemButton>
           )}
         </View>
@@ -661,36 +694,32 @@ export function PhotoLogger({
                 <Image
                   source={{ uri: photo }}
                   accessibilityIgnoresInvertColors
-                  accessibilityLabel="Your meal photo"
-                  style={{ flex: 1, height: 160, borderRadius: 16 }}
+                  accessibilityLabel={t("yourMealPhoto")}
+                  className="rounded-control border border-border"
+                  style={{ flex: 1, height: 160 }}
                   resizeMode="cover"
                 />
                 <SystemButton
                   variant="secondary"
-                  icon="camera-reverse-outline"
+                  icon="retake"
                   className="px-3"
-                  accessibilityLabel="Retake photo"
+                  accessibilityLabel={t("retakePhoto")}
                   onPress={() => setPhoto(null)}
                 >
-                  Retake
+                  {t("retake")}
                 </SystemButton>
               </View>
             ) : (
-              <PhotoCapture
-                subject="your meal"
-                alternative="describe your meal"
-                onPhoto={took}
-                onError={setError}
-              />
+              <PhotoCapture kind="meal" onPhoto={took} onError={setError} />
             )
           ) : (
-            <Text className="text-sm text-muted">
-              Photos need iOS 27. Describe what you ate and the foods will be found for you.
-            </Text>
+            <Note>{t("photosNeedNewerIos")}</Note>
           )}
           {describe}
-          <Text className="px-1 text-xs text-muted">
-            {`Runs on this phone with ${engineName(status)}. Brands and amounts you mention are used as given.${status.vision ? " Photos are not saved." : ""}`}
+          <Text variant="caption" tone="muted">
+            {t(status.vision ? "aiRunsOnPhonePhotos" : "aiRunsOnPhone", {
+              engine: engineName(status),
+            })}
           </Text>
         </>
       )}

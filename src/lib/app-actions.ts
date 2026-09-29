@@ -64,18 +64,27 @@ export function subscribeAppActions(listener: () => void) {
   };
 }
 
-/** True inside Home, which closes its own sheets for a link, skipping a Cancel that may ask. */
+/**
+ * True inside Home, which closes its own sheets for a link, skipping a Cancel that may ask. The
+ * Editor shim turns this into `EditorPresenceProvider value={null}`; a kit Editor used directly on
+ * Home needs that too.
+ */
 export const HomeSheets = createContext(false);
 
-/** Closes an open sheet outside Home when a link arrives. Used by the shared Editor. */
+/**
+ * Registers an open sheet outside Home to close when a link arrives, and returns the unregister.
+ * The Vector adapter hands it to every kit Editor through EditorPresenceProvider.
+ */
+export function closeOnAppAction(close: () => void) {
+  const closer = () => close();
+  sheets.add(closer);
+  return () => {
+    sheets.delete(closer);
+  };
+}
+
+/** Closes an open sheet outside Home when a link arrives, for sheets that are not an Editor. */
 export function useCloseForAppAction(open: boolean, close: () => void) {
   const home = useContext(HomeSheets);
-  useEffect(() => {
-    if (!open || home) return;
-    const closer = () => close();
-    sheets.add(closer);
-    return () => {
-      sheets.delete(closer);
-    };
-  }, [open, home, close]);
+  useEffect(() => (open && !home ? closeOnAppAction(close) : undefined), [open, home, close]);
 }

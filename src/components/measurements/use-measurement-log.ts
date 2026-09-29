@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Alert } from "react-native";
 import { eq } from "drizzle-orm";
+import { useKitFormat, type IntlUnit } from "@/vector";
 import { db, healthLinks, measurements, weightEntries } from "@/db";
 import { useStore } from "@/lib/store";
 import { deleteWeight, setWeightExcluded } from "@/lib/weigh-in";
@@ -11,17 +12,22 @@ import {
   parseHeight,
   fromCm,
   fromKg,
-  lengthUnit,
   localDay,
   parseNumber,
   sites,
   toCm,
   toKg,
   validDay,
-  weightUnit,
+  type Units,
 } from "@/lib/metrics";
 
 type Kind = "weight" | "height" | "body";
+/** The unit each kind is logged in, as the locale writes its symbol. */
+const logUnits: Record<Units, Record<"weight" | "length", IntlUnit>> = {
+  metric: { weight: "kilogram", length: "centimeter" },
+  imperial: { weight: "pound", length: "inch" },
+  stone: { weight: "stone", length: "inch" },
+};
 type RecordRow = {
   id: number;
   measuredAt: string;
@@ -30,11 +36,14 @@ type RecordRow = {
   excluded?: boolean;
 };
 export function useMeasurementLog(kind: Kind) {
-  const { weights, measurements: records, units, t, number, refresh } = useStore();
+  const { weights, measurements: records, units, t, refresh } = useStore();
+  const kit = useKitFormat();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [day, setDay] = useState(localDay());
+  // What the editor opened with, so a sheet with unsaved changes resists being swiped away.
+  const [opened, setOpened] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [limit, setLimit] = useState(30);
@@ -47,15 +56,39 @@ export function useMeasurementLog(kind: Kind) {
           excluded: w.excluded,
         }))
       : records.filter((m) => m.kind === kind);
-  const fields = kind === "body" ? [...sites, "bodyFat"] : [kind];
-  const unit = kind === "weight" ? weightUnit(units) : lengthUnit(units);
+  const fields: ((typeof sites)[number] | "bodyFat" | "weight" | "height")[] =
+    kind === "body" ? [...sites, "bodyFat"] : [kind];
+  const intlUnit = logUnits[units][kind === "weight" ? "weight" : "length"];
+  const unit = kit.unitParts(1, intlUnit).unit;
+  const digits = kind === "weight" && units === "stone" ? 2 : 1;
+  // Weights keep their decimals ("80.0 kg"), as formatWeight writes them everywhere else.
+  const style = { fixed: kind === "weight" };
   const display = (key: string, value: number) =>
     key === "bodyFat" ? value : kind === "weight" ? fromKg(value, units) : fromCm(value, units);
   const imperialHeight = kind === "height" && units !== "metric";
+  /** A reading as Value parts: the number and its unit, in the locale's order and spacing. */
+  const readout = (key: string, value: number) =>
+    key === "bodyFat"
+      ? { value: kit.percent(value / 100, 1), unit: "" }
+      : imperialHeight
+        ? { value: formatHeight(value, units, kit.number), unit: "" }
+        : kit.unitParts(display(key, value), intlUnit, digits, style);
   const format = (key: string, value: number) =>
-    key === "height"
-      ? formatHeight(value, units, number)
-      : `${number(display(key, value))} ${key === "bodyFat" ? "%" : unit}`;
+    key === "bodyFat"
+      ? kit.percent(value / 100, 1)
+      : imperialHeight
+        ? formatHeight(value, units, kit.number)
+        : kit.unit(display(key, value), intlUnit, digits, style);
+  /**
+   * What a field opens with, in the locale's decimal and the readout's precision ("80,5" in de,
+   * "12.57" in stone); parseNumber reads it back, and save knows it for an untouched field.
+   */
+  const editable = (key: string, value: number) =>
+    kit.editable(display(key, value), key === "bodyFat" ? 1 : digits);
+  const heightEditable = (cm: number) =>
+    Object.fromEntries(
+      Object.entries(heightParts(cm, 1)).map(([key, value]) => [key, kit.editable(value, 1)])
+    );
   const imported = editing
     ? db
         .select()
@@ -67,24 +100,18 @@ export function useMeasurementLog(kind: Kind) {
         )
     : false;
   function launch(row: RecordRow | null) {
+    const start = row ? dayOf(row.measuredAt) : localDay();
+    const seeded =
+      imperialHeight && row
+        ? heightEditable(row.values.height)
+        : Object.fromEntries(
+            Object.entries(row?.values ?? {}).map(([key, value]) => [key, editable(key, value)])
+          );
     setEditing(row);
     setError("");
-    setDay(row ? dayOf(row.measuredAt) : localDay());
-    setInputs(
-      imperialHeight && row
-        ? Object.fromEntries(
-            Object.entries(heightParts(row.values.height, 1)).map(([key, value]) => [
-              key,
-              String(value),
-            ])
-          )
-        : Object.fromEntries(
-            Object.entries(row?.values ?? {}).map(([key, value]) => [
-              key,
-              String(Math.round(display(key, value) * 10) / 10),
-            ])
-          )
-    );
+    setDay(start);
+    setInputs(seeded);
+    setOpened(JSON.stringify([start, seeded]));
     setOpen(true);
   }
   function save() {
@@ -102,9 +129,9 @@ export function useMeasurementLog(kind: Kind) {
       const unchanged =
         original !== undefined &&
         (imperialHeight
-          ? inputs.feet?.trim() === String(heightParts(original, 1).feet) &&
-            inputs.inches?.trim() === String(heightParts(original, 1).inches)
-          : raw === String(Math.round(display(key, original) * 10) / 10));
+          ? inputs.feet?.trim() === heightEditable(original).feet &&
+            inputs.inches?.trim() === heightEditable(original).inches
+          : raw === editable(key, original));
       const parsed = parseNumber(raw ?? "");
       const value = unchanged
         ? original
@@ -117,7 +144,7 @@ export function useMeasurementLog(kind: Kind) {
               : toCm(parsed, units);
       const max = key === "bodyFat" ? 74.9 : kind === "weight" ? 500 : 300;
       if (!Number.isFinite(value) || value <= 0 || value > max) {
-        setError(`${t(key)}: ${t("invalid")} (0–${format(key, max)})`);
+        setError(t("invalidFieldRange", { field: t(key), max: format(key, max) }));
         return;
       }
       values[key] = unchanged ? original : Math.round(value * 10000) / 10000;
@@ -189,6 +216,7 @@ export function useMeasurementLog(kind: Kind) {
     unit,
     display,
     format,
+    readout,
     imperialHeight,
     open,
     editing,
@@ -197,6 +225,7 @@ export function useMeasurementLog(kind: Kind) {
     error,
     busy,
     imported,
+    dirty: open && JSON.stringify([day, inputs]) !== opened,
     limit,
     setLimit,
     setOpen,

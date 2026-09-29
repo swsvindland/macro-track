@@ -1,62 +1,82 @@
 import { useFonts } from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
-import { useUniwind } from "uniwind";
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
+import { ScrollView } from "react-native";
 import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
+import { getLocales } from "expo-localization";
 import { HeroUINativeProvider } from "heroui-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMigrations } from "drizzle-orm/expo-sqlite/migrator";
 import migrations from "../../drizzle/migrations";
+import {
+  Button,
+  ErrorText,
+  NavigationTheme,
+  Note,
+  SystemState,
+  VectorProvider,
+  vectorHeroConfig,
+} from "@/vector";
+import { VectorAdapter } from "@/vector-adapter";
 import { StoreProvider } from "@/lib/store";
 import { db } from "@/db";
 import { shareDatabaseCopy } from "@/lib/data-files";
 import { NutritionProvider } from "@/lib/nutrition-store";
+import { resolveLanguage, translate, type Language } from "@/lib/translations";
 
 import "../global.css";
 
-function MigrationError({ message }: { message: string }) {
+// The splash stays up until fonts and migrations are ready, so there is no loading screen in
+// between.
+void SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({ duration: 200, fade: true });
+
+function MigrationError({ language, message }: { language: Language; message: string }) {
+  const insets = useSafeAreaInsets();
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState("");
   return (
-    <View className="flex-1 items-center justify-center gap-4 bg-background p-6">
-      <Text className="text-center text-base text-danger">Migration error: {message}</Text>
-      <Text className="text-center text-sm text-muted">
-        Your records were not changed. Save a copy to keep them safe.
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: sharing }}
+    <ScrollView
+      className="flex-1 bg-background"
+      contentContainerStyle={{
+        padding: 16,
+        paddingTop: insets.top + 16,
+        paddingBottom: insets.bottom + 16,
+        gap: 16,
+        width: "100%",
+        maxWidth: 672,
+        alignSelf: "center",
+      }}
+    >
+      <SystemState kind="error" code={translate(language, "migrationError")} message={message} />
+      <Note>{translate(language, "migrationSafe")}</Note>
+      <Button
+        variant="secondary"
+        className="self-start"
         disabled={sharing}
-        className="min-h-11 justify-center rounded-2xl bg-accent px-4 py-3"
         onPress={() => {
           setSharing(true);
           setShareError("");
           shareDatabaseCopy()
             .catch((e) =>
-              setShareError(e instanceof Error ? e.message : "Could not share the database.")
+              setShareError(
+                e instanceof Error ? e.message : translate(language, "shareDatabaseFailed")
+              )
             )
             .finally(() => setSharing(false));
         }}
       >
-        <Text className="text-base font-semibold text-accent-foreground">Share database copy</Text>
-      </Pressable>
-      {!!shareError && (
-        <Text accessibilityLiveRegion="polite" className="text-center text-sm text-danger">
-          {shareError}
-        </Text>
-      )}
-    </View>
+        {translate(language, "shareDatabaseCopy")}
+      </Button>
+      <ErrorText message={shareError} />
+    </ScrollView>
   );
 }
 
-function ThemedStatusBar() {
-  const { theme } = useUniwind();
-  return <StatusBar style={theme === "dark" ? "light" : "dark"} />;
-}
-
-export default function RootLayout(): JSX.Element {
+export default function RootLayout(): JSX.Element | null {
   const [fontsLoaded, fontError] = useFonts({
     Inter: require("../../assets/fonts/Inter.ttf"),
     IBMPlexMono: require("../../assets/fonts/IBMPlexMono-Regular.ttf"),
@@ -64,29 +84,49 @@ export default function RootLayout(): JSX.Element {
     ...Ionicons.font,
   });
   const { success, error } = useMigrations(db, migrations);
+  const fontsReady = fontsLoaded || !!fontError;
+  const ready = (success || !!error) && fontsReady;
+  // Effects run after the tree below has mounted, so the store's first read is done before the
+  // splash goes.
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync();
+  }, [ready]);
 
-  if (error) return <MigrationError message={error.message} />;
+  if (!ready) return null;
 
-  if (!success || (!fontsLoaded && !fontError)) {
+  if (error) {
+    // Before the store opens, so it follows the device language rather than the saved preference.
+    const language = resolveLanguage("system", getLocales()[0]?.languageCode);
     return (
-      <View className="flex-1 items-center justify-center bg-background">
-        <ActivityIndicator size="large" />
-      </View>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <VectorProvider language={language}>
+          <HeroUINativeProvider config={vectorHeroConfig}>
+            <MigrationError language={language} message={error.message} />
+            <StatusBar style="auto" />
+          </HeroUINativeProvider>
+        </VectorProvider>
+      </GestureHandlerRootView>
     );
   }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <HeroUINativeProvider>
-        <StoreProvider>
-          <NutritionProvider>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-          </NutritionProvider>
-        </StoreProvider>
-        <ThemedStatusBar />
-      </HeroUINativeProvider>
+      <StoreProvider>
+        {/* Above HeroUI's portal host: menus, selects and calendars render kit parts there. */}
+        <VectorAdapter>
+          <HeroUINativeProvider config={vectorHeroConfig}>
+            <NutritionProvider>
+              {/* React Navigation's own palette would paint pushed screens and headers light. */}
+              <NavigationTheme>
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="(tabs)" />
+                </Stack>
+              </NavigationTheme>
+            </NutritionProvider>
+            <StatusBar style="auto" />
+          </HeroUINativeProvider>
+        </VectorAdapter>
+      </StoreProvider>
     </GestureHandlerRootView>
   );
 }

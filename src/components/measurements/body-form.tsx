@@ -1,4 +1,4 @@
-import { Field } from "@/components/ui";
+import { Field } from "@/vector";
 import { useStore } from "@/lib/store";
 import { sites } from "@/lib/metrics";
 import { MeasurementEditor } from "./measurement-editor";
@@ -7,11 +7,12 @@ import type { MeasurementLogState } from "./use-measurement-log";
 export function BodyForm({ log }: { log: MeasurementLogState }) {
   const { t } = useStore();
   return (
-    <MeasurementEditor title={t("body")} log={log}>
+    <MeasurementEditor title={t(log.editing ? "editMeasurements" : "addMeasurements")} log={log}>
       {sites.map((site) => (
         <Field
           key={site}
-          label={`${t(site)} (${log.unit}) · ${t("optional")}`}
+          label={t("optionalField", { field: t(site) })}
+          unit={log.unit}
           value={log.inputs[site] ?? ""}
           onChange={(value) => log.setInputs((previous) => ({ ...previous, [site]: value }))}
           numeric
@@ -19,7 +20,7 @@ export function BodyForm({ log }: { log: MeasurementLogState }) {
         />
       ))}
       <Field
-        label={`${t("manualFat")} · ${t("optional")}`}
+        label={t("optionalField", { field: t("manualFat") })}
         value={log.inputs.bodyFat ?? ""}
         onChange={(value) => log.setInputs((previous) => ({ ...previous, bodyFat: value }))}
         numeric

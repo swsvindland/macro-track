@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { SystemButton, SystemText as Text } from "@/components/system";
-import { DateInput, Editor, ErrorText } from "@/components/ui";
+import { Button, DateInput, ErrorText, Note } from "@/vector";
+import { Editor } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import type { MeasurementLogState } from "./use-measurement-log";
 
@@ -10,6 +10,7 @@ export function MeasurementEditor({
   children,
   valueFirst = false,
 }: {
+  /** Already says whether it adds or edits, e.g. "Edit weight". */
   title: string;
   log: MeasurementLogState;
   children: ReactNode;
@@ -17,41 +18,49 @@ export function MeasurementEditor({
   valueFirst?: boolean;
 }) {
   const { t } = useStore();
-  const { editing, open, setOpen, busy, imported, day, setDay, error, save, remove, exclude } = log;
+  const {
+    editing,
+    open,
+    setOpen,
+    busy,
+    dirty,
+    imported,
+    day,
+    setDay,
+    error,
+    save,
+    remove,
+    exclude,
+  } = log;
   const date = <DateInput label={t("date")} value={day} onChange={setDay} disabled={imported} />;
   return (
     <Editor
-      title={`${t(editing ? "edit" : "add")} · ${title}`}
+      title={title}
       open={open}
       close={() => setOpen(false)}
       busy={busy}
-      footer={
-        imported ? undefined : (
-          <SystemButton isDisabled={busy} onPress={save}>
-            {t("save")}
-          </SystemButton>
-        )
-      }
+      dirty={dirty}
+      primary={imported ? undefined : { label: t("save"), onPress: save, disabled: busy }}
     >
-      {imported && <Text className="text-muted">{t("syncHelp")}</Text>}
+      {imported && <Note>{t("syncHelp")}</Note>}
       {!valueFirst && date}
       {children}
       {valueFirst && date}
       <ErrorText message={error} />
       {editing && exclude && (
-        <SystemButton
+        <Button
           variant="secondary"
-          isDisabled={busy}
+          disabled={busy}
           accessibilityState={{ checked: !!editing.excluded }}
           onPress={() => exclude(editing, !editing.excluded)}
         >
-          {editing.excluded ? "Include in trend" : "Ignore in trend"}
-        </SystemButton>
+          {t(editing.excluded ? "includeInTrend" : "ignoreInTrend")}
+        </Button>
       )}
       {editing && (
-        <SystemButton variant="danger-soft" isDisabled={busy} onPress={remove}>
+        <Button variant="destructive" icon="delete" disabled={busy} onPress={remove}>
           {t("delete")}
-        </SystemButton>
+        </Button>
       )}
     </Editor>
   );

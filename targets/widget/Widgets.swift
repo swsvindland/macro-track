@@ -21,8 +21,36 @@ struct Day: Codable {
   )
 }
 
+/// Strings translated on the phone, in the app's language (`widgetText` in src/lib/widget.ts).
+/// Every field is optional, so snapshots written before a field existed still decode.
+struct WidgetText: Codable {
+  var kcalLeft: String?
+  var kcalOver: String?
+  var kcalEaten: String?
+  var kcal: String?
+  var protein: String?
+  var carbs: String?
+  var fat: String?
+  /** Templates such as "P {value}". */
+  var proteinShort: String?
+  var carbsShort: String?
+  var fatShort: String?
+  /** "/ {target} g" */
+  var ofTarget: String?
+  var grams: String?
+  var scan: String?
+  var photo: String?
+  var scanHint: String?
+  var photoHint: String?
+  var title: String?
+  var openToUpdate: String?
+}
+
 private struct Snapshot: Codable {
   let days: [String: Day]
+  /** BCP-47 tag from localeTag() in src/vector/format.ts; formats the widget's numbers. */
+  var locale: String?
+  var text: WidgetText?
 }
 
 /** The app's day key, YYYY-MM-DD in the phone's time zone. */
@@ -38,10 +66,57 @@ private func loadSnapshot() -> Snapshot? {
   return try? JSONDecoder().decode(Snapshot.self, from: data)
 }
 
+/// Strings and number formatting for one render. English fallbacks cover the time before the app
+/// first writes a snapshot.
+struct WidgetCopy {
+  let locale: Locale
+  let script: VectorScript
+  let t: WidgetText
+
+  init(locale identifier: String?, text: WidgetText?) {
+    locale = identifier.map(Locale.init(identifier:)) ?? .current
+    script = VectorScript.of(identifier ?? Locale.current.identifier)
+    t = text ?? WidgetText()
+  }
+
+  static let fallback = WidgetCopy(locale: nil, text: nil)
+
+  var kcalLeft: String { t.kcalLeft ?? "kcal left" }
+  var kcalOver: String { t.kcalOver ?? "kcal over" }
+  var kcalEaten: String { t.kcalEaten ?? "kcal eaten" }
+  var kcal: String { t.kcal ?? "kcal" }
+  var grams: String { t.grams ?? "g" }
+  var title: String { t.title ?? "Macros" }
+  var openToUpdate: String { t.openToUpdate ?? "Open the app to update today." }
+
+  func whole(_ value: Double) -> String {
+    Int(value.rounded()).formatted(.number.locale(locale))
+  }
+
+  /** "+120": the sign is part of the locale's number format. */
+  func signed(_ value: Double) -> String {
+    Int(value.rounded()).formatted(.number.sign(strategy: .always()).locale(locale))
+  }
+
+  func ofTarget(_ target: Double) -> String {
+    (t.ofTarget ?? "/ {target} g").replacingOccurrences(of: "{target}", with: whole(target))
+  }
+
+  /** A macro's short template with its amount, or the bare short label without one. */
+  func short(_ template: String?, _ fallback: String, _ value: Double? = nil) -> String {
+    let text = template ?? "\(fallback) {value}"
+    guard let value else {
+      return text.replacingOccurrences(of: "{value}", with: "").trimmingCharacters(in: .whitespaces)
+    }
+    return text.replacingOccurrences(of: "{value}", with: whole(value))
+  }
+}
+
 struct MacrosEntry: TimelineEntry {
   let date: Date
   /** Nil until the app has written this day, e.g. a week after it was last opened. */
   let day: Day?
+  var copy: WidgetCopy = .fallback
 }
 
 struct Provider: TimelineProvider {
@@ -50,21 +125,27 @@ struct Provider: TimelineProvider {
   }
 
   func getSnapshot(in context: Context, completion: @escaping (MacrosEntry) -> Void) {
-    let day = loadSnapshot()?.days[dayKey(.now)]
-    completion(MacrosEntry(date: .now, day: day ?? (context.isPreview ? .sample : nil)))
+    let snapshot = loadSnapshot()
+    let day = snapshot?.days[dayKey(.now)]
+    completion(
+      MacrosEntry(
+        date: .now, day: day ?? (context.isPreview ? .sample : nil),
+        copy: WidgetCopy(locale: snapshot?.locale, text: snapshot?.text)))
   }
 
   // The app reloads the timeline after every write. Until then, each midnight turns over to
   // the next day it already wrote, with nothing eaten and that day's (shifted) targets.
   func getTimeline(in context: Context, completion: @escaping (Timeline<MacrosEntry>) -> Void) {
-    let days = loadSnapshot()?.days ?? [:]
+    let snapshot = loadSnapshot()
+    let days = snapshot?.days ?? [:]
+    let copy = WidgetCopy(locale: snapshot?.locale, text: snapshot?.text)
     let calendar = Calendar.current
-    var entries = [MacrosEntry(date: .now, day: days[dayKey(.now)])]
+    var entries = [MacrosEntry(date: .now, day: days[dayKey(.now)], copy: copy)]
     var midnight = calendar.startOfDay(for: .now)
     for _ in 0..<7 {
       guard let next = calendar.date(byAdding: .day, value: 1, to: midnight) else { break }
       midnight = next
-      entries.append(MacrosEntry(date: midnight, day: days[dayKey(midnight)]))
+      entries.append(MacrosEntry(date: midnight, day: days[dayKey(midnight)], copy: copy))
     }
     completion(Timeline(entries: entries, policy: .never))
   }
@@ -72,65 +153,47 @@ struct Provider: TimelineProvider {
 
 // MARK: - Pieces
 
-private func whole(_ value: Double) -> String {
-  Int(value.rounded()).formatted()
-}
-
-/** Home's headline: kcal left, kcal over in red, or kcal eaten without targets. */
+/** Home's headline: kcal left, kcal over (with the over glyph), or kcal eaten without targets. */
 private struct Headline {
+  /** Always positive; `over` says which side of the target it is on. */
+  let amount: Double
   let value: String
   let unit: String
   let over: Bool
 
-  init(_ day: Day) {
+  init(_ day: Day, _ copy: WidgetCopy) {
     if let target = day.target {
       let left = target.calories - day.eaten.calories
       over = left < 0
-      value = whole(abs(left))
-      unit = over ? "kcal over" : "kcal left"
+      amount = abs(left)
+      unit = over ? copy.kcalOver : copy.kcalLeft
     } else {
       over = false
-      value = whole(day.eaten.calories)
-      unit = "kcal eaten"
+      amount = day.eaten.calories
+      unit = copy.kcalEaten
     }
-  }
-}
-
-private struct Bar: View {
-  let value: Double
-  let max: Double
-  var fill = Color("calories")
-  var height: CGFloat = 4
-
-  var body: some View {
-    GeometryReader { geo in
-      ZStack(alignment: .leading) {
-        Capsule().fill(Color("track"))
-        Capsule()
-          .fill(value > max ? Color("danger") : fill)
-          .frame(width: max > 0 ? geo.size.width * min(value / max, 1) : 0)
-          .widgetAccentable()
-      }
-    }
-    .frame(height: height)
+    value = copy.whole(amount)
   }
 }
 
 private struct MacroColumn: View {
   let name: String
+  let short: String
   let eaten: Double
   let target: Double?
   let compact: Bool
+  let copy: WidgetCopy
 
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
-      Text(compact ? String(name.prefix(1)) : name)
-        .font(.caption2.weight(.medium))
-        .textCase(.uppercase)
-        .foregroundStyle(.secondary)
-      let value = Text(whole(eaten))
-        .font(compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
-      let unit = Text(compact ? "" : target.map { " / \(whole($0)) g" } ?? " g")
+      if compact {
+        Text(verbatim: short).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+      } else {
+        VectorLabel(text: name, script: copy.script)
+      }
+      let value = Text(verbatim: copy.whole(eaten))
+        .font(VectorFont.readout(compact ? .caption : .subheadline, weight: .medium))
+      let unit = Text(verbatim: compact ? "" : " " + (target.map(copy.ofTarget) ?? copy.grams))
         .font(.caption)
         .foregroundStyle(.secondary)
       Text("\(value)\(unit)")
@@ -138,7 +201,7 @@ private struct MacroColumn: View {
         .lineLimit(1)
         .minimumScaleFactor(0.7)
       if let target, target > 0 {
-        Bar(value: eaten, max: target, fill: .secondary.opacity(0.8), height: 3)
+        VectorMeter(fraction: eaten / target, over: eaten > target, style: .neutral, height: 3)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,35 +211,50 @@ private struct MacroColumn: View {
 private struct MacroRow: View {
   let day: Day
   var compact = false
+  let copy: WidgetCopy
 
   var body: some View {
+    // Always P · C · F, as in the app.
     HStack(alignment: .top, spacing: compact ? 8 : 14) {
       MacroColumn(
-        name: "Protein", eaten: day.eaten.protein, target: day.target?.protein, compact: compact)
-      MacroColumn(name: "Carbs", eaten: day.eaten.carbs, target: day.target?.carbs, compact: compact)
-      MacroColumn(name: "Fat", eaten: day.eaten.fat, target: day.target?.fat, compact: compact)
+        name: copy.t.protein ?? "Protein", short: copy.short(copy.t.proteinShort, "P"),
+        eaten: day.eaten.protein, target: day.target?.protein, compact: compact, copy: copy)
+      MacroColumn(
+        name: copy.t.carbs ?? "Carbs", short: copy.short(copy.t.carbsShort, "C"),
+        eaten: day.eaten.carbs, target: day.target?.carbs, compact: compact, copy: copy)
+      MacroColumn(
+        name: copy.t.fat ?? "Fat", short: copy.short(copy.t.fatShort, "F"),
+        eaten: day.eaten.fat, target: day.target?.fat, compact: compact, copy: copy)
     }
   }
 }
 
 private struct HeadlineView: View {
   let day: Day
-  var size: CGFloat = 30
+  let copy: WidgetCopy
+  var style: Font.TextStyle = .title
 
   var body: some View {
-    let headline = Headline(day)
+    let headline = Headline(day, copy)
     VStack(alignment: .leading, spacing: 5) {
-      let value = Text(headline.value).font(.system(size: size, weight: .semibold, design: .rounded))
-      let unit = Text(" \(headline.unit)").font(.footnote.weight(.medium)).foregroundStyle(.secondary)
-      Text("\(value)\(unit)")
-        .foregroundStyle(headline.over ? Color("danger") : .primary)
-        .monospacedDigit()
-        .lineLimit(1)
-        .minimumScaleFactor(0.6)
+      HStack(alignment: .firstTextBaseline, spacing: 4) {
+        if headline.over {
+          Image(systemName: VectorSymbol.over).font(.footnote).accessibilityHidden(true)
+        }
+        Text(verbatim: headline.value)
+          .vectorReadout(style, weight: .medium)
+          .widgetAccentable()
+        Text(verbatim: headline.unit)
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
       if let target = day.target {
-        Bar(value: day.eaten.calories, max: target.calories, height: 5)
+        VectorMeter(
+          fraction: day.eaten.calories / max(target.calories, 1), over: headline.over, height: 6)
       }
     }
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -186,40 +264,50 @@ enum LogAction {
   var url: URL {
     URL(string: self == .scan ? "macrotrack://scan" : "macrotrack://photo")!
   }
-  var label: String { self == .scan ? "Scan" : "AI" }
-  var spoken: String { self == .scan ? "Scan a barcode" : "Log a photo or description" }
-  var symbol: String {
-    if self == .scan { return "barcode.viewfinder" }
-    return UIImage(systemName: "apple.intelligence") != nil ? "apple.intelligence" : "sparkles"
+  func label(_ copy: WidgetCopy) -> String {
+    self == .scan ? (copy.t.scan ?? "Scan") : (copy.t.photo ?? "AI")
   }
+  func spoken(_ copy: WidgetCopy) -> String {
+    self == .scan
+      ? (copy.t.scanHint ?? "Scan barcode") : (copy.t.photoHint ?? "Log a photo or description")
+  }
+  var symbol: String { self == .scan ? VectorSymbol.scan : VectorSymbol.analysis }
+  /// Scan is the widget's one signal plate; the second action stays quiet.
+  var role: VectorPlateRole { self == .scan ? .signal : .quiet }
 }
 
 private struct ActionButton: View {
   let action: LogAction
+  let copy: WidgetCopy
   /** Icon over label for the medium widget's column; icon alone in the small widget. */
   var stacked = false
 
   var body: some View {
     Link(destination: action.url) {
       VStack(spacing: 4) {
-        Image(systemName: action.symbol).font(.title3)
+        Image(systemName: action.symbol).font(.title3.weight(.semibold))
         if stacked {
-          Text(action.label).font(.caption.weight(.semibold))
+          Text(verbatim: action.label(copy))
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
         }
       }
-      .foregroundStyle(Color.accentColor)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color("track"), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+      // An opaque plate here turned white on tinted and clear Home Screens. vectorPlate keeps
+      // the glyph accentable and the plate translucent there.
+      .vectorPlate(action.role)
     }
-    .accessibilityLabel(action.spoken)
+    .accessibilityLabel(action.spoken(copy))
   }
 }
 
 private struct EmptyDay: View {
+  let copy: WidgetCopy
+
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
-      Text("Macros").font(.headline)
-      Text("Open the app to update today.")
+      Text(verbatim: copy.title).font(.headline)
+      Text(verbatim: copy.openToUpdate)
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -230,20 +318,20 @@ private struct EmptyDay: View {
 // MARK: - Families
 
 private struct SmallView: View {
-  let day: Day?
+  let entry: MacrosEntry
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      if let day {
-        HeadlineView(day: day, size: 24)
-        MacroRow(day: day, compact: true)
+      if let day = entry.day {
+        HeadlineView(day: day, copy: entry.copy, style: .title2)
+        MacroRow(day: day, compact: true, copy: entry.copy)
       } else {
-        EmptyDay()
+        EmptyDay(copy: entry.copy)
       }
       Spacer(minLength: 0)
       HStack(spacing: 8) {
-        ActionButton(action: .scan)
-        ActionButton(action: .photo)
+        ActionButton(action: .scan, copy: entry.copy)
+        ActionButton(action: .photo, copy: entry.copy)
       }
       .frame(height: 38)
     }
@@ -251,23 +339,23 @@ private struct SmallView: View {
 }
 
 private struct MediumView: View {
-  let day: Day?
+  let entry: MacrosEntry
 
   var body: some View {
     HStack(spacing: 14) {
       VStack(alignment: .leading, spacing: 10) {
-        if let day {
-          HeadlineView(day: day)
+        if let day = entry.day {
+          HeadlineView(day: day, copy: entry.copy)
           Spacer(minLength: 0)
-          MacroRow(day: day)
+          MacroRow(day: day, copy: entry.copy)
         } else {
-          EmptyDay()
+          EmptyDay(copy: entry.copy)
           Spacer(minLength: 0)
         }
       }
       VStack(spacing: 8) {
-        ActionButton(action: .scan, stacked: true)
-        ActionButton(action: .photo, stacked: true)
+        ActionButton(action: .scan, copy: entry.copy, stacked: true)
+        ActionButton(action: .photo, copy: entry.copy, stacked: true)
       }
       .frame(width: 76)
     }
@@ -275,15 +363,15 @@ private struct MediumView: View {
 }
 
 private struct CircularView: View {
-  let day: Day?
+  let entry: MacrosEntry
 
   var body: some View {
-    if let day, let target = day.target {
-      let headline = Headline(day)
+    if let day = entry.day, let target = day.target {
+      let headline = Headline(day, entry.copy)
       Gauge(value: min(day.eaten.calories, target.calories), in: 0...max(target.calories, 1)) {
-        Text("kcal")
+        Text(verbatim: entry.copy.kcal)
       } currentValueLabel: {
-        Text(headline.over ? "+\(headline.value)" : headline.value)
+        Text(verbatim: headline.over ? entry.copy.signed(headline.amount) : headline.value)
           .monospacedDigit()
           .minimumScaleFactor(0.5)
       }
@@ -292,24 +380,29 @@ private struct CircularView: View {
     } else {
       ZStack {
         AccessoryWidgetBackground()
-        Image(systemName: "fork.knife")
+        Image(systemName: VectorSymbol.food)
       }
     }
   }
 }
 
 private struct RectangularView: View {
-  let day: Day?
+  let entry: MacrosEntry
 
   var body: some View {
-    if let day {
-      let headline = Headline(day)
+    if let day = entry.day {
+      let copy = entry.copy
+      let headline = Headline(day, copy)
       VStack(alignment: .leading, spacing: 1) {
-        Text("\(headline.value) \(headline.unit)")
+        Text(verbatim: "\(headline.value) \(headline.unit)")
           .font(.headline)
           .widgetAccentable()
-        Text("P \(whole(day.eaten.protein)) · C \(whole(day.eaten.carbs)) · F \(whole(day.eaten.fat))")
-          .font(.caption)
+        HStack(spacing: 6) {
+          Text(verbatim: copy.short(copy.t.proteinShort, "P", day.eaten.protein))
+          Text(verbatim: copy.short(copy.t.carbsShort, "C", day.eaten.carbs))
+          Text(verbatim: copy.short(copy.t.fatShort, "F", day.eaten.fat))
+        }
+        .font(.caption)
         if let target = day.target {
           Gauge(value: min(day.eaten.calories, target.calories), in: 0...max(target.calories, 1)) {
             EmptyView()
@@ -320,7 +413,7 @@ private struct RectangularView: View {
       .monospacedDigit()
       .frame(maxWidth: .infinity, alignment: .leading)
     } else {
-      Text("Open Macros to update").font(.caption)
+      Text(verbatim: entry.copy.openToUpdate).font(.caption)
     }
   }
 }
@@ -332,20 +425,21 @@ struct MacrosWidgetView: View {
   var body: some View {
     Group {
       switch family {
-      case .systemMedium: MediumView(day: entry.day)
-      case .accessoryCircular: CircularView(day: entry.day)
-      case .accessoryRectangular: RectangularView(day: entry.day)
+      case .systemMedium: MediumView(entry: entry)
+      case .accessoryCircular: CircularView(entry: entry)
+      case .accessoryRectangular: RectangularView(entry: entry)
       case .accessoryInline:
         if let day = entry.day {
-          let headline = Headline(day)
-          Text("\(headline.value) \(headline.unit)")
+          let headline = Headline(day, entry.copy)
+          Text(verbatim: "\(headline.value) \(headline.unit)")
         } else {
-          Text("Macros")
+          Text(verbatim: entry.copy.title)
         }
-      default: SmallView(day: entry.day)
+      default: SmallView(entry: entry)
       }
     }
-    .containerBackground(for: .widget) { Color("$widgetBackground") }
+    .vectorWidgetTypeCap()
+    .vectorWidgetBackground()
   }
 }
 
@@ -359,6 +453,7 @@ struct MacrosWidget: Widget {
     .supportedFamilies([
       .systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline,
     ])
+    .disfavoredLocations(VectorWidget.disfavoredSmallLocations, for: [.systemSmall])
   }
 }
 

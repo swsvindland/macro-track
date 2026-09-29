@@ -1,22 +1,13 @@
-import { router } from "expo-router";
-import { SystemButton, SystemText as Text } from "@/components/system";
-import { Screen } from "@/components/ui";
+import { DetailScreen, Note, Text } from "@/vector";
 import { useStore } from "@/lib/store";
 export function HealthPrivacyScreen() {
   const { t } = useStore();
   return (
-    <Screen
-      title={t("sync")}
-      action={
-        <SystemButton variant="ghost" onPress={() => router.back()}>
-          Done
-        </SystemButton>
-      }
-    >
-      <Text className="text-foreground">{t("healthPrivacy")}</Text>
-      <Text className="text-muted">{t("syncHelp")}</Text>
-      <Text className="text-muted">{t("localPhotos")}</Text>
-      <Text className="text-muted">{t("syncSchedule")}</Text>
-    </Screen>
+    <DetailScreen title={t("sync")}>
+      <Text>{t("healthPrivacy")}</Text>
+      <Note>{t("syncHelp")}</Note>
+      <Note>{t("localPhotos")}</Note>
+      <Note>{t("syncSchedule")}</Note>
+    </DetailScreen>
   );
 }

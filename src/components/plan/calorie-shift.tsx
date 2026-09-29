@@ -2,17 +2,34 @@ import { useState } from "react";
 import { View } from "react-native";
 import { useCalendars } from "expo-localization";
 import { twMerge } from "tailwind-merge";
-import { SystemButton, SystemLabel, SystemText as Text } from "@/components/system";
-import { Choices, ErrorText, Field } from "@/components/ui";
+import {
+  Choices,
+  ErrorText,
+  Field,
+  Heading,
+  Label,
+  Note,
+  SignalCell,
+  Text,
+  useHaptics,
+  useKitFormat,
+  type Format,
+} from "@/vector";
 import { parseNumber } from "@/lib/metrics";
 import { coachedWeek, type CalorieShift, type Targets } from "@/lib/nutrition";
 import { validateShift } from "@/lib/program";
 import { useStore } from "@/lib/store";
 
-/** Weekday names, Sunday first. */
-export const short = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-export const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const sizes = ["5", "10", "15", "20"];
+/** A Sunday, at noon so no time zone moves it: weekday 0 of any week. */
+const SUNDAY = new Date(2024, 0, 7, 12);
+
+/** A weekday's name in the locale (0 = Sunday), through the kit formatter. */
+export function weekdayName(format: Format, weekday: number, style: "short" | "long") {
+  const day = new Date(SUNDAY);
+  day.setDate(SUNDAY.getDate() + weekday);
+  return style === "long" ? format.weekdayLong(day) : format.weekdayShort(day);
+}
 
 /** Weekdays (0 = Sunday) from the locale's first day of the week. */
 export function useWeekOrder() {
@@ -29,19 +46,21 @@ export function weekOf(targets: Targets, shift: CalorieShift) {
     return null;
   }
 }
+
 /** Why a shift doesn't fit a budget, or "" when it does. */
-function shiftError(shift: CalorieShift, budget: Targets) {
+function shiftError(shift: CalorieShift, budget: Targets, fallback: string) {
   try {
     validateShift(shift, budget);
     return "";
   } catch (e) {
-    return e instanceof Error ? e.message : "Choose a smaller shift.";
+    return e instanceof Error ? e.message : fallback;
   }
 }
 
-/** Each weekday's calories under calorie shifting, higher days highlighted. */
+/** Each weekday's calories under calorie shifting, higher days marked. */
 export function ShiftWeek({ targets, shift }: { targets: Targets; shift: CalorieShift }) {
-  const { number } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
   const order = useWeekOrder();
   const week = weekOf(targets, shift);
   if (!week) return null;
@@ -49,22 +68,24 @@ export function ShiftWeek({ targets, shift }: { targets: Targets; shift: Calorie
     <View className="flex-row gap-1">
       {order.map((weekday) => {
         const high = shift.days.includes(weekday),
-          kcal = number(week[weekday].calories, 0);
+          kcal = format.number(week[weekday].calories);
         return (
           <View
             key={weekday}
             accessible
-            accessibilityLabel={`${names[weekday]}, ${kcal} kcal${high ? ", higher day" : ""}`}
+            accessibilityLabel={t(high ? "shiftDayHigher" : "shiftDay", {
+              day: weekdayName(format, weekday, "long"),
+              kcal,
+            })}
             className={twMerge(
-              "flex-1 items-center gap-0.5 rounded-xl px-0.5 py-2",
-              high ? "bg-accent-soft" : "bg-surface-secondary"
+              "flex-1 items-center gap-0.5 rounded-control border px-0.5 py-2",
+              high ? "border-tint" : "border-border"
             )}
           >
-            <SystemLabel className={high ? "text-accent-soft-foreground" : undefined}>
-              {short[weekday]}
-            </SystemLabel>
+            <Label tone={high ? "tint" : "muted"}>{weekdayName(format, weekday, "short")}</Label>
+            {/* Seven columns: one line that shrinks before it clips. */}
             <Text
-              className="text-sm font-semibold tabular-nums"
+              variant="readoutXS"
               numberOfLines={1}
               adjustsFontSizeToFit
               maxFontSizeMultiplier={1.2}
@@ -91,6 +112,9 @@ export function CalorieShiftPicker({
   onChange: (shift?: CalorieShift) => void;
   budget: Targets | null;
 }) {
+  const { t } = useStore();
+  const format = useKitFormat();
+  const haptics = useHaptics();
   const order = useWeekOrder();
   const [kcal, setKcal] = useState(
     value?.unit === "kcal" && Number.isFinite(value.size) ? String(value.size) : ""
@@ -108,40 +132,40 @@ export function CalorieShiftPicker({
     );
   // An empty kcal field is still being typed, so it isn't an error yet.
   const typed = value && budget && (value.unit === "%" || kcal.trim()) ? value : null;
-  const error = typed && budget ? shiftError(typed, budget) : "";
+  const error = typed && budget ? shiftError(typed, budget, t("chooseSmallerShift")) : "";
   return (
     <View className="gap-3">
       <View className="gap-1">
-        <Text className="font-semibold">Calorie shifting</Text>
-        <Text className="text-sm text-muted">
-          Higher days get more; the others get less, so the week stays on budget.
-        </Text>
+        <Heading level={4}>{t("calorieShifting")}</Heading>
+        <Note>{t("calorieShiftingHelp")}</Note>
       </View>
+      {/* Seven signal cells: the check keeps selection from being colour alone. At most six
+          days can be higher, so the seventh waits disabled. */}
       <View className="flex-row gap-1">
         {order.map((weekday) => {
           const selected = days.includes(weekday);
           return (
-            <SystemButton
+            <SignalCell
               key={weekday}
-              variant="ghost"
-              className={twMerge(
-                "min-w-0 flex-1 px-0",
-                selected ? "bg-accent-soft border-accent-soft" : "bg-surface-secondary"
-              )}
-              labelClassName={selected ? "text-accent-soft-foreground" : "text-foreground"}
-              isDisabled={!selected && days.length >= 6}
-              accessibilityLabel={`Higher calories on ${names[weekday]}`}
-              accessibilityState={{ selected }}
-              onPress={() =>
+              selected={selected}
+              accessibilityRole="checkbox"
+              accessibilityLabel={t("higherCaloriesOn", {
+                day: weekdayName(format, weekday, "long"),
+              })}
+              check
+              disabled={!selected && days.length >= 6}
+              className="min-w-0 flex-1 flex-col gap-0.5 px-0.5"
+              onPress={() => {
+                haptics.selection();
                 set(
                   selected
                     ? days.filter((day) => day !== weekday)
                     : [...days, weekday].sort((a, b) => a - b)
-                )
-              }
+                );
+              }}
             >
-              {short[weekday]}
-            </SystemButton>
+              {weekdayName(format, weekday, "short")}
+            </SignalCell>
           );
         })}
       </View>
@@ -151,11 +175,15 @@ export function CalorieShiftPicker({
             values={choices}
             value={size}
             onChange={(choice) => set(days, choice)}
-            label={(choice) => (choice === "kcal" ? "kcal" : `+${choice}%`)}
+            label={(choice) =>
+              choice === "kcal" ? t("kcal") : format.percent(Number(choice) / 100, 0, true)
+            }
+            accessibilityLabel={t("shiftSize")}
+            mono
           />
           {size === "kcal" && (
             <Field
-              label="Extra on higher days (kcal)"
+              label={t("extraKcalHigherDays")}
               numeric
               value={kcal}
               onChange={(text) => {

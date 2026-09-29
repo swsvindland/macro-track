@@ -1,41 +1,42 @@
 import { useState } from "react";
-import { View } from "react-native";
 import { router } from "expo-router";
-import { useThemeColor } from "heroui-native";
-import { SystemButton, SystemIconButton, SystemText as Text } from "@/components/system";
+import {
+  Button,
+  LinkButton,
+  Note,
+  RangeChips,
+  RangeSummary,
+  SystemState,
+  TrendChart,
+  rangeStart,
+  useKitFormat,
+  type IntlUnit,
+  type Range,
+} from "@/vector";
 import { useMeasurementLog } from "@/components/measurements/use-measurement-log";
 import { WeightForm } from "@/components/measurements/weight-form";
 import { currentGoal } from "@/lib/coaching-store";
-import {
-  formatWeight,
-  fromKg,
-  localDay,
-  shortDay,
-  weightTrend,
-  weightUnit,
-  type TrendPoint,
-} from "@/lib/metrics";
+import { formatWeight, fromKg, localDay, shortDay, weightTrend, type Units } from "@/lib/metrics";
 import { useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
-import {
-  Legend,
-  RangeChips,
-  RangeSummary,
-  TrendChart,
-  daysBetween,
-  rangeStart,
-  type Range,
-} from "./chart";
 import { DetailScreen, Explainer } from "./detail-screen";
 
+/** The unit a weight readout is written in, as the locale spells it. */
+const massUnits: Record<Units, IntlUnit> = {
+  metric: "kilogram",
+  imperial: "pound",
+  stone: "stone",
+};
 /** Just enough decimals for a round axis value: 80, 80.5 or 12.25. */
 const decimals = (tick: number) =>
   [0, 1].find((digits) => Math.abs(tick * 10 ** digits - Math.round(tick * 10 ** digits)) < 1e-6) ??
   2;
+/** A diary day as a local calendar date, at noon so no time zone moves it. */
+const dateOf = (day: string) => new Date(`${day}T12:00:00`);
 
 export function WeightTrendScreen() {
-  const { weights, units, number, language, date, t } = useStore();
-  const [accent, muted, success] = useThemeColor(["accent-soft-foreground", "muted", "success"]);
+  const { weights, units, t } = useStore();
+  const format = useKitFormat();
   const log = useMeasurementLog("weight");
   const { today, goalKg } = useNutritionQuery(() => {
     const goal = currentGoal();
@@ -50,56 +51,36 @@ export function WeightTrendScreen() {
   const from = rangeStart(range, today, trend[0]?.day ?? today);
   const shown = trend.filter((point) => point.day >= from && point.day <= today);
   const digits = units === "stone" ? 2 : 1;
-  const value = (kg: number) => number(fromKg(kg, units), digits);
-  const unit = weightUnit(units);
-  const at = scrub
-    ? shown.reduce<TrendPoint | null>(
-        (best, point) =>
-          !best || Math.abs(daysBetween(point.day, scrub)) < Math.abs(daysBetween(best.day, scrub))
-            ? point
-            : best,
-        null
-      )
-    : null;
+  const unit = massUnits[units];
+  // Fixed decimals, as the history and the check-in write weights ("80.0 kg").
+  const fixed = { fixed: true };
+  const readout = (kg: number) => format.unitParts(fromKg(kg, units), unit, digits, fixed);
+  const at = scrub ? shown.find((point) => point.day === scrub) : undefined;
   const first = shown[0],
     last = shown.at(-1);
+  // The signed readout reads the rounded value: a change that shows as zero carries no sign.
   const difference = first && last ? fromKg(last.trend - first.trend, units) : 0;
-  const shownDifference = number(Math.abs(difference), digits);
-  const sign = shownDifference === number(0, digits) ? "" : difference < 0 ? "−" : "+";
   const add = () => log.launch(null);
   return (
     <>
       <DetailScreen
-        title="Weight trend"
-        action={
-          <SystemIconButton
-            icon="add"
-            accessibilityLabel={`${t("add")} · ${t("weight")}`}
-            onPress={add}
-          />
-        }
+        title={t("weightTrend")}
+        action={{ icon: "add", accessibilityLabel: t("logWeight"), onPress: add }}
       >
         {first && last ? (
           <>
             {at ? (
               <RangeSummary
-                stats={[
-                  { label: "Trend", value: value(at.trend), unit },
-                  { label: "Scale", value: value(at.raw), unit },
-                ]}
-                caption={shortDay(at.day, language, true)}
+                label={shortDay(at.day, format.tag, true)}
+                {...readout(at.trend)}
+                meta={[t("scaleReading", { weight: formatWeight(at.raw, units, format) })]}
               />
             ) : (
               <RangeSummary
-                stats={[
-                  {
-                    label: "Average",
-                    value: value(shown.reduce((sum, point) => sum + point.trend, 0) / shown.length),
-                    unit,
-                  },
-                  { label: "Difference", value: `${sign}${shownDifference}`, unit },
-                ]}
-                caption={`${shortDay(first.day, language)} – ${date(last.day)}`}
+                label={t("average")}
+                {...readout(shown.reduce((sum, point) => sum + point.trend, 0) / shown.length)}
+                delta={format.number(difference, digits, true)}
+                meta={[format.dateRange(dateOf(first.day), dateOf(last.day))]}
               />
             )}
             <TrendChart
@@ -107,21 +88,21 @@ export function WeightTrendScreen() {
               to={today}
               lines={[
                 {
-                  key: "scale",
-                  segments: [
-                    shown.map((point) => ({ day: point.day, value: fromKg(point.raw, units) })),
-                  ],
-                  color: muted,
-                  width: 1.5,
-                  opacity: 0.8,
+                  points: shown.map((point) => ({
+                    day: point.day,
+                    value: fromKg(point.raw, units),
+                  })),
+                  role: "reference",
+                  style: "dots",
+                  label: t("scaleWeight"),
                 },
                 {
-                  key: "trend",
-                  segments: [
-                    shown.map((point) => ({ day: point.day, value: fromKg(point.trend, units) })),
-                  ],
-                  color: accent,
-                  dots: true,
+                  points: shown.map((point) => ({
+                    day: point.day,
+                    value: fromKg(point.trend, units),
+                  })),
+                  role: "subject",
+                  label: t("trend"),
                 },
               ]}
               goal={
@@ -129,80 +110,36 @@ export function WeightTrendScreen() {
                   ? undefined
                   : {
                       value: fromKg(goalKg, units),
-                      label: `Goal ${formatWeight(goalKg, units, number)}`,
+                      label: formatWeight(goalKg, units, format),
                     }
               }
               minSpan={fromKg(1, units)}
-              format={(tick) => number(tick, decimals(tick))}
-              label={`Trend weight, ${shortDay(first.day, language)} to ${shortDay(last.day, language)}: ${value(first.trend)} to ${value(last.trend)} ${unit}`}
-              scrub={scrub}
-              onScrub={setScrub}
+              yFormat={(tick) => format.number(tick, decimals(tick))}
+              summary={t("trendChartSummary", {
+                from: shortDay(first.day, format.tag),
+                to: shortDay(last.day, format.tag),
+                start: format.unit(fromKg(first.trend, units), unit, digits, fixed),
+                end: format.unit(fromKg(last.trend, units), unit, digits, fixed),
+              })}
+              onScrub={(point) => setScrub(point?.day ?? null)}
             />
           </>
         ) : (
-          <Text className="py-6 text-center text-muted">
-            {trend.length ? "No weigh-ins in this range." : t("needWeight")}
-          </Text>
+          <SystemState
+            kind="empty"
+            message={trend.length ? t("noWeighInsInRange") : t("needWeight")}
+          />
         )}
-        <RangeChips value={range} onChange={setRange} />
-        <Legend
-          items={[
-            {
-              label: "Scale weight",
-              swatch: (
-                <View className="h-0.5 w-4 rounded-full" style={{ backgroundColor: muted }} />
-              ),
-            },
-            {
-              label: "Trend weight",
-              swatch: (
-                <View
-                  className="h-2.5 w-2.5 rounded-full border-2"
-                  style={{ borderColor: accent }}
-                />
-              ),
-            },
-            ...(goalKg === null
-              ? []
-              : [
-                  {
-                    label: "Goal",
-                    swatch: (
-                      <View className="w-4 flex-row gap-0.5">
-                        <View className="h-0.5 flex-1" style={{ backgroundColor: success }} />
-                        <View className="h-0.5 flex-1" style={{ backgroundColor: success }} />
-                      </View>
-                    ),
-                  },
-                ]),
-          ]}
-        />
-        <SystemButton
-          variant="secondary"
-          icon="list-outline"
-          labelClassName="text-foreground"
-          onPress={() => router.push("/weight-history")}
-        >
-          {`All weigh-ins · ${number(weights.length, 0)}`}
-        </SystemButton>
-        <Explainer title="What is weight trend?">
-          <Text className="text-sm text-muted">
-            Scale weight moves day to day with water, salt, carbs and digestion. Trend weight
-            averages each day’s readings and smooths them with a seven-day half-life, so it shows
-            where your weight is really heading.
-          </Text>
-          <Text className="text-sm text-muted">
-            Check-ins and the expenditure estimate use the trend. Ignored readings stay in your
-            history but are left out.
-          </Text>
-          <SystemButton
-            variant="ghost"
-            className="self-start px-0"
-            labelClassName="text-accent-soft-foreground"
-            onPress={() => router.push("/health-sources")}
-          >
+        <RangeChips value={range} onChange={setRange} accessibilityLabel={t("chartRange")} />
+        <Button variant="secondary" icon="history" onPress={() => router.push("/weight-history")}>
+          {t("allWeighIns", { count: format.number(weights.length) })}
+        </Button>
+        <Explainer title={t("whatIsWeightTrend")}>
+          <Note>{t("weightTrendExplainerScale")}</Note>
+          <Note>{t("weightTrendExplainerUse")}</Note>
+          <LinkButton icon="forward" onPress={() => router.push("/health-sources")}>
             {t("sourcesTitle")}
-          </SystemButton>
+          </LinkButton>
         </Explainer>
       </DetailScreen>
       <WeightForm log={log} />

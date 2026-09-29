@@ -7,6 +7,7 @@ const ts = require("typescript");
 const { drizzle } = require(
   path.join(path.dirname(require.resolve("drizzle-orm/expo-sqlite")), "driver.cjs")
 );
+const { englishT, kitMock } = require("./kit-mock.cjs");
 
 /** Transpiles production TS; `compile` runs React Compiler first, as the app build does. */
 function load(file, dependencies = {}, compile = false) {
@@ -289,13 +290,7 @@ test("a cut can run up to 1.5% a week for a mini-cut, and a bulk up to 0.5%", ()
 
 test("compiled pace slider marks the recommended band and lands on its steps", () => {
   const changes = [];
-  const slider = { Track: "Track", Fill: "Fill", Thumb: "Thumb" };
-  const harness = screenHarness({
-    "heroui-native": {
-      Slider: slider,
-      useSlider: () => ({ minValue: 0.1, maxValue: 1.5, trackSize: 308, thumbSize: 28 }),
-    },
-  });
+  const harness = screenHarness();
   const { PaceSlider } = harness.load("src/components/plan/pace-slider.tsx");
   const render = (mode, value) =>
     nodes(
@@ -303,31 +298,33 @@ test("compiled pace slider marks the recommended band and lands on its steps", (
     );
 
   let tree = render("lose", 1.25);
-  const root = tree.find((node) => node.type === slider);
-  assert.deepEqual([root.props.minValue, root.props.maxValue, root.props.step], [0.1, 1.5, 0.05]);
-  const thumb = tree.find((node) => node.type === "Thumb");
-  assert.equal(thumb.props.accessibilityValue.text, "1.25% of body weight · −1.0 kg/wk");
-  assert.equal(thumb.props.accessibilityHint, "Recommended 0.5–1% of body weight a week");
-  // Drags and screen-reader adjustments land on whole steps inside the range.
-  root.props.onChange(0.7000000000000001);
-  root.props.onChange([2]);
-  thumb.props.onAccessibilityAction({ nativeEvent: { actionName: "increment" } });
-  thumb.props.onAccessibilityAction({ nativeEvent: { actionName: "decrement" } });
+  const slider = tree.find((node) => node.type === "Slider");
+  assert.deepEqual([slider.props.min, slider.props.max, slider.props.step], [0.1, 1.5, 0.05]);
+  assert.equal(slider.props.accessibilityLabel, "Weekly pace");
+  assert.equal(slider.props.valueText, "1.25% of body weight · \u22121.0 kg/wk");
+  // Whatever the slider reports lands on a whole step inside the range.
+  slider.props.onChange(0.7000000000000001);
+  slider.props.onChange(2);
+  slider.props.onChange(1.3);
+  slider.props.onChange(1.2000000000000002);
   assert.deepEqual(changes, [0.7, 1.5, 1.3, 1.2]);
   assert.ok(tree.some((node) => node.type === "Text" && text(node) === "Recommended 0.5–1%"));
+  assert.equal(slider.props.accessibilityHint, "Recommended 0.5–1%", "VoiceOver hears it too");
   assert.ok(tree.some((node) => node.type === "Text" && /mini-cut of 2–4 weeks/.test(text(node))));
-  // The band sits where the thumb's centre is at 0.5% and 1%.
-  const band = tree.find((node) => typeof node.type === "function");
-  const bar = nodes(band.type(band.props)).find((node) => node.props?.style);
+  // The band runs from 0.5% to 1% by flex from the start edge, between the thumb's end positions
+  // (the kit's sliderMetrics.inset).
+  const band = tree.find((node) => node.type?.name === "Band");
+  const row = band.type(band.props);
+  assert.equal(row.props.style.marginHorizontal, 11);
   assert.deepEqual(
-    [bar.props.style.left, bar.props.style.width].map((px) => Math.round(px * 100) / 100),
-    [94, 100]
+    row.props.children.map((part) => Math.round(part.props.style.flex * 100) / 100),
+    [0.4, 0.5, 0.5]
   );
 
   tree = render("lose", 0.75);
   assert.ok(!tree.some((node) => node.type === "Text" && /mini-cut/.test(text(node))));
   tree = render("gain", 0.25);
-  assert.equal(tree.find((node) => node.type === slider).props.maxValue, 0.5);
+  assert.equal(tree.find((node) => node.type === "Slider").props.max, 0.5);
   assert.ok(tree.some((node) => node.type === "Text" && text(node) === "Recommended 0.1–0.25%"));
 });
 
@@ -482,8 +479,8 @@ test("every shifted day stays in the coached range, and a shift a new budget can
   const card = programCard(planCard(data)).props;
   assert.deepEqual(card.week, Array(7).fill(lower), "each day gets the budget itself");
   assert.deepEqual(card.notes, [
-    "Calorie shifting is paused: it doesn’t fit this budget.",
-    "Trend 80.0 kg · Goal 75.0 kg · Custom macros",
+    "Calorie shifting is paused: it does not fit this budget.",
+    ["Trend 80.0 kg", "Goal 75.0 kg", "Custom macros"],
   ]);
   data.sqlite.close();
 });
@@ -643,6 +640,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
   const jsx = (type, props, key) => ({ type, props, key });
   const store = {
     number: (value, digits = 1) => value.toFixed(digits),
+    t: englishT,
     units: "metric",
     language: "en",
     weights: [],
@@ -659,6 +657,7 @@ function screenHarness(dependencies, storeOverrides = {}) {
     },
     "react-native": { View: "View", AppState: {} },
     "expo-localization": { useCalendars: () => [{ firstWeekday: 2 }] },
+    "@/vector": kitMock(load),
     "@/components/system": {
       SystemButton: "Button",
       SystemLabel: "Label",
@@ -697,6 +696,8 @@ function nodes(tree) {
   return [tree, ...nodes(tree.props?.children)];
 }
 const text = (node) => [node.props.children].flat().join("");
+/** A number as the kit formats it for these tests (en-US). */
+const shownNumber = (value) => kitMock(load).format.number(value);
 
 test("compiled shift picker toggles higher days from the locale's first weekday", () => {
   const budget = { calories: 2200, protein: 150, carbs: 250, fat: 67 };
@@ -707,10 +708,7 @@ test("compiled shift picker toggles higher days from the locale's first weekday"
     const props = { value, budget, onChange: (shift) => changes.push(shift) };
     return { tree: () => nodes(harness.render(CalorieShiftPicker, props)) };
   };
-  const dayButtons = (tree) =>
-    tree.filter(
-      (node) => node.type === "Button" && /^Higher calories on /.test(node.props.accessibilityLabel)
-    );
+  const dayButtons = (tree) => tree.filter((node) => node.type === "SignalCell");
 
   // Off: seven weekday toggles, Monday first here, and nothing else to choose.
   let tree = picker().tree();
@@ -718,6 +716,12 @@ test("compiled shift picker toggles higher days from the locale's first weekday"
     dayButtons(tree).map((node) => node.props.children),
     ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
   );
+  // Each is a kit signal cell: a checkbox named for its whole weekday, with a check that shows
+  // the choice in more than colour.
+  const monday = dayButtons(tree)[0].props;
+  assert.equal(monday.accessibilityRole, "checkbox");
+  assert.equal(monday.accessibilityLabel, "Higher calories on Monday");
+  assert.deepEqual([monday.selected, monday.disabled, monday.check], [false, false, true]);
   assert.equal(
     tree.find((node) => node.type === "Choices"),
     undefined
@@ -730,14 +734,14 @@ test("compiled shift picker toggles higher days from the locale's first weekday"
   const on = picker(shift);
   tree = on.tree();
   assert.deepEqual(
-    dayButtons(tree).map((node) => node.props.accessibilityState.selected),
+    dayButtons(tree).map((node) => node.props.selected),
     [true, false, true, true, false, false, false]
   );
   const sizes = tree.find((node) => node.type === "Choices");
   assert.deepEqual(sizes.props.values, ["5", "10", "15", "20", "kcal"]);
   assert.equal(sizes.props.value, "10");
   assert.equal(sizes.props.label("15"), "+15%");
-  const preview = tree.find((node) => typeof node.type === "function");
+  const preview = tree.find((node) => node.type?.name === "ShiftWeek");
   assert.deepEqual(preview.props, { targets: budget, shift });
   // Rendered on its own hook slots, as React would.
   const own = screenHarness();
@@ -750,13 +754,13 @@ test("compiled shift picker toggles higher days from the locale's first weekday"
   assert.deepEqual(
     week.map((node) => node.props.accessibilityLabel),
     [
-      `Monday, ${expected[1].calories.toFixed(0)} kcal, higher day`,
-      `Tuesday, ${expected[2].calories.toFixed(0)} kcal`,
-      `Wednesday, ${expected[3].calories.toFixed(0)} kcal, higher day`,
-      `Thursday, ${expected[4].calories.toFixed(0)} kcal, higher day`,
-      `Friday, ${expected[5].calories.toFixed(0)} kcal`,
-      `Saturday, ${expected[6].calories.toFixed(0)} kcal`,
-      `Sunday, ${expected[0].calories.toFixed(0)} kcal`,
+      `Monday, ${shownNumber(expected[1].calories)} kcal, higher day`,
+      `Tuesday, ${shownNumber(expected[2].calories)} kcal`,
+      `Wednesday, ${shownNumber(expected[3].calories)} kcal, higher day`,
+      `Thursday, ${shownNumber(expected[4].calories)} kcal, higher day`,
+      `Friday, ${shownNumber(expected[5].calories)} kcal`,
+      `Saturday, ${shownNumber(expected[6].calories)} kcal`,
+      `Sunday, ${shownNumber(expected[0].calories)} kcal`,
     ]
   );
   dayButtons(tree)[2].props.onPress();
@@ -778,11 +782,11 @@ test("compiled shift picker toggles higher days from the locale's first weekday"
   tree = picker({ days: [0, 1, 2, 3, 4, 5], size: 20, unit: "%" }).tree();
   assert.match(tree.find((node) => node.type === "Error").props.message, /more than a quarter/);
   assert.equal(
-    tree.find((node) => typeof node.type === "function"),
+    tree.find((node) => node.type?.name === "ShiftWeek"),
     undefined
   );
-  assert.equal(dayButtons(tree)[5].props.isDisabled, true, "Saturday");
-  assert.equal(dayButtons(tree)[0].props.isDisabled, false);
+  assert.equal(dayButtons(tree)[5].props.disabled, true, "Saturday");
+  assert.equal(dayButtons(tree)[0].props.disabled, false);
 });
 
 test("a first program starts from Health's birthday and sex and the logged height", () => {
@@ -841,8 +845,8 @@ test("compiled program editor previews the budget and saves the shift with the p
   for (const [label, value] of [
     ["Age", "30"],
     ["Height (cm)", "180"],
-    ["Starting weight (kg)", "80"],
-    ["Goal weight (kg)", "75"],
+    ["Starting weight", "80"],
+    ["Goal weight", "75"],
   ])
     render()
       .find((node) => node.type === "Field" && node.props.label === label)
@@ -859,10 +863,12 @@ test("compiled program editor previews the budget and saves the shift with the p
     tree.find((node) => node.type === "Text" && text(node) === "Average across the week"),
     undefined
   );
-  const start = () =>
-    render()
-      .find((node) => node.type === "Button" && node.props.children === "Start this program")
-      .props.onPress();
+  // The editor's footer primary.
+  const start = () => {
+    const primary = render().find((node) => node.type === "Editor").props.primary;
+    assert.equal(primary.label, "Start this program");
+    primary.onPress();
+  };
 
   // A shift too big for the budget stops the save with its reason.
   picker.props.onChange({ days: [0, 1, 2, 3, 4, 5], size: 20, unit: "%" });
@@ -939,13 +945,16 @@ test("compiled Plan card shows the budget as a weekly average with the shifted w
   const card = programCard(tree).props;
   assert.deepEqual(card.week, nutrition.shiftWeek(budget, weekends));
   assert.deepEqual(card.notes, [
-    "2200 kcal/day on average",
-    "Trend 80.0 kg · Goal 75.0 kg · Balanced",
+    "2,200 kcal/day on average",
+    ["Trend 80.0 kg", "Goal 75.0 kg", "Balanced"],
   ]);
   // The due check-in proposes a new budget from the old one, not from Thursday's target.
-  const proposal = tree.find((node) => node.type === "Text" && text(node).includes("→"));
+  const proposal = tree.find((node) => node.type === "Value" && node.props.unit === "kcal a day");
   const proposed = data.store.currentReview().proposed.calories;
-  assert.equal(text(proposal), `2200 → ${proposed} kcal/day`);
+  assert.equal(proposal.props.value, shownNumber(proposed));
+  assert.ok(
+    tree.some((node) => node.type === "Text" && text(node) === "Currently 2,200 kcal a day")
+  );
   data.sqlite.close();
 });
 
@@ -967,8 +976,11 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
   const { ProgramEditor } = harness.load("src/components/nutrition/program-editor.tsx");
   let closed = 0;
   const render = () => nodes(harness.render(ProgramEditor, { close: () => closed++ }));
-  const button = (tree, label) =>
-    tree.find((node) => node.type === "Button" && node.props.children === label);
+  // The editor's footer primary, when it reads `label`.
+  const button = (tree, label) => {
+    const primary = tree.find((node) => node.type === "Editor").props.primary;
+    return primary.label === label ? primary : undefined;
+  };
 
   // Untouched, the editor offers to rebuild the program from the latest estimate.
   let tree = render();
@@ -986,8 +998,8 @@ test("compiled program editor saves a shift alone without rebuilding the budget"
     )
   );
   const save = button(tree, "Save calorie shifting");
-  assert.equal(save.props.isDisabled, false);
-  save.props.onPress();
+  assert.equal(save.disabled, false);
+  save.onPress();
   assert.equal(closed, 1);
   assert.deepEqual(diary.baseTargetsForDay("2024-02-02"), kept);
   assert.deepEqual(store.currentGoal().program.shift, weekends);
@@ -1155,7 +1167,9 @@ test("compiled Plan leads with the countdown, puts a due check-in right under it
     goal: 0,
     due: "2024-02-08",
   });
-  const next = at((node) => node.type === "Label" && text(node) === "Next check-in · Thu, Feb 8");
+  const next = at(
+    (node) => node.type === "Panel.Header" && node.props.eyebrow === "Next check-in · Thu, Feb 8"
+  );
   assert.ok(at((node) => node.type === "ProgramCard") < next);
   assert.ok(tree.some((node) => node.props?.title === "Goal pace"));
   assert.ok(tree.some((node) => node.type === "Label" && text(node) === "Recent check-ins"));
@@ -1172,7 +1186,9 @@ test("compiled Plan shows manual targets as the running program and offers to bu
     undefined
   );
   assert.ok(
-    tree.some((node) => node.type === "Text" && text(node) === "Let your plan do the math")
+    tree.some(
+      (node) => node.type === "Panel.Header" && node.props.title === "Let your plan do the math"
+    )
   );
 
   const targets = { calories: 2100, protein: 150, carbs: 220, fat: 70 };
@@ -1222,12 +1238,6 @@ function strategyHarness() {
     "react-native": { View: "View", AppState: {}, Pressable: "Pressable" },
     "react-native-svg": { default: "Svg", Circle: "Circle" },
     "heroui-native": { useThemeColor: (names) => names.map((name) => `var(--${name})`) },
-    "@/components/system": {
-      SystemIcon: "Icon",
-      SystemLabel: "Label",
-      SystemPanel: { Body: "PanelBody" },
-      SystemText: "Text",
-    },
     "@/components/plan/calorie-shift": weekdays,
   });
   return {
@@ -1251,33 +1261,51 @@ test("compiled program week stacks each day's macros under its calories, higher 
   for (const column of columns) {
     const targets = week[column.key];
     const inside = nodes(column.props.children);
+    // Calories on top, the grams beside their bars in P · C · F order, then the weekday.
     assert.deepEqual(inside.filter((node) => node.type === "Text").map(text), [
-      String(targets.calories),
-      `${targets.protein} P`,
-      `${targets.fat} F`,
-      `${targets.carbs} C`,
+      shownNumber(targets.calories),
+      shownNumber(targets.protein),
+      shownNumber(targets.carbs),
+      shownNumber(targets.fat),
       ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][column.key],
     ]);
-    const stack = inside.find((node) => node.props.style?.gap === 2);
-    assert.ok(Math.abs(stack.props.style.height - (150 * targets.calories) / tallest) < 1e-9);
-    const segments = inside.filter((node) => ["protein", "fat", "carbs"].includes(node.key));
+    const row = inside.find((node) => node.props.className === "w-full flex-row gap-1");
+    assert.ok(Math.abs(row.props.style.height - (150 * targets.calories) / tallest) < 1e-9);
+    const segments = inside.filter((node) => /rounded-mark/.test(node.props.className ?? ""));
+    assert.deepEqual(
+      segments.map((node) => node.key),
+      ["protein", "carbs", "fat"]
+    );
     const heights = segments.map((node) => node.props.style.height);
-    assert.ok(Math.abs(heights.reduce((a, b) => a + b) + 4 - stack.props.style.height) < 1e-9);
+    assert.ok(Math.abs(heights.reduce((a, b) => a + b) + 4 - row.props.style.height) < 1e-9);
     // Each macro takes its share of the day's energy.
-    const energy = targets.protein * 4 + targets.fat * 9 + targets.carbs * 4;
-    assert.ok(Math.abs(heights[1] / heights[0] - (targets.fat * 9) / (targets.protein * 4)) < 1e-9);
+    const energy = targets.protein * 4 + targets.carbs * 4 + targets.fat * 9;
+    assert.ok(Math.abs(heights[2] / heights[0] - (targets.fat * 9) / (targets.protein * 4)) < 1e-9);
     assert.ok(
-      Math.abs(heights[2] / (heights[0] + heights[1] + heights[2]) - (targets.carbs * 4) / energy) <
+      Math.abs(heights[1] / (heights[0] + heights[1] + heights[2]) - (targets.carbs * 4) / energy) <
         1e-9
     );
+    // Each label sits level with its bar.
+    const slots = inside.filter((node) => node.props.className === "justify-center");
+    assert.deepEqual(
+      slots.map((node) => node.props.style.height),
+      heights
+    );
     const day = inside.at(-1);
-    assert.match(day.props.className, column.key === 3 ? /font-semibold/ : /text-muted/);
+    assert.equal(day.props.tone, column.key === 3 ? "default" : "muted");
   }
   const high = columns.find((column) => column.key === 1),
     low = columns.find((column) => column.key === 2);
   const height = (column) =>
-    nodes(column.props.children).find((node) => node.props.style?.gap === 2).props.style.height;
+    nodes(column.props.children).find((node) => node.props.className === "w-full flex-row gap-1")
+      .props.style.height;
   assert.ok(height(high) > height(low));
+  // A key names the macros; screen readers hear them in the chart's own label.
+  assert.deepEqual(tree.find((node) => node.type === "Legend").props.items, [
+    { label: "Protein", style: "cat-1" },
+    { label: "Carbs", style: "cat-2" },
+    { label: "Fat", style: "cat-3" },
+  ]);
 
   // Too thin to label, and nothing drawn for a macro without grams.
   const lean = render(strategy.ProgramWeek, {
@@ -1285,7 +1313,7 @@ test("compiled program week stacks each day's macros under its calories, higher 
     today: 0,
   });
   const fat = lean.filter((node) => node.key === "fat");
-  assert.equal(fat.length, 7);
+  assert.equal(fat.length, 14, "a bar and a label slot a day");
   assert.ok(fat.every((node) => node.props.style.height < 16 && !node.props.children));
   const noFat = render(strategy.ProgramWeek, {
     week: Array(7).fill({ calories: 1600, protein: 250, carbs: 150, fat: 0 }),
@@ -1297,14 +1325,17 @@ test("compiled program week stacks each day's macros under its calories, higher 
   const weekday = { calories: 2100, protein: 160, carbs: 210, fat: 70 },
     weekend = { calories: 2600, protein: 160, carbs: 290, fat: 90 };
   const split = [weekend, weekday, weekday, weekday, weekday, weekday, weekend];
+  const spoken = (week) =>
+    render(strategy.ProgramWeek, { week, today: 0 }).find(
+      (node) => node.props.accessibilityRole === "image"
+    ).props.accessibilityLabel;
   assert.equal(
-    render(strategy.ProgramWeek, { week: split, today: 0 })[0].props.accessibilityLabel,
-    "Monday, Tuesday, Wednesday, Thursday, Friday: 2100 kcal, 160 g protein, 70 g fat, 210 g carbs. Saturday, Sunday: 2600 kcal, 160 g protein, 90 g fat, 290 g carbs"
+    spoken(split),
+    "Monday, Tuesday, Wednesday, Thursday, and Friday: 2,100 kcal, protein 160 g, carbs 210 g, fat 70 g. Saturday and Sunday: 2,600 kcal, protein 160 g, carbs 290 g, fat 90 g."
   );
   assert.equal(
-    render(strategy.ProgramWeek, { week: Array(7).fill(weekday), today: 0 })[0].props
-      .accessibilityLabel,
-    "Every day 2100 kcal, 160 g protein, 70 g fat, 210 g carbs"
+    spoken(Array(7).fill(weekday)),
+    "Every day: 2,100 kcal, protein 160 g, carbs 210 g, fat 70 g."
   );
 });
 
@@ -1319,24 +1350,35 @@ test("compiled program card opens the program as one button, with its menu outsi
     detail: "Cut 0.25%/wk",
     week,
     today: 1,
-    notes: ["Goal 75.0 kg · Balanced"],
+    notes: [["Goal 75.0 kg", "Balanced"]],
     onPress: () => pressed++,
     action: menu,
   });
-  const button = tree.find((node) => node.type === "Pressable");
-  assert.equal(button.props.accessibilityRole, "button");
+  // The kit Panel is the button: pressable, with the card's words as one label.
+  const button = tree.find((node) => typeof node.props?.onPress === "function");
   assert.equal(
     button.props.accessibilityLabel,
-    "Coached program. Jan 1 – now · Cut 0.25%/wk. Every day 2200 kcal, 150 g protein, 66 g fat, 250 g carbs. Goal 75.0 kg · Balanced"
+    "Coached program, Since Jan 1, Cut 0.25%/wk, Goal 75.0 kg, and Balanced. Every day: 2,200 kcal, protein 150 g, carbs 250 g, fat 66 g."
   );
+  assert.equal(button.props.accessibilityHint, "Edits your program");
   button.props.onPress();
   assert.equal(pressed, 1);
-  const card = nodes(button.props.children({ pressed: true }));
-  assert.match(card[0].props.className, /opacity-70/);
+  const card = nodes(button.props.children);
   assert.ok(
-    card.some((node) => node.type === "Text" && text(node) === "Jan 1 – now · Cut 0.25%/wk")
+    card.some(
+      (node) =>
+        node.type === "Meta" &&
+        JSON.stringify(node.props.items) === JSON.stringify(["Since Jan 1", "Cut 0.25%/wk"])
+    )
   );
-  assert.ok(card.some((node) => node.type === "Icon" && node.props.name === "chevron-forward"));
+  assert.ok(
+    card.some(
+      (node) =>
+        node.type === "Meta" &&
+        JSON.stringify(node.props.items) === JSON.stringify(["Goal 75.0 kg", "Balanced"])
+    )
+  );
+  assert.ok(card.some((node) => node.type === "Icon" && node.props.name === "forward"));
   assert.deepEqual(card.find((node) => node.type === strategy.ProgramWeek).props, {
     week,
     today: 1,
@@ -1353,14 +1395,14 @@ test("compiled program card opens the program as one button, with its menu outsi
     children: { type: "Button", props: { children: "Build my program" } },
   });
   assert.equal(
-    plain.find((node) => node.type === "Pressable"),
+    plain.find((node) => node.props?.onPress),
     undefined
   );
   assert.equal(
     plain.find((node) => node.type === "Icon"),
     undefined
   );
-  assert.ok(plain.some((node) => node.type === "Text" && text(node) === "Jan 20 – now"));
+  assert.equal(plain.find((node) => node.type === "Meta").props.items[0], "Since Jan 20");
   assert.ok(plain.some((node) => node.type === "Button"));
 });
 
@@ -1370,22 +1412,28 @@ test("compiled check-in ring counts the days down and fills its arcs", () => {
     return render(strategy.CheckInRing, { due: "2024-02-08", goal: null, ...props });
   };
   const texts = (tree) => tree.filter((node) => node.type === "Text").map(text);
+  const count = (tree) => {
+    const value = tree.find((node) => node.type === "Value");
+    return value && [value.props.value, value.props.unit];
+  };
   const arcs = (tree) => tree.filter((node) => node.type?.name === "Arc");
   const legend = (tree) =>
     tree
-      .filter((node) => node.type?.name === "Legend")
+      .filter((node) => node.type?.name === "Key")
       .map((node) => [node.props.label, node.props.value]);
 
   let tree = ring({ days: 2, progress: 5 / 7, goal: 0.25 });
   assert.equal(
     tree[0].props.accessibilityLabel,
-    "2 days until check-in on Thursday. 25% of the way to your goal weight"
+    "2 days until check-in on Thursday. 25% of the way to your goal weight."
   );
-  assert.deepEqual(texts(tree), ["2 days", "until check-in"]);
+  assert.deepEqual(count(tree), ["2", "days"]);
+  assert.deepEqual(texts(tree), ["until check-in"]);
+  // The goal arc is ink cyan; the week is foreground.
   assert.deepEqual(
     arcs(tree).map((arc) => [arc.props.value, arc.props.color]),
     [
-      [0.25, "var(--success)"],
+      [0.25, "var(--link)"],
       [5 / 7, "var(--foreground)"],
     ]
   );
@@ -1403,30 +1451,26 @@ test("compiled check-in ring counts the days down and fills its arcs", () => {
   assert.equal(nodes(week.type(empty)).filter((node) => node.type === "Circle").length, 1);
 
   tree = ring({ days: 1, progress: 6 / 7 });
-  assert.deepEqual(texts(tree), ["1 day", "until check-in"]);
-  assert.equal(tree[0].props.accessibilityLabel, "1 day until check-in on Thursday");
+  assert.deepEqual(count(tree), ["1", "day"]);
+  assert.equal(tree[0].props.accessibilityLabel, "1 day until check-in on Thursday.");
   assert.equal(arcs(tree).length, 1, "no goal arc without a distance to cover");
   assert.deepEqual(legend(tree), [["Check-in", "Thu"]]);
 
   tree = ring({ days: 0, progress: 1, goal: 1 });
+  assert.equal(count(tree), undefined);
   assert.deepEqual(texts(tree), ["Check-in", "Today"]);
   assert.equal(
     tree[0].props.accessibilityLabel,
-    "Check-in today. 100% of the way to your goal weight"
+    "Check-in today. 100% of the way to your goal weight."
   );
   tree = ring({ days: -2, progress: 1 });
   assert.deepEqual(texts(tree), ["Check-in", "Due"]);
-  assert.equal(tree[0].props.accessibilityLabel, "Check-in due since Thursday");
+  assert.equal(tree[0].props.accessibilityLabel, "Check-in due since Thursday.");
 });
 
-test("the program chart's labels keep AA contrast on their fills in both themes", () => {
-  const css = readFileSync("src/global.css", "utf8");
-  const theme = (variant) => {
-    const block = css.slice(css.indexOf(`@variant ${variant}`)).split("}")[0];
-    return Object.fromEntries(
-      [...block.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6});/gi)].map(([, name, value]) => [name, value])
-    );
-  };
+test("the program chart's labels keep AA contrast on the surface, and its bars show against it", () => {
+  // The kit's generated tokens (src/vector/tokens.json), the values src/global.css imports.
+  const tokens = load("src/vector/tokens.ts");
   const luminance = (hex) => {
     const [r, g, b] = [1, 3, 5].map((i) => {
       const c = parseInt(hex.slice(i, i + 2), 16) / 255;
@@ -1439,12 +1483,17 @@ test("the program chart's labels keep AA contrast on their fills in both themes"
     return (high + 0.05) / (low + 0.05);
   };
   for (const variant of ["light", "dark"]) {
-    const colors = theme(variant);
-    for (const fill of ["chart-calories", "chart-protein", "chart-fat", "chart-carbs"])
-      assert.ok(
-        contrast(colors.background, colors[fill]) >= 4.5,
-        `${variant} ${fill}: ${contrast(colors.background, colors[fill]).toFixed(2)}`
-      );
+    const colors = tokens[variant];
+    // Grams beside the bars in foreground-secondary, calories in tint: text on the panel surface.
+    for (const ink of ["foregroundSecondary", "tint"]) {
+      const ratio = contrast(colors[ink], colors.surface);
+      assert.ok(ratio >= 4.5, `${variant} ${ink} on surface: ${ratio.toFixed(2)}`);
+    }
+    // Each bar is a mark: 3:1 against the surface it sits on.
+    for (const fill of ["cat1", "cat2", "cat3"]) {
+      const ratio = contrast(colors[fill], colors.surface);
+      assert.ok(ratio >= 3, `${variant} ${fill} on surface: ${ratio.toFixed(2)}`);
+    }
   }
 });
 

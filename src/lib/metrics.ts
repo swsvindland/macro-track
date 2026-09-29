@@ -1,3 +1,4 @@
+import type { Format, IntlUnit } from "@/vector";
 export type Units = "metric" | "imperial" | "stone";
 export type Formula = "none" | "male" | "female";
 export const sites = [
@@ -18,8 +19,9 @@ export const sites = [
   "leftAnkle",
   "rightAnkle",
 ] as const;
-export const weightUnit = (units: Units) =>
-  units === "metric" ? "kg" : units === "stone" ? "st" : "lb";
+/** The Intl unit a weight is shown in; the locale supplies its symbol ("kg", "公斤"). */
+export const massUnit = (units: Units): IntlUnit =>
+  units === "metric" ? "kilogram" : units === "stone" ? "stone" : "pound";
 export const lengthUnit = (units: Units) => (units === "metric" ? "cm" : "in");
 export const fromKg = (kg: number, units: Units) =>
   kg / (units === "metric" ? 1 : units === "stone" ? 6.35029318 : 0.45359237);
@@ -53,23 +55,22 @@ export function formatHeight(
   return `${number(feet, 0)}' ${number(inches, Number.isInteger(inches) ? 0 : 1)}"`;
 }
 const weightDigits = (units: Units) => (units === "stone" ? 2 : 1);
-export function formatWeight(
-  kg: number,
-  units: Units,
-  number: (value: number, digits?: number) => string
-): string {
-  return `${number(fromKg(kg, units), weightDigits(units))} ${weightUnit(units)}`;
+/** "72.5 kg" at the unit's fixed digits, in the locale's unit order and spacing ("72,5 kg" in fr). */
+export function formatWeight(kg: number, units: Units, format: Format, signed = false): string {
+  const digits = weightDigits(units),
+    value = fromKg(kg, units);
+  const { unit, unitFirst, space } = format.unitParts(value, massUnit(units), digits);
+  const shown = format.number(value, digits, signed);
+  return unitFirst ? `${unit}${space}${shown}` : `${shown}${space}${unit}`;
 }
-/** "−0.4 kg/wk". A pace that rounds to zero has no sign, so it never reads "−0.0". */
+/** "-0.4 kg/wk". A pace that rounds to zero has no sign, so it never reads "-0.0". */
 export function formatPace(
   kg: number,
   units: Units,
-  number: (value: number, digits?: number) => string
+  format: Format,
+  t: (key: "paceWeekly", values: { weight: string }) => string
 ): string {
-  const digits = weightDigits(units),
-    shown = number(Math.abs(fromKg(kg, units)), digits);
-  const sign = shown === number(0, digits) ? "" : kg < 0 ? "−" : "+";
-  return `${sign}${shown} ${weightUnit(units)}/wk`;
+  return t("paceWeekly", { weight: formatWeight(kg, units, format, true) });
 }
 /** "Sep 24", or "Tue, Sep 30" with the weekday; the store's date() always adds the year. */
 export function shortDay(day: string, language: string, weekday = false) {

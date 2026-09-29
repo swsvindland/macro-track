@@ -1,23 +1,54 @@
 import { useRef, useState } from "react";
-import { CalorieShiftPicker } from "@/components/plan/calorie-shift";
+import { View } from "react-native";
+import { CalorieShiftPicker, weekdayName } from "@/components/plan/calorie-shift";
 import { PaceSlider } from "@/components/plan/pace-slider";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Choices, Editor, ErrorText, Field } from "@/components/ui";
+import {
+  Choices,
+  ErrorText,
+  Field,
+  Heading,
+  Meta,
+  Note,
+  Panel,
+  Value,
+  parseDecimal,
+  useKitFormat,
+  useKitStrings,
+} from "@/vector";
+import { Editor } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { createProgram, currentGoal, previewProgram, saveShift } from "@/lib/coaching-store";
 import { baseTargetsForDay } from "@/lib/diary";
 import { PACES, type Program } from "@/lib/program";
-import { localDay, parseNumber, weightTrend } from "@/lib/metrics";
+import { localDay, weightTrend } from "@/lib/metrics";
 import type { CalorieShift } from "@/lib/nutrition";
 import type { Goal } from "@/lib/coaching";
 
+const modes = { lose: "modeCut", maintain: "modeMaintain", gain: "modeBulk" } as const;
+const activities = {
+  low: "activityLow",
+  light: "activityLight",
+  moderate: "activityModerate",
+  high: "activityHigh",
+} as const;
+const diets = {
+  balanced: "dietBalanced",
+  "lower-fat": "dietMoreCarbs",
+  "lower-carb": "dietMoreFat",
+} as const;
+
 export function ProgramEditor({ close }: { close: () => void }) {
-  const { weights, measurements, healthProfile, units, number } = useStore();
+  const { weights, measurements, healthProfile, units, t } = useStore();
+  const format = useKitFormat();
+  const strings = useKitStrings();
   const { refresh } = useNutrition();
   const existing = useNutritionQuery(currentGoal);
   const saved = existing?.program;
   const factor = units === "metric" ? 1 : 2.2046226218;
+  // Prefilled and read in the locale's decimal, so "72,5" round-trips in de and fr.
+  const shown = (n: number) => format.editable(n, 1);
+  const read = (text: string) => parseDecimal(text, format.tag) ?? NaN;
   const [mode, setMode] = useState<Exclude<Goal["mode"], "manual">>(
     existing?.mode === "manual" ? "maintain" : (existing?.mode ?? "lose")
   );
@@ -25,25 +56,23 @@ export function ProgramEditor({ close }: { close: () => void }) {
   const [pace, setPace] = useState<number>(existing?.pace || PACES.lose.best[0]);
   // A first program starts from what Health and the height log already know.
   const [age, setAge] = useState(() => {
-    if (saved) return String(saved.age);
+    if (saved) return shown(saved.age);
     const birth = healthProfile.birthDate;
     if (!birth) return "";
     const today = localDay();
     const years = Number(today.slice(0, 4)) - Number(birth.slice(0, 4));
-    return String(today.slice(5) < birth.slice(5) ? years - 1 : years);
+    return shown(today.slice(5) < birth.slice(5) ? years - 1 : years);
   });
   const [height, setHeight] = useState(() => {
-    if (saved) return String(saved.heightCm / (units === "metric" ? 1 : 2.54));
+    if (saved) return shown(saved.heightCm / (units === "metric" ? 1 : 2.54));
     const cm = measurements.find((m) => m.kind === "height")?.values.height;
-    return cm ? String(Number((cm / (units === "metric" ? 1 : 2.54)).toFixed(1))) : "";
+    return cm ? shown(cm / (units === "metric" ? 1 : 2.54)) : "";
   });
   const [weight, setWeight] = useState(() => {
     const kg = weightTrend(weights).at(-1)?.trend ?? saved?.weightKg;
-    return kg ? String(Number((kg * factor).toFixed(1))) : "";
+    return kg ? shown(kg * factor) : "";
   });
-  const [target, setTarget] = useState(
-    saved ? String(Number((saved.targetWeightKg * factor).toFixed(1))) : ""
-  );
+  const [target, setTarget] = useState(saved ? shown(saved.targetWeightKg * factor) : "");
   const [formula, setFormula] = useState<Program["formula"] | "">(
     saved?.formula ?? healthProfile.sex ?? ""
   );
@@ -65,10 +94,10 @@ export function ProgramEditor({ close }: { close: () => void }) {
     ...(diet === "custom" ? { carbPct: custom?.carbPct } : {}),
   };
   const budget = {
-    age: parseNumber(age),
-    heightCm: parseNumber(height) * (units === "metric" ? 1 : 2.54),
-    weightKg: parseNumber(weight) / factor,
-    targetWeightKg: parseNumber(target) / factor,
+    age: read(age),
+    heightCm: read(height) * (units === "metric" ? 1 : 2.54),
+    weightKg: read(weight) / factor,
+    targetWeightKg: read(target) / factor,
     formula: formula as Program["formula"],
     activity,
     protein: protein === "custom" ? (saved?.protein ?? 1.6) : Number(protein),
@@ -80,8 +109,8 @@ export function ProgramEditor({ close }: { close: () => void }) {
   // A change to calorie shifting alone keeps today's budget instead of rebuilding it.
   const settings = JSON.stringify([mode, pace, budget]);
   const [opened] = useState(settings);
-  const onlyShift =
-    !!saved && settings === opened && JSON.stringify(shift) !== JSON.stringify(saved.shift);
+  const shifted = JSON.stringify(shift) !== JSON.stringify(saved?.shift);
+  const onlyShift = !!saved && settings === opened && shifted;
   const current = useNutritionQuery(() => baseTargetsForDay(localDay()));
   // The daily budget before shifting, so a shift that doesn't fit shows why in its own section.
   const rebuilt = useNutritionQuery(() => {
@@ -92,8 +121,33 @@ export function ProgramEditor({ close }: { close: () => void }) {
     }
   }, [mode, pace, age, height, weight, target, formula, activity, protein, diet, checkDay, units]);
   const preview = onlyShift ? current : rebuilt;
+  const massUnit = format.unitParts(1, units === "metric" ? "kilogram" : "pound").unit;
+  function save() {
+    if (locked.current) return;
+    try {
+      locked.current = true;
+      if (onlyShift) saveShift(shift);
+      else createProgram(mode, pace, draft);
+      refresh();
+      close();
+    } catch (e) {
+      locked.current = false;
+      setError(e instanceof Error ? e.message : t("couldNotCreateProgram"));
+    }
+  }
   return (
-    <Editor title={saved ? "Update your program" : "Build your program"} open close={close}>
+    <Editor
+      title={t(saved ? "updateYourProgram" : "buildYourProgram")}
+      open
+      close={close}
+      // Anything changed holds the sheet: Cancel or the primary action are the exits.
+      dirty={settings !== opened || shifted}
+      primary={{
+        label: t(onlyShift ? "saveCalorieShifting" : "startThisProgram"),
+        onPress: save,
+        disabled: !onlyShift && !formula,
+      }}
+    >
       <Choices
         values={["lose", "maintain", "gain"] as const}
         value={mode}
@@ -101,125 +155,125 @@ export function ProgramEditor({ close }: { close: () => void }) {
           setMode(value);
           setPace(value === "gain" ? PACES.gain.best[1] : PACES.lose.best[0]);
         }}
-        label={(value) => ({ lose: "Cut", maintain: "Maintain", gain: "Bulk" })[value]}
+        label={(value) => t(modes[value])}
+        accessibilityLabel={strings.goal}
       />
-      <Field label="Age" numeric value={age} onChange={setAge} />
+      <Field label={t("age")} numeric value={age} onChange={setAge} />
       <Field
-        label={units === "metric" ? "Height (cm)" : "Height (total inches)"}
+        label={t(units === "metric" ? "heightCmField" : "heightInchesField")}
         numeric
         value={height}
         onChange={setHeight}
       />
       <Field
-        label={`Starting weight (${units === "metric" ? "kg" : "lb"})`}
+        label={t("startingWeight")}
+        unit={massUnit}
         numeric
         value={weight}
         onChange={setWeight}
       />
       <Field
-        label={`${mode === "maintain" ? "Weight to maintain" : "Goal weight"} (${units === "metric" ? "kg" : "lb"})`}
+        label={t(mode === "maintain" ? "weightToMaintain" : "goalWeight")}
+        unit={massUnit}
         numeric
         value={target}
         onChange={setTarget}
       />
-      <Text className="font-semibold">Sex used by the starting estimate</Text>
-      <Choices
-        values={["female", "male"] as const}
-        value={formula}
-        onChange={setFormula}
-        label={(value) => (value === "female" ? "Female equation" : "Male equation")}
-      />
-      <Text className="font-semibold">Typical activity</Text>
-      <Choices
-        values={["low", "light", "moderate", "high"] as const}
-        value={activity}
-        onChange={setActivity}
-        label={(value) =>
-          ({
-            low: "Mostly seated",
-            light: "Lightly active",
-            moderate: "Active",
-            high: "Very active",
-          })[value]
-        }
-      />
+      <View className="gap-2">
+        <Heading level={4}>{t("sexForEstimate")}</Heading>
+        <Choices
+          values={["female", "male"] as const}
+          value={formula}
+          onChange={setFormula}
+          label={(value) => t(value === "female" ? "femaleEquation" : "maleEquation")}
+          accessibilityLabel={t("sexForEstimate")}
+        />
+      </View>
+      <View className="gap-2">
+        <Heading level={4}>{t("typicalActivity")}</Heading>
+        <Choices
+          values={["low", "light", "moderate", "high"] as const}
+          value={activity}
+          onChange={setActivity}
+          label={(value) => t(activities[value])}
+          accessibilityLabel={t("typicalActivity")}
+        />
+      </View>
       {mode !== "maintain" && (
         <PaceSlider mode={mode} value={pace} onChange={setPace} weightKg={budget.weightKg} />
       )}
-      <Text className="font-semibold">Macro preference</Text>
-      <Choices
-        values={[
-          ...(custom?.carbPct !== undefined ? (["custom"] as const) : []),
-          ...(["balanced", "lower-fat", "lower-carb"] as const),
-        ]}
-        value={diet}
-        onChange={setDiet}
-        label={(value) =>
-          ({
-            custom: `Custom · ${number(custom?.carbPct ?? 0, 0)}% carbs`,
-            balanced: "Balanced",
-            "lower-fat": "More carbs",
-            "lower-carb": "More fat",
-          })[value]
-        }
-      />
-      <Text className="font-semibold">Protein per kg of body weight</Text>
-      <Choices
-        values={[...(custom?.proteinG !== undefined ? ["custom"] : []), "1.4", "1.6", "2", "2.2"]}
-        value={protein}
-        onChange={setProtein}
-        label={(value) =>
-          value === "custom" ? `Custom · ${number(custom?.proteinG ?? 0, 0)} g` : `${value} g/kg`
-        }
-      />
-      <Text className="font-semibold">Check-in day</Text>
-      <Choices
-        values={["0", "1", "2", "3", "4", "5", "6"]}
-        value={checkDay}
-        onChange={setCheckDay}
-        label={(value) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][Number(value)]}
-      />
+      <View className="gap-2">
+        <Heading level={4}>{t("macroPreference")}</Heading>
+        <Choices
+          values={[
+            ...(custom?.carbPct !== undefined ? (["custom"] as const) : []),
+            ...(["balanced", "lower-fat", "lower-carb"] as const),
+          ]}
+          value={diet}
+          onChange={setDiet}
+          label={(value) =>
+            value === "custom"
+              ? t("customCarbs", { percent: format.percent((custom?.carbPct ?? 0) / 100) })
+              : t(diets[value])
+          }
+          accessibilityLabel={t("macroPreference")}
+        />
+      </View>
+      <View className="gap-2">
+        <Heading level={4}>{t("proteinPerKg")}</Heading>
+        <Choices
+          values={[...(custom?.proteinG !== undefined ? ["custom"] : []), "1.4", "1.6", "2", "2.2"]}
+          value={protein}
+          onChange={setProtein}
+          label={(value) =>
+            value === "custom"
+              ? t("customGrams", { value: format.number(custom?.proteinG ?? 0) })
+              : t("gramsPerKg", {
+                  value: format.number(Number(value), value.includes(".") ? 1 : 0),
+                })
+          }
+          accessibilityLabel={t("proteinPerKg")}
+        />
+      </View>
+      <View className="gap-2">
+        <Heading level={4}>{t("checkInDay")}</Heading>
+        <Choices
+          values={["0", "1", "2", "3", "4", "5", "6"]}
+          value={checkDay}
+          onChange={setCheckDay}
+          label={(value) => weekdayName(format, Number(value), "long")}
+          accessibilityLabel={t("checkInDay")}
+        />
+      </View>
       {preview && (
-        <SystemPanel>
-          <SystemPanel.Body className="gap-2">
-            <Text className="text-3xl font-semibold">{number(preview.calories, 0)} kcal/day</Text>
+        <Panel>
+          <Panel.Body className="gap-2">
+            <Value size="l" value={format.number(preview.calories)} unit={t("kcalPerDay")} />
             {(shift || onlyShift) && (
-              <Text className="text-sm text-muted">
-                {onlyShift
-                  ? `Your current budget${shift ? ", as a weekly average" : ""}`
-                  : "Average across the week"}
-              </Text>
+              <Note>
+                {t(
+                  onlyShift
+                    ? shift
+                      ? "currentBudgetWeekly"
+                      : "currentBudget"
+                    : "averageAcrossWeek"
+                )}
+              </Note>
             )}
-            <Text>
-              {preview.protein} g protein · {preview.carbs} g carbs · {preview.fat} g fat
-            </Text>
-          </SystemPanel.Body>
-        </SystemPanel>
+            <Meta
+              tone="default"
+              items={[
+                t("proteinGrams", { value: format.number(preview.protein) }),
+                t("carbsGrams", { value: format.number(preview.carbs) }),
+                t("fatGrams", { value: format.number(preview.fat) }),
+              ]}
+            />
+          </Panel.Body>
+        </Panel>
       )}
       <CalorieShiftPicker value={shift} onChange={setShift} budget={preview} />
-      <Text className="text-sm text-muted">
-        Coaching is for adults who are not pregnant or breastfeeding. Use professionally guided
-        manual targets for medical nutrition needs or eating disorder care.
-      </Text>
+      <Note>{t("coachingScopeNote")}</Note>
       <ErrorText message={error} />
-      <SystemButton
-        isDisabled={!onlyShift && !formula}
-        onPress={() => {
-          if (locked.current) return;
-          try {
-            locked.current = true;
-            if (onlyShift) saveShift(shift);
-            else createProgram(mode, pace, draft);
-            refresh();
-            close();
-          } catch (e) {
-            locked.current = false;
-            setError(e instanceof Error ? e.message : "Could not create your program.");
-          }
-        }}
-      >
-        {onlyShift ? "Save calorie shifting" : "Start this program"}
-      </SystemButton>
     </Editor>
   );
 }

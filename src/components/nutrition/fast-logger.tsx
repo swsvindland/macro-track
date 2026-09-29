@@ -1,19 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, ScrollView, View } from "react-native";
+import { Alert, Pressable, ScrollView, View } from "react-native";
+import { Editor } from "@/components/ui";
 import {
-  SystemButton,
-  SystemIcon,
-  SystemIconButton,
-  SystemLabel,
-  SystemText as Text,
+  Button,
+  Choices,
+  ErrorText,
+  Heading,
+  Icon,
+  IconButton,
+  Label,
+  Meta,
+  Note,
+  Panel,
+  RowRule,
+  SearchInput,
+  Text,
+  useKitFormat,
   type IconName,
-} from "@/components/system";
-import { Choices, Editor, ErrorText, SearchInput } from "@/components/ui";
+} from "@/vector";
 import { entriesForDay, targetsForDay, toggleFavorite } from "@/lib/diary";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
 import { logBatch, loggingChoices, type LogChoice, type LogReceipt } from "@/lib/fast-log";
 import { searchCatalog } from "@/lib/food-catalog";
-import { foodIcon, mealIcon } from "@/lib/food-icons";
 import { matchesQuery, rankSearch, type Fixes } from "@/lib/food-rank";
 import {
   countText,
@@ -34,10 +42,9 @@ import {
 import { localDay } from "@/lib/metrics";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
-import { AiMark } from "./ai-mark";
+import type { Message } from "@/lib/translations";
 import { AmountPicker, DayRing, PortionPreview, type AmountDraft } from "./amount-picker";
 import { FoodEditor } from "./food-editor";
-import { FoodIcon } from "./food-icon";
 import { PhotoLogger } from "./photo-logger";
 import { QuickAdd } from "./quick-add";
 import { TimeField } from "./time-field";
@@ -62,17 +69,19 @@ function startAmount(choice: LogChoice): AmountDraft {
   return { unit, text: countText(item.food, unit, count), fresh: true };
 }
 
+type Translate = (key: Message, values?: Record<string, string | number>) => string;
+
 /** A typed amount of one food, or a multiple of every food in a saved meal. */
-function portioned(choice: LogChoice, amount: AmountDraft): LogChoice {
+function portioned(choice: LogChoice, amount: AmountDraft, t: Translate): LogChoice {
   const value = parseAmount(amount.text);
   if (isMeal(choice)) {
     if (!Number.isFinite(value) || value <= 0 || value > 100)
-      throw new Error("Enter a valid quantity.");
+      throw new Error(t("enterValidQuantity"));
     // Scaled from the meal itself, so reopening a selected meal doesn't multiply it again.
     const items = choice.multiple?.items ?? choice.items;
     return {
       ...choice,
-      detail: `${formatCount(value, mealUnits[0])} × saved meal`,
+      detail: t("savedMealMultiple", { count: formatCount(value, mealUnits[0]) }),
       items: items.map((item) => scaleItem(item, value)),
       multiple: { items, factor: value },
     };
@@ -82,9 +91,9 @@ function portioned(choice: LogChoice, amount: AmountDraft): LogChoice {
   });
   return { ...choice, detail: item.portionLabel, items: [item] };
 }
-function tryPortioned(choice: LogChoice, amount: AmountDraft) {
+function tryPortioned(choice: LogChoice, amount: AmountDraft, t: Translate) {
   try {
-    return portioned(choice, amount);
+    return portioned(choice, amount, t);
   } catch {
     return null;
   }
@@ -93,16 +102,16 @@ const calories = (items: MealItem[]) =>
   totalNutrients(items.map((item) => item.nutrients)).calories;
 const actions: {
   key: "barcode" | "photo" | "quick" | "custom";
-  /** "ai" is the phone's own model mark, as on Home's quick-log bar. */
-  icon: IconName | "ai";
-  label: string;
-  spoken: string;
+  icon: IconName;
+  label: Message;
+  spoken: Message;
 }[] = [
-  { key: "barcode", icon: "barcode-outline", label: "Scan", spoken: "Scan barcode" },
-  { key: "photo", icon: "ai", label: "Photo", spoken: "Photo or description" },
-  { key: "quick", icon: "flash-outline", label: "Quick add", spoken: "Quick add" },
-  // Not a plus: as an icon it sits above the results' round + buttons, which add a food.
-  { key: "custom", icon: "create-outline", label: "New food", spoken: "New food" },
+  { key: "barcode", icon: "scan", label: "scan", spoken: "scanBarcode" },
+  // The same analysis mark as on Home's quick-log bar.
+  { key: "photo", icon: "analysis", label: "photo", spoken: "photoOrDescription" },
+  { key: "quick", icon: "energy", label: "quickAdd", spoken: "quickAdd" },
+  // Not a plus: as an icon it sits above the results' + buttons, which add a food.
+  { key: "custom", icon: "edit", label: "newFood", spoken: "newFood" },
 ];
 
 export function FastLogger({
@@ -127,7 +136,8 @@ export function FastLogger({
   close: () => void;
   onLogged: (receipt: LogReceipt) => void;
 }) {
-  const { number, diaryLayout } = useStore();
+  const { diaryLayout, t } = useStore();
+  const format = useKitFormat();
   const { refresh, revision } = useNutrition();
   const [day, setDay] = useState(initialDay),
     [time, setTime] = useState(() => initialTime ?? currentFoodTime());
@@ -195,7 +205,7 @@ export function FastLogger({
               query: trimmed,
               foods: [],
               fixes: {},
-              error: "Catalog unavailable. Your own foods still work.",
+              error: t("catalogUnavailable"),
             });
         });
     }, 120);
@@ -203,7 +213,7 @@ export function FastLogger({
       active = false;
       clearTimeout(timer);
     };
-  }, [trimmed, known]);
+  }, [trimmed, known, t]);
   // Foods eaten beyond Log again's top ones are read only when a search names them, and catalog
   // results reuse the last portion of any the person has eaten.
   // Once the catalog answers, a typo it corrected ("chiken") finds the person's own foods too.
@@ -244,19 +254,28 @@ export function FastLogger({
       ].slice(0, 40);
   const inCart = new Map(cart.map((choice) => [choice.key, choice]));
   const items = cart.flatMap((choice) => choice.items);
-  const summary = (value: LogChoice["items"]) => {
-    const sum = totalNutrients(value.map((item) => item.nutrients));
-    return `${number(sum.calories, 0)} kcal · ${number(sum.protein, 0)} g protein`;
-  };
+  /** Calories, then P · C · F, as the list rows show them. */
   const macros = (value: LogChoice["items"]) => {
     const sum = totalNutrients(value.map((item) => item.nutrients));
-    return `${number(sum.calories, 0)} kcal ${number(sum.protein, 0)}P ${number(sum.fat, 0)}F ${number(sum.carbs, 0)}C`;
+    return [
+      t("kcalValue", { value: format.number(sum.calories) }),
+      t("proteinShort", { value: format.number(sum.protein) }),
+      t("carbsShort", { value: format.number(sum.carbs) }),
+      t("fatShort", { value: format.number(sum.fat) }),
+    ];
   };
   /** The same totals as VoiceOver reads them. */
   const spokenMacros = (value: LogChoice["items"]) => {
     const sum = totalNutrients(value.map((item) => item.nutrients));
-    return `${number(sum.calories, 0)} kcal, ${number(sum.protein, 0)} g protein, ${number(sum.fat, 0)} g fat, ${number(sum.carbs, 0)} g carbs`;
+    return t("spokenMacros", {
+      kcal: format.number(sum.calories),
+      protein: format.number(sum.protein),
+      carbs: format.number(sum.carbs),
+      fat: format.number(sum.fat),
+    });
   };
+  const counted = (n: number, one: Message, many: Message) =>
+    t(format.plural(n) === "one" ? one : many, { count: format.number(n) });
   // Searching folds the day and time panel back into its label, so the list's top is the
   // field and the results, never the panel with the field under the keyboard.
   function openSearch() {
@@ -308,9 +327,9 @@ export function FastLogger({
   function cancel() {
     if (!cart.length) close();
     else
-      Alert.alert("Discard this meal?", "The selected foods have not been logged yet.", [
-        { text: "Keep editing", style: "cancel" },
-        { text: "Discard", style: "destructive", onPress: close },
+      Alert.alert(t("discardMealTitle"), t("discardMealMessage"), [
+        { text: t("keepEditing"), style: "cancel" },
+        { text: t("discard"), style: "destructive", onPress: close },
       ]);
   }
   /** Saves once; throws (with the lock released) only when nothing was written. */
@@ -332,7 +351,7 @@ export function FastLogger({
     try {
       action();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save this meal.");
+      setError(e instanceof Error ? e.message : t("couldNotSaveMeal"));
     }
   }
   // One-step logging from Scan, New food and Quick add skips the list, where the
@@ -351,7 +370,7 @@ export function FastLogger({
                 add({
                   key: `quick:${Date.now()}`,
                   title: item.food.name,
-                  detail: "estimate",
+                  detail: t("estimated"),
                   items: [item],
                 })
             : undefined
@@ -403,8 +422,8 @@ export function FastLogger({
       <FoodEditor
         initialMode={picker}
         scanAnother={picker === "barcode"}
-        pickerTitle={oneStep ? "Log food" : "Add to meal"}
-        pickLabel={oneStep ? "Log" : undefined}
+        pickerTitle={oneStep ? t("logFood") : t("addToMeal")}
+        pickLabel={oneStep ? t("log") : undefined}
         close={() => {
           // After a direct log the logger is already closing.
           if (locked.current) return;
@@ -430,27 +449,32 @@ export function FastLogger({
     );
   const dayLabel =
     day === data.today
-      ? "Today"
+      ? t("today")
       : day === data.yesterday
-        ? "Yesterday"
-        : new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
+        ? t("yesterday")
+        : new Date(`${day}T12:00:00`).toLocaleDateString(format.tag, {
             weekday: "short",
             month: "short",
             day: "numeric",
           });
-  const whenLabel = `${dayLabel} · ${validFoodTime(time) ? formatClock(time) : time}${diaryLayout === "meals" ? ` · ${meal}` : ""}`;
+  const whenValues = {
+    day: dayLabel,
+    time: validFoodTime(time) ? formatClock(time, format.tag) : time,
+    meal,
+  };
+  const whenLabel = t(diaryLayout === "meals" ? "whenMeal" : "whenTime", whenValues);
   if (editing) {
-    const preview = tryPortioned(editing, amount);
+    const preview = tryPortioned(editing, amount, t);
     const food = isMeal(editing) ? null : editing.items[0].food;
     const subtitle = isMeal(editing)
-      ? editing.items.map((item) => item.food.name).join(", ")
+      ? format.list(editing.items.map((item) => item.food.name))
       : source(editing.items[0].food);
     const others = cart.filter((row) => row.key !== editing.key).flatMap((row) => row.items);
     const sum = preview ? totalNutrients(preview.items.map((item) => item.nutrients)) : null;
     const favorite = !!food && data.saved.some((choice) => choice.key === `food:${food.id}`);
     const addToMeal = () =>
       attempt(() => {
-        add(portioned(editing, amount));
+        add(portioned(editing, amount, t));
         setEditing(null);
         setDirect(false);
         if (trimmed) clearQuery();
@@ -458,7 +482,7 @@ export function FastLogger({
     // Logs everything selected, with this food at the amount on screen.
     const logNow = () =>
       attempt(() => {
-        const next = portioned(editing, amount);
+        const next = portioned(editing, amount, t);
         commit(
           (cart.some((row) => row.key === next.key)
             ? cart.map((row) => (row.key === next.key ? next : row))
@@ -468,32 +492,34 @@ export function FastLogger({
       });
     return (
       <Editor
-        title={direct ? "Log food" : "Portion"}
+        title={direct ? t("logFood") : t("portion")}
         open
         close={back}
+        // Cancel steps back to the list.
+        guarded={!direct || cart.length > 0}
         compact
         footer={
           <View className="gap-2">
             <ErrorText message={error} />
             <AmountPicker
               units={unitsFor(editing)}
+              // A saved meal's only unit is "×": "Amount in ×" doesn't read.
+              label={isMeal(editing) ? t("mealQuantity") : undefined}
               value={amount}
               onChange={(next) => {
                 setAmount(next);
                 setError("");
               }}
               actions={[
-                { label: "Log", onPress: logNow },
-                { label: "Add", onPress: addToMeal },
+                { label: t("log"), onPress: logNow },
+                { label: t("add"), onPress: addToMeal },
               ]}
             />
           </View>
         }
       >
         <View className="flex-row items-center justify-between gap-2">
-          <Text numberOfLines={1} className="shrink text-sm text-muted">
-            {whenLabel}
-          </Text>
+          <Note className="shrink">{whenLabel}</Note>
           <DayRing
             calories={dayTotals.eaten + calories(others) + (sum?.calories ?? 0)}
             target={dayTotals.targets?.calories ?? null}
@@ -501,20 +527,14 @@ export function FastLogger({
         </View>
         <View className="flex-row items-start gap-1">
           <View className="flex-1 gap-1">
-            <Text accessibilityRole="header" numberOfLines={2} className="text-xl font-semibold">
-              {editing.title}
-            </Text>
-            {!!subtitle && (
-              <Text numberOfLines={2} className="text-sm text-muted">
-                {subtitle}
-              </Text>
-            )}
+            <Heading level={3}>{editing.title}</Heading>
+            {!!subtitle && <Note>{subtitle}</Note>}
           </View>
           {food && (
-            <SystemIconButton
-              icon={favorite ? "heart" : "heart-outline"}
-              color={favorite ? "accent-soft-foreground" : "foreground"}
-              accessibilityLabel={favorite ? "Remove from saved foods" : "Save food"}
+            <IconButton
+              icon="favorite"
+              tone={favorite ? "tint" : "foreground"}
+              accessibilityLabel={favorite ? t("removeFromSavedFoods") : t("saveFood")}
               accessibilityState={{ selected: favorite }}
               onPress={() =>
                 attempt(() => {
@@ -533,27 +553,30 @@ export function FastLogger({
   const showSaved = !trimmed && !!data.saved.length;
   // While searching, the shortcuts sit as icons beside the first heading instead of above it.
   const heading = (label: string, tools: boolean) => (
-    <View className="flex-row items-center gap-1">
-      <SystemLabel accessibilityRole="header" className={`flex-1 px-1 ${tools ? "" : "pt-1"}`}>
+    <View className="min-h-11 flex-row items-center gap-1">
+      <Label accessibilityRole="header" className="flex-1">
         {label}
-      </SystemLabel>
+      </Label>
       {tools &&
         offered.map((action) => (
-          <SystemIconButton
+          <IconButton
             key={action.key}
-            icon={action.icon === "ai" ? <AiMark color="accent-soft-foreground" /> : action.icon}
-            color="accent-soft-foreground"
-            accessibilityLabel={action.spoken}
+            icon={action.icon}
+            tone="tint"
+            accessibilityLabel={t(action.spoken)}
             onPress={() => setPicker(action.key)}
           />
         ))}
     </View>
   );
+  const itemSum = totalNutrients(items.map((item) => item.nutrients));
   return (
     <Editor
-      title="Log food"
+      title={t("logFood")}
       open
       close={cancel}
+      // With foods selected, Cancel asks before discarding them.
+      guarded={cart.length > 0}
       compact
       scrollRef={list}
       footer={
@@ -562,12 +585,18 @@ export function FastLogger({
             <ErrorText message={error} />
             {!!items.length && (
               <View className="flex-row items-center gap-3">
-                <Text numberOfLines={1} className="flex-1 text-sm font-semibold tabular-nums">
-                  {summary(items)}
-                </Text>
-                <SystemButton onPress={() => attempt(() => commit(items))}>
-                  {`Log ${items.length} ${items.length === 1 ? "food" : "foods"}`}
-                </SystemButton>
+                <View className="flex-1">
+                  <Meta
+                    tone="default"
+                    items={[
+                      t("kcalValue", { value: format.number(itemSum.calories) }),
+                      t("proteinGrams", { value: format.number(itemSum.protein) }),
+                    ]}
+                  />
+                </View>
+                <Button onPress={() => attempt(() => commit(items))}>
+                  {counted(items.length, "logFoodsOne", "logFoods")}
+                </Button>
               </View>
             )}
           </View>
@@ -575,16 +604,16 @@ export function FastLogger({
       }
     >
       <View className="flex-row items-center justify-between gap-2">
-        <SystemButton
+        <Button
           variant="ghost"
-          icon="time-outline"
-          className="shrink px-2"
-          accessibilityHint="Changes the day and time for this meal"
+          icon="time"
+          className="shrink"
+          accessibilityHint={t("changeMealTimeHint")}
           accessibilityState={{ expanded: when }}
           onPress={() => setWhen((open) => !open)}
         >
           {whenLabel}
-        </SystemButton>
+        </Button>
         <DayRing
           calories={dayTotals.eaten + calories(items)}
           target={dayTotals.targets?.calories ?? null}
@@ -593,7 +622,15 @@ export function FastLogger({
       {when && (
         <>
           <TimeField value={time} onChange={setTime} day={day} onDayChange={setDay} />
-          {diaryLayout === "meals" && <Choices values={meals} value={meal} onChange={setMeal} />}
+          {diaryLayout === "meals" && (
+            <Choices
+              values={meals}
+              value={meal}
+              onChange={setMeal}
+              label={(value) => value}
+              accessibilityLabel={t("meal")}
+            />
+          )}
         </>
       )}
       <SearchInput
@@ -603,60 +640,52 @@ export function FastLogger({
           setResults(null);
           openSearch();
         }}
-        placeholder="Search foods and meals"
-        accessibilityLabel="Search foods and meals"
+        placeholder={t("searchFoodsAndMeals")}
+        accessibilityLabel={t("searchFoodsAndMeals")}
         autoFocus={typing}
         onFocus={openSearch}
       />
       {!searched && (
         <View className="flex-row flex-wrap gap-2">
           {offered.map((action) => (
-            <SystemButton
+            <Button
               key={action.key}
               variant="secondary"
-              icon={
-                action.icon === "ai" ? (
-                  <AiMark size={18} color="accent-soft-foreground" />
-                ) : (
-                  action.icon
-                )
-              }
-              className="px-3"
-              accessibilityLabel={action.spoken}
+              icon={action.icon}
+              accessibilityLabel={t(action.spoken)}
               onPress={() => setPicker(action.key)}
             >
-              {action.label}
-            </SystemButton>
+              {t(action.label)}
+            </Button>
           ))}
         </View>
       )}
       {!!cart.length && !trimmed && (
         <View className="gap-1">
-          <SystemButton
+          <Button
             variant="ghost"
-            className="self-start px-0"
+            className="self-start"
             accessibilityState={{ expanded: reviewing }}
             onPress={() => setReviewing((open) => !open)}
           >
-            {`${items.length} selected · ${reviewing ? "Hide" : "Review"}`}
-          </SystemButton>
+            {t(reviewing ? "selectedHide" : "selectedReview", {
+              count: format.number(items.length),
+            })}
+          </Button>
           {reviewing &&
             cart.map((choice) => (
               <View key={choice.key} className="flex-row items-center gap-2">
-                <SystemButton
-                  variant="ghost"
-                  className="flex-1 justify-start px-0"
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("adjustNamed", { name: choice.title })}
                   onPress={() => edit(choice)}
+                  className="min-h-11 flex-1 justify-center active:opacity-60"
                 >
-                  <Text className="flex-1 text-sm" numberOfLines={1}>
-                    {choice.title} · {choice.detail}
-                  </Text>
-                </SystemButton>
-                <SystemIconButton
+                  <Meta tone="default" items={[choice.title, choice.detail]} />
+                </Pressable>
+                <IconButton
                   icon="close"
-                  color="muted"
-                  iconSize={20}
-                  accessibilityLabel={`Remove ${choice.title} from meal`}
+                  accessibilityLabel={t("removeFromMeal", { name: choice.title })}
                   onPress={() => toggle(choice)}
                 />
               </View>
@@ -665,48 +694,42 @@ export function FastLogger({
       )}
       {showSaved && (
         <>
-          {heading("Saved foods", searched)}
+          {heading(t("savedFoods"), searched)}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            className="-mx-4"
-            contentContainerClassName="gap-2 px-4"
+            contentContainerClassName="gap-2"
           >
             {data.saved.map((choice) => {
               const selected = inCart.get(choice.key);
               const { calories } = totalNutrients(
                 (selected ?? choice).items.map((item) => item.nutrients)
               );
+              const kcal = t("kcalValue", { value: format.number(calories) });
               return (
-                <SystemButton
+                <Pressable
                   key={choice.key}
-                  variant="secondary"
-                  className={`w-36 items-stretch px-3 py-2.5 ${selected ? "bg-accent-soft" : "bg-surface"}`}
-                  accessibilityLabel={`${selected ? "Remove" : "Add"} ${choice.title}`}
-                  accessibilityValue={{ text: `${number(calories, 0)} kcal` }}
-                  accessibilityHint="Long press to adjust the portion"
+                  accessibilityRole="button"
+                  accessibilityLabel={t(selected ? "removeNamed" : "addNamed", {
+                    name: choice.title,
+                  })}
+                  accessibilityValue={{ text: kcal }}
+                  accessibilityHint={t("longPressToAdjust")}
                   accessibilityState={{ selected: !!selected }}
                   onPress={() => toggle(choice)}
                   onLongPress={() => edit(choice)}
+                  // A picked food takes the picker-list wash; the glyph says it too.
+                  className={`min-w-36 max-w-44 gap-1 rounded-control border px-3 py-2.5 ${selected ? "border-tint bg-accent-soft" : "border-border-strong bg-surface active:bg-surface-secondary"}`}
                 >
-                  <View className="flex-1 gap-1">
-                    <View className="flex-row items-center gap-1">
-                      <FoodIcon icon={foodIcon(choice.items[0].food)} />
-                      <Text numberOfLines={1} className="flex-1 text-xs text-muted tabular-nums">
-                        {`${number(calories, 0)} kcal`}
-                      </Text>
-                      <SystemIcon
-                        name={selected ? "checkmark-circle" : "add-circle"}
-                        size={22}
-                        color="accent-soft-foreground"
-                      />
-                    </View>
-                    <Text numberOfLines={2} className="text-sm font-medium">
-                      {choice.title}
+                  <View className="flex-row items-center gap-1">
+                    <Text variant="readoutXS" tone="muted" className="flex-1">
+                      {kcal}
                     </Text>
+                    <Icon name={selected ? "done" : "add"} tone="tint" />
                   </View>
-                </SystemButton>
+                  <Text variant="h4">{choice.title}</Text>
+                </Pressable>
               );
             })}
           </ScrollView>
@@ -715,74 +738,69 @@ export function FastLogger({
       {heading(
         trimmed
           ? results?.query === trimmed
-            ? `${choices.length} ${choices.length === 1 ? "match" : "matches"}`
-            : "Searching…"
-          : "Log again",
+            ? counted(choices.length, "matchCountOne", "matchCount")
+            : t("searching")
+          : t("logAgain"),
         searched && !showSaved
       )}
-      {choices.map((choice) => {
-        const selected = inCart.get(choice.key);
-        const shown = selected ?? choice;
-        const saved = isMeal(choice);
-        // Search results name their catalog too; familiar foods only need a brand.
-        const food = choice.items[0].food;
-        const brand = saved ? "" : trimmed ? source(food) : food.brand;
-        const about = [
-          brand,
-          saved && !selected
-            ? `${shown.items.length} ${shown.items.length === 1 ? "food" : "foods"}`
-            : shown.detail,
-        ].filter(Boolean);
-        // The labels name the food; the values carry what tells same-named foods apart.
-        return (
-          <View
-            key={choice.key}
-            className={`flex-row items-center gap-2 rounded-2xl py-1 pl-3 pr-1.5 ${selected ? "bg-accent-soft" : "bg-surface"}`}
-          >
-            <SystemButton
-              variant="ghost"
-              className="flex-1 justify-start gap-3 px-0 py-2"
-              accessibilityLabel={`Adjust ${choice.title}`}
-              accessibilityValue={{ text: [...about, spokenMacros(shown.items)].join(", ") }}
-              onPress={() => edit(choice)}
-            >
-              <FoodIcon icon={saved ? mealIcon(choice.title) : foodIcon(food)} />
-              <View className="flex-1 gap-0.5">
-                <View className="flex-row items-center gap-2">
-                  <Text numberOfLines={2} className="shrink font-medium">
-                    {choice.title}
-                  </Text>
-                  {saved && (
-                    <View className="rounded-full bg-surface-secondary px-2">
-                      <Text className="text-xs text-muted">Meal</Text>
+      {!!choices.length && (
+        <Panel inset="none">
+          {choices.map((choice) => {
+            const selected = inCart.get(choice.key);
+            const shown = selected ?? choice;
+            const saved = isMeal(choice);
+            // Search results name their catalog too; familiar foods only need a brand.
+            const food = choice.items[0].food;
+            const brand = saved ? "" : trimmed ? source(food) : food.brand;
+            const about = [
+              brand,
+              saved && !selected
+                ? counted(shown.items.length, "foodCountOne", "foodCount")
+                : shown.detail,
+            ].filter(Boolean);
+            // The labels name the food; the values carry what tells same-named foods apart.
+            return (
+              <View key={choice.key}>
+                <RowRule />
+                <View
+                  className={`flex-row items-center gap-2 pe-2 ${selected ? "bg-accent-soft" : ""}`}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={t("adjustNamed", { name: choice.title })}
+                    accessibilityValue={{
+                      text: format.list([...about, spokenMacros(shown.items)]),
+                    }}
+                    onPress={() => edit(choice)}
+                    className="min-h-14 flex-1 gap-0.5 py-3 ps-4 active:opacity-60"
+                  >
+                    <View className="flex-row flex-wrap items-center gap-x-2">
+                      <Text variant="bodyStrong" className="shrink">
+                        {choice.title}
+                      </Text>
+                      {saved && <Label>{t("mealTag")}</Label>}
                     </View>
-                  )}
-                </View>
-                {/* A long brand or portion gives way before calories and macros do. */}
-                <View className="flex-row">
-                  <Text className="text-sm text-muted tabular-nums">
-                    {`${macros(shown.items)} · `}
-                  </Text>
-                  <Text numberOfLines={1} className="shrink text-sm text-muted tabular-nums">
-                    {about.join(" · ")}
-                  </Text>
+                    <Meta items={[...macros(shown.items), ...about]} />
+                  </Pressable>
+                  <IconButton
+                    variant="secondary"
+                    icon={selected ? "check" : "add"}
+                    tone="tint"
+                    accessibilityLabel={t(selected ? "removeNamed" : "addNamed", {
+                      name: choice.title,
+                    })}
+                    accessibilityValue={brand ? { text: brand } : undefined}
+                    accessibilityState={{ selected: !!selected }}
+                    onPress={() => toggle(choice)}
+                  />
                 </View>
               </View>
-            </SystemButton>
-            <SystemIconButton
-              variant={selected ? "primary" : "secondary"}
-              icon={selected ? "checkmark" : "add"}
-              color={selected ? undefined : "accent-soft-foreground"}
-              accessibilityLabel={`${selected ? "Remove" : "Add"} ${choice.title}`}
-              accessibilityValue={brand ? { text: brand } : undefined}
-              accessibilityState={{ selected: !!selected }}
-              onPress={() => toggle(choice)}
-            />
-          </View>
-        );
-      })}
+            );
+          })}
+        </Panel>
+      )}
       {!choices.length && (!trimmed || results?.query === trimmed) && (
-        <Text className="text-sm text-muted">{trimmed ? "No matches." : "Search for a food."}</Text>
+        <Note>{trimmed ? t("noMatches") : t("searchForFood")}</Note>
       )}
       {results?.query === trimmed && <ErrorText message={results.error} />}
     </Editor>

@@ -2,15 +2,21 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { router, useIsFocused } from "expo-router";
 import { useCalendars } from "expo-localization";
-import { useThemeColor } from "heroui-native";
 import {
-  SystemButton,
-  SystemIcon,
-  SystemIconButton,
-  SystemLabel,
-  SystemPanel,
-  SystemText as Text,
-} from "@/components/system";
+  Button,
+  Heading,
+  Icon,
+  IconButton,
+  Meta,
+  Note,
+  Panel,
+  Sparkline,
+  Text,
+  Value,
+  useKitFormat,
+  type ChartPoint,
+  type IntlUnit,
+} from "@/vector";
 import { Screen } from "@/components/ui";
 import { useMeasurementLog } from "@/components/measurements/use-measurement-log";
 import { WeightForm } from "@/components/measurements/weight-form";
@@ -23,21 +29,31 @@ import {
   type WeekBudget,
   type WeekDay,
 } from "@/lib/insights";
-import { formatPace, formatWeight, fromKg, localDay, shortDay, weightUnit } from "@/lib/metrics";
+import { formatPace, formatWeight, fromKg, localDay, shortDay, type Units } from "@/lib/metrics";
 import { shiftDay } from "@/lib/nutrition";
 import { useNutrition } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
-import { Sparkline, type ChartPoint } from "./chart";
 
+// Calories, then P · C · F on the ink ramp.
 const rows = [
-  { key: "calories", unit: "kcal", name: "Calories", fill: "bg-chart-calories" },
-  { key: "protein", unit: "P", name: "Protein", fill: "bg-chart-protein" },
-  { key: "fat", unit: "F", name: "Fat", fill: "bg-chart-fat" },
-  { key: "carbs", unit: "C", name: "Carbs", fill: "bg-chart-carbs" },
+  { key: "calories", name: "calories", short: null, fill: "bg-tint" },
+  { key: "protein", name: "macroProtein", short: "proteinShort", fill: "bg-cat-1" },
+  { key: "carbs", name: "macroCarbs", short: "carbsShort", fill: "bg-cat-2" },
+  { key: "fat", name: "macroFat", short: "fatShort", fill: "bg-cat-3" },
 ] as const;
 const BAR = 40;
+/** Two figures fill a bar's height, so they grow less than body text. */
+const BAR_TEXT_CAP = 1.2;
+/** The unit a weight readout is written in, as the locale spells it. */
+const massUnits: Record<Units, IntlUnit> = {
+  metric: "kilogram",
+  imperial: "pound",
+  stone: "stone",
+};
 /** A day before the last seven. */
 const stale = (day: string, today: string) => day < shiftDay(today, -6);
+/** A diary day as a local calendar date, at noon so no time zone moves it. */
+const dateOf = (day: string) => new Date(`${day}T12:00:00`);
 
 /** Eaten against a day's target: a tick for the target, a fill for what was eaten. */
 function DayBar({
@@ -54,16 +70,16 @@ function DayBar({
   const scale = Math.max((target ?? 0) * 1.2, eaten, 1);
   const value = future ? 0 : eaten;
   return (
-    <View className="w-2 rounded-full bg-surface-secondary" style={{ height: BAR }}>
+    <View className="w-2 rounded-mark bg-surface-tertiary" style={{ height: BAR }}>
       {value > 0 && (
         <View
-          className={`absolute bottom-0 w-full rounded-full ${fill}`}
+          className={`absolute bottom-0 w-full rounded-mark ${fill}`}
           style={{ height: Math.max(3, (Math.min(value, scale) / scale) * BAR) }}
         />
       )}
       {!!target && (
         <View
-          className={`absolute h-0.5 rounded-full ${future ? "bg-muted" : "bg-foreground"}`}
+          className={`absolute h-0.5 rounded-mark ${future ? "bg-muted" : "bg-foreground"}`}
           style={{ left: -3, right: -3, bottom: (target / scale) * BAR - 1 }}
         />
       )}
@@ -71,7 +87,7 @@ function DayBar({
   );
 }
 
-/** The week's four rows of daily bars, with the chosen day's numbers on the right. */
+/** The week's four rows of daily bars, with the chosen day's numbers at the end. */
 export function WeeklyNutrition({
   today,
   current,
@@ -85,7 +101,8 @@ export function WeeklyNutrition({
   first: string;
   days: (start: string) => WeekDay[];
 }) {
-  const { number, language } = useStore();
+  const { t } = useStore();
+  const format = useKitFormat();
   // Weeks back from this one, so a new week opens on itself.
   const [back, setBack] = useState(0),
     [picked, setPicked] = useState<string | null>(null);
@@ -96,53 +113,41 @@ export function WeeklyNutrition({
     days.find((day) => day.day === picked) ?? days.find((day) => day.day === today) ?? days[6];
   const title =
     back === 0
-      ? "This week"
+      ? t("thisWeek")
       : back === 1
-        ? "Last week"
-        : `${shortDay(start, language)} – ${shortDay(end, language)}`;
-  const letter = (day: string) =>
-    new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
-      weekday: "narrow",
+        ? t("lastWeek")
+        : format.dateRange(dateOf(start), dateOf(end));
+  const letter = (day: string) => format.weekdayNarrow(dateOf(day));
+  const describe = (day: WeekDay) => {
+    const name = shortDay(day.day, format.tag, true);
+    if (day.day > today) return t("weekDayUpcoming", { day: name });
+    const amounts = rows.map((row) => {
+      const values = {
+        name: t(row.name),
+        eaten: format.number(day.eaten[row.key]),
+        target: day.target ? format.number(day.target[row.key]) : "",
+      };
+      return t(day.target ? "amountOfTarget" : "amountEaten", values);
     });
-  const describe = (day: WeekDay) =>
-    `${shortDay(day.day, language, true)}: ${
-      day.day > today
-        ? "upcoming"
-        : rows
-            .map(
-              (row) =>
-                `${row.name} ${number(day.eaten[row.key], 0)}${day.target ? ` of ${number(day.target[row.key], 0)}` : ""}`
-            )
-            .join(", ")
-    }`;
-  const figure = (row: (typeof rows)[number]) => {
-    const eaten = selected.eaten[row.key],
-      target = selected.target?.[row.key];
-    return {
-      value: number(eaten, 0),
-      note: target === undefined ? "no target" : `of ${number(target, 0)}`,
-      over: target !== undefined && eaten > target,
-    };
+    return t("weekDaySummary", { day: name, summary: format.list(amounts) });
   };
   return (
-    <SystemPanel className="p-4">
-      <SystemPanel.Body className="gap-3">
-        <View className="-mx-2 -my-2 flex-row items-center">
-          <SystemIconButton
-            icon="chevron-back"
-            accessibilityLabel="Previous week"
-            isDisabled={start <= first}
-            color={start <= first ? "muted" : "foreground"}
+    <Panel>
+      <Panel.Body>
+        <View className="flex-row items-center">
+          <IconButton
+            icon="back"
+            accessibilityLabel={t("previousWeek")}
+            disabled={start <= first}
             onPress={() => setBack(back + 1)}
           />
-          <Text accessibilityRole="header" className="flex-1 text-center font-semibold">
+          <Heading level={4} className="flex-1 text-center">
             {title}
-          </Text>
-          <SystemIconButton
-            icon="chevron-forward"
-            accessibilityLabel="Next week"
-            isDisabled={back === 0}
-            color={back === 0 ? "muted" : "foreground"}
+          </Heading>
+          <IconButton
+            icon="forward"
+            accessibilityLabel={t("nextWeek")}
+            disabled={back === 0}
             onPress={() => setBack(Math.max(0, back - 1))}
           />
         </View>
@@ -157,7 +162,7 @@ export function WeeklyNutrition({
                   accessibilityState={{ selected: active }}
                   accessibilityLabel={describe(day)}
                   onPress={() => setPicked(day.day)}
-                  className={`flex-1 items-center gap-3 rounded-2xl border pt-2 pb-1.5 ${active ? "border-foreground" : "border-transparent"}`}
+                  className={`flex-1 items-center gap-3 rounded-control border pt-2 pb-1.5 ${active ? "border-foreground" : "border-transparent"}`}
                 >
                   {rows.map((row) => (
                     <DayBar
@@ -169,7 +174,8 @@ export function WeeklyNutrition({
                     />
                   ))}
                   <Text
-                    className={`text-xs ${day.day === today ? "font-semibold text-foreground" : "text-muted"}`}
+                    variant="caption"
+                    tone={day.day === today ? "default" : "muted"}
                     maxFontSizeMultiplier={1.2}
                   >
                     {letter(day.day)}
@@ -178,42 +184,48 @@ export function WeeklyNutrition({
               );
             })}
           </View>
-          <View className="gap-3 pl-2" style={{ width: 80, paddingTop: 9 }}>
+          {/* Grows with its figures instead of a fixed width. */}
+          <View className="min-w-20 gap-3 ps-2" style={{ paddingTop: 9 }}>
             {rows.map((row) => {
-              const { value, note, over } = figure(row);
+              const eaten = selected.eaten[row.key],
+                target = selected.target?.[row.key];
+              const value = format.number(eaten);
               return (
                 <View key={row.key} className="justify-center" style={{ height: BAR }}>
+                  {row.short ? (
+                    <Text variant="readoutS" maxFontSizeMultiplier={BAR_TEXT_CAP}>
+                      {t(row.short, { value })}
+                    </Text>
+                  ) : (
+                    <Value value={value} unit={t("kcal")} maxFontSizeMultiplier={BAR_TEXT_CAP} />
+                  )}
                   <Text
-                    className="font-semibold tabular-nums"
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    maxFontSizeMultiplier={1.2}
+                    variant="readoutXS"
+                    tone={target !== undefined && eaten > target ? "warning" : "muted"}
+                    maxFontSizeMultiplier={BAR_TEXT_CAP}
                   >
-                    {value}
-                    <Text className="text-xs font-medium text-muted"> {row.unit}</Text>
-                  </Text>
-                  <Text
-                    className={`text-xs tabular-nums ${over ? "text-warning" : "text-muted"}`}
-                    numberOfLines={1}
-                    maxFontSizeMultiplier={1.2}
-                  >
-                    {note}
+                    {target === undefined
+                      ? t("noTarget")
+                      : t("ofTarget", { target: format.number(target) })}
                   </Text>
                 </View>
               );
             })}
           </View>
         </View>
-      </SystemPanel.Body>
-    </SystemPanel>
+      </Panel.Body>
+    </Panel>
   );
 }
 
 function InsightCard({
   title,
-  caption = "Last 7 days",
+  caption,
   value,
   unit,
+  unitFirst,
+  space,
+  spoken,
   points,
   band,
   minSpan,
@@ -223,139 +235,163 @@ function InsightCard({
   caption?: string;
   value: string;
   unit: string;
+  unitFirst?: boolean;
+  space?: string;
+  /** The readout as a screen reader says it, unit included. */
+  spoken: string;
   points: ChartPoint[];
   band?: { day: string; low: number; high: number }[];
   minSpan: number;
   href: "/expenditure" | "/weight-trend";
 }) {
-  const accent = useThemeColor("accent-soft-foreground");
+  const { t } = useStore();
+  const shownCaption = caption ?? t("last7Days");
   return (
-    <Pressable
+    <Panel
       className="flex-1"
-      accessibilityRole="button"
-      accessibilityLabel={`${title}, ${caption}: ${value} ${unit}`}
+      accessibilityLabel={t("insightSummary", { title, caption: shownCaption, value: spoken })}
       onPress={() => router.push(href)}
     >
-      {({ pressed }) => (
-        <SystemPanel className={`flex-1 p-4 ${pressed ? "opacity-70" : ""}`}>
-          <SystemPanel.Body className="gap-2">
-            <View>
-              <Text className="font-semibold" numberOfLines={1}>
-                {title}
-              </Text>
-              <Text className="text-xs text-muted">{caption}</Text>
-            </View>
-            <Sparkline points={points} band={band} color={accent} minSpan={minSpan} />
-            <View className="flex-row items-center border-t border-separator pt-2">
-              <Text
-                className="flex-1 text-xl font-semibold tabular-nums"
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                maxFontSizeMultiplier={1.3}
-              >
-                {value}
-                <Text className="text-sm font-medium text-muted"> {unit}</Text>
-              </Text>
-              <SystemIcon name="chevron-forward" size={16} color="muted" />
-            </View>
-          </SystemPanel.Body>
-        </SystemPanel>
-      )}
-    </Pressable>
+      <Panel.Body className="gap-2">
+        <View>
+          <Heading level={4}>{title}</Heading>
+          <Text variant="caption" tone="muted">
+            {shownCaption}
+          </Text>
+        </View>
+        <Sparkline points={points} band={band} minSpan={minSpan} />
+        <View className="flex-row items-center gap-1 border-t border-separator pt-2">
+          {/* A half-width tile: one line that shrinks before it clips. */}
+          <View className="flex-1">
+            <Value
+              size="m"
+              value={value}
+              unit={unit}
+              unitFirst={unitFirst}
+              space={space}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              maxFontSizeMultiplier={1.3}
+            />
+          </View>
+          <Icon name="forward" size={16} tone="muted" />
+        </View>
+      </Panel.Body>
+    </Panel>
   );
 }
 
-function Row({ label, value, note }: { label: string; value: string; note?: string }) {
+function Row({ label, value, note }: { label: string; value: string; note?: string[] }) {
   return (
     <View className="gap-0.5">
-      <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-muted">{label}</Text>
-        <Text className="font-semibold tabular-nums" maxFontSizeMultiplier={1.3}>
-          {value}
-        </Text>
+      <View className="flex-row flex-wrap items-baseline justify-between gap-x-3">
+        <Note>{label}</Note>
+        <Text variant="readoutS">{value}</Text>
       </View>
-      {!!note && <Text className="text-sm text-muted tabular-nums">{note}</Text>}
+      {!!note?.length && <Meta items={note} />}
     </View>
   );
 }
 
 /** The week against its budget, the goal's date and the next check-in. */
 export function ThisWeek({ budget, data }: { budget: WeekBudget; data: ProgressSnapshot }) {
-  const { number, units, language } = useStore();
+  const { units, t } = useStore();
+  const format = useKitFormat();
   const { today, projection, pace, coached, due } = data;
-  const weight = (kg: number) => formatWeight(kg, units, number);
-  const percent = (value: number | null) => (value === null ? "—" : `${number(value * 100, 0)}%`);
+  const weight = (kg: number) => formatWeight(kg, units, format);
+  const percent = (value: number | null) => (value === null ? "—" : format.percent(value));
   const eta = (day: string) =>
     day.slice(0, 4) === today.slice(0, 4)
-      ? shortDay(day, language)
-      : new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
-          month: "short",
-          year: "numeric",
-        });
+      ? shortDay(day, format.tag)
+      : format.monthYear(dateOf(day), "short");
   const hasTargets = !!data.targetOn(today);
-  const round = (kcal: number) => number(Math.abs(Math.round(kcal / 10) * 10), 0);
+  const round = (kcal: number) => format.number(Math.abs(Math.round(kcal / 10) * 10));
   const line =
     budget.restPerDay !== null
-      ? `~${round(budget.restPerDay)} kcal/day for the rest of the week lands on budget`
+      ? t("restOfWeekPace", { value: round(budget.restPerDay) })
       : budget.balance === null
         ? null
         : Math.abs(budget.balance) < 5
-          ? "On this week’s budget"
-          : `${round(budget.balance)} kcal ${budget.balance > 0 ? "over" : "under"} this week’s budget`;
+          ? t("onWeekBudget")
+          : t(budget.balance > 0 ? "overWeekBudget" : "underWeekBudget", {
+              value: round(budget.balance),
+            });
   const latest = data.trend.at(-1);
   const trend = latest
-    ? `Trend ${weight(latest.trend)}${stale(latest.day, today) ? ` on ${shortDay(latest.day, language)}` : ""}${pace === null ? "" : ` · ${formatPace(pace, units, number)}`}`
+    ? [
+        stale(latest.day, today)
+          ? t("trendWeightOn", {
+              weight: weight(latest.trend),
+              day: shortDay(latest.day, format.tag),
+            })
+          : t("trendWeightValue", { weight: weight(latest.trend) }),
+        pace === null ? "" : formatPace(pace, units, format, t),
+      ].filter(Boolean)
     : null;
   const goal = (() => {
     if (!projection) return null;
     const { mode, targetKg, weightKg, reached } = projection;
-    if (weightKg === null) return "Add a weigh-in";
+    if (weightKg === null) return t("addWeighIn");
     if (mode === "maintain")
       return reached
-        ? "In range"
-        : `${weight(Math.abs(weightKg - targetKg))} ${weightKg > targetKg ? "above" : "below"}`;
-    return reached ? "Reached" : projection.eta ? `~${eta(projection.eta)}` : "—";
+        ? t("inRange")
+        : t(weightKg > targetKg ? "weightAbove" : "weightBelow", {
+            weight: weight(Math.abs(weightKg - targetKg)),
+          });
+    return reached
+      ? t("goalReached")
+      : projection.eta
+        ? t("aroundDay", { day: eta(projection.eta) })
+        : "—";
   })();
   // Manual targets early in the week with no weigh-ins have nothing to summarize yet.
   if (budget.average === null && !line && !goal && !trend && hasTargets && !coached) return null;
   return (
-    <SystemPanel className="p-4">
-      <SystemPanel.Body className="gap-3">
-        <SystemLabel>Week so far</SystemLabel>
+    <Panel>
+      <Panel.Header eyebrow={t("weekSoFar")} />
+      <Panel.Body>
         {budget.average !== null && budget.averageTarget !== null ? (
           <Row
-            label="Average intake"
-            value={`${number(budget.average, 0)} / ${number(budget.averageTarget, 0)} kcal`}
-            note={`${budget.days} complete ${budget.days === 1 ? "day" : "days"} · Protein ${percent(budget.adherence.protein)} · Carbs ${percent(budget.adherence.carbs)} · Fat ${percent(budget.adherence.fat)}`}
+            label={t("averageIntake")}
+            value={t("kcalOfBudget", {
+              eaten: format.number(budget.average),
+              target: format.number(budget.averageTarget),
+            })}
+            note={[
+              t(format.plural(budget.days) === "one" ? "completeDayCountOne" : "completeDayCount", {
+                count: format.number(budget.days),
+              }),
+              t("proteinPercent", { percent: percent(budget.adherence.protein) }),
+              t("carbsPercent", { percent: percent(budget.adherence.carbs) }),
+              t("fatPercent", { percent: percent(budget.adherence.fat) }),
+            ]}
           />
         ) : (
-          !hasTargets && (
-            <Text className="text-sm text-muted">
-              Set targets in Plan to see your week against a budget.
-            </Text>
-          )
+          !hasTargets && <Note>{t("setTargetsForBudget")}</Note>
         )}
-        {!!line && <Text className="font-medium tabular-nums">{line}</Text>}
+        {!!line && <Text variant="bodyStrong">{line}</Text>}
         {projection && goal ? (
           <Row
-            label={`${projection.mode === "maintain" ? "Maintaining" : "Goal"} ${weight(projection.targetKg)}`}
+            label={t(projection.mode === "maintain" ? "maintainingWeight" : "goalWeightValue", {
+              weight: weight(projection.targetKg),
+            })}
             value={goal}
             note={trend ?? undefined}
           />
         ) : (
-          trend && <Text className="text-sm text-muted tabular-nums">{trend}</Text>
+          trend && <Meta items={trend} />
         )}
         {(coached || !hasTargets) && (
-          <SystemButton variant="secondary" onPress={() => router.navigate("/(tabs)/plan")}>
+          <Button variant="secondary" onPress={() => router.navigate("/(tabs)/plan")}>
             {coached && due
               ? due <= today
-                ? "Review check-in"
-                : `Next check-in · ${shortDay(due, language, true)}`
-              : "Set up your plan"}
-          </SystemButton>
+                ? t("reviewCheckIn")
+                : t("nextCheckInOn", { day: shortDay(due, format.tag, true) })
+              : t("setUpYourPlan")}
+          </Button>
         )}
-      </SystemPanel.Body>
-    </SystemPanel>
+      </Panel.Body>
+    </Panel>
   );
 }
 
@@ -376,7 +412,8 @@ function useProgressSnapshot() {
 }
 
 export function ProgressScreen() {
-  const { units, number, language, t } = useStore();
+  const { units, t } = useStore();
+  const format = useKitFormat();
   const calendar = useCalendars()[0];
   const weight = useMeasurementLog("weight");
   const data = useProgressSnapshot();
@@ -391,15 +428,20 @@ export function ProgressScreen() {
     .filter((point) => point.day >= shiftDay(end, -6))
     .map((point) => ({ day: point.day, value: fromKg(point.trend, units) }));
   const estimate = expenditure.at(-1);
+  const digits = units === "stone" ? 2 : 1;
+  // Fixed decimals, as the history and the check-in write weights ("80.0 kg").
+  const trendReadout = latest
+    ? format.unitParts(fromKg(latest.trend, units), massUnits[units], digits, { fixed: true })
+    : null;
   return (
     <>
       <Screen
-        title="Progress"
+        title={t("progress")}
         action={
-          <SystemIconButton
-            icon="scale-outline"
+          <IconButton
+            icon="scale"
             variant="secondary"
-            accessibilityLabel={`${t("add")} · ${t("weight")}`}
+            accessibilityLabel={t("logWeight")}
             onPress={() => weight.launch(null)}
           />
         }
@@ -407,19 +449,29 @@ export function ProgressScreen() {
         <WeeklyNutrition today={today} current={current} first={data.first} days={days} />
         <View className="flex-row gap-3">
           <InsightCard
-            title="Expenditure"
-            value={estimate ? number(estimate.kcal, 0) : "—"}
-            unit="kcal"
+            title={t("expenditure")}
+            value={estimate ? format.number(estimate.kcal) : "—"}
+            unit={t("kcal")}
+            spoken={estimate ? t("kcalValue", { value: format.number(estimate.kcal) }) : "—"}
             points={expenditure.map((point) => ({ day: point.day, value: point.kcal }))}
             band={expenditure}
             minSpan={150}
             href="/expenditure"
           />
           <InsightCard
-            title="Weight trend"
-            caption={end < today ? `As of ${shortDay(end, language)}` : undefined}
-            value={latest ? number(fromKg(latest.trend, units), units === "stone" ? 2 : 1) : "—"}
-            unit={weightUnit(units)}
+            title={t("weightTrend")}
+            caption={end < today ? t("asOfDay", { day: shortDay(end, format.tag) }) : undefined}
+            value={trendReadout?.value ?? "—"}
+            unit={trendReadout?.unit ?? ""}
+            unitFirst={trendReadout?.unitFirst}
+            space={trendReadout?.space}
+            spoken={
+              latest
+                ? format.unit(fromKg(latest.trend, units), massUnits[units], digits, {
+                    fixed: true,
+                  })
+                : "—"
+            }
             points={weightPoints}
             minSpan={fromKg(0.5, units)}
             href="/weight-trend"

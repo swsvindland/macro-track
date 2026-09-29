@@ -1,16 +1,8 @@
 import { useRef, useState } from "react";
 import { Keyboard, View } from "react-native";
-import { InputGroup } from "heroui-native";
-import {
-  SystemButton,
-  SystemIconButton,
-  SystemLabel,
-  SystemPanel,
-  SystemText as Text,
-} from "@/components/system";
-import { ErrorText } from "@/components/ui";
+import { Button, Callout, ErrorText, Field, IconButton, Meta, Panel, useKitFormat } from "@/vector";
 import type { WeightEntry } from "@/db";
-import { fromKg, weightUnit } from "@/lib/metrics";
+import { formatWeight, massUnit } from "@/lib/metrics";
 import { shiftDay } from "@/lib/nutrition";
 import { useNutrition } from "@/lib/nutrition-store";
 import { useStore } from "@/lib/store";
@@ -24,15 +16,14 @@ export function WeighInCard({
   today: string;
   onSaved: (entry: WeightEntry, message: string) => void;
 }) {
-  const { weights, units, number, date, setPreference, refresh } = useStore();
+  const { weights, units, date, setPreference, refresh, t } = useStore();
+  const format = useKitFormat();
   const nutrition = useNutrition();
   const [value, setValue] = useState(""),
     [confirming, setConfirming] = useState(false),
     [error, setError] = useState("");
   const locked = useRef(false);
-  const unit = weightUnit(units);
-  const digits = units === "stone" ? 2 : 1;
-  const show = (kg: number) => `${number(fromKg(kg, units), digits)} ${unit}`;
+  const show = (kg: number) => formatWeight(kg, units, format);
   const last = weights.find((row) => !row.excluded);
   function save() {
     if (locked.current || !value.trim()) return;
@@ -47,64 +38,56 @@ export function WeighInCard({
       Keyboard.dismiss();
       refresh();
       nutrition.refresh();
-      onSaved(entry, `Weight saved · ${show(kg)}`);
+      onSaved(entry, t("weightSaved", { weight: show(kg) }));
     } catch (e) {
       locked.current = false;
-      setError(e instanceof Error ? e.message : "Could not save your weight.");
+      setError(e instanceof Error ? e.message : t("couldNotSaveWeight"));
     }
   }
   return (
-    <SystemPanel className="p-4">
-      <SystemPanel.Body className="gap-3">
-        <View className="-my-2 -mr-2 flex-row items-center">
-          <SystemLabel className="flex-1 text-accent-soft-foreground">Morning weigh-in</SystemLabel>
-          <SystemIconButton
+    <Panel>
+      <Panel.Header
+        eyebrow={t("morningWeighIn")}
+        meta={
+          <IconButton
             icon="close"
-            iconSize={18}
-            color="muted"
-            accessibilityLabel="Skip today's weigh-in"
+            accessibilityLabel={t("skipWeighIn")}
             onPress={() => {
               Keyboard.dismiss();
               setPreference("weighInSkippedDay", today);
             }}
           />
-        </View>
-        <View className="flex-row items-center gap-2">
-          <InputGroup className="flex-1">
-            <InputGroup.Input
+        }
+      />
+      <Panel.Body>
+        <View className="flex-row items-end gap-2">
+          <View className="flex-1">
+            <Field
+              label={t("weight")}
+              numeric
+              unit={format.unitParts(1, massUnit(units)).unit}
               value={value}
-              onChangeText={(text) => {
+              onChange={(text) => {
                 setValue(text);
                 setConfirming(false);
                 setError("");
               }}
-              keyboardType="decimal-pad"
-              returnKeyType="done"
-              onSubmitEditing={save}
-              placeholder="Weight"
-              accessibilityLabel={`Weight in ${unit}`}
-              className="font-mono text-lg tabular-nums"
-              maxFontSizeMultiplier={1.4}
+              onSubmit={save}
             />
-            <InputGroup.Suffix pointerEvents="none">
-              <Text className="text-muted">{unit}</Text>
-            </InputGroup.Suffix>
-          </InputGroup>
-          <SystemButton className="min-h-12" isDisabled={!value.trim()} onPress={save}>
-            {confirming ? "Save anyway" : "Save"}
-          </SystemButton>
+          </View>
+          <Button variant="secondary" disabled={!value.trim()} onPress={save}>
+            {confirming ? t("saveAnyway") : t("save")}
+          </Button>
         </View>
         {confirming && last ? (
-          <Text className="text-sm text-warning" accessibilityLiveRegion="polite">
-            Big change from {show(last.weightKg)} on {date(last.measuredAt)}.
-          </Text>
+          <Callout tone="warning">
+            {t("bigWeightChange", { weight: show(last.weightKg), date: date(last.measuredAt) })}
+          </Callout>
         ) : last ? (
-          <Text className="text-xs text-muted">
-            Last {show(last.weightKg)} · {date(last.measuredAt)}
-          </Text>
+          <Meta items={[t("lastWeight", { weight: show(last.weightKg) }), date(last.measuredAt)]} />
         ) : null}
         <ErrorText message={error} />
-      </SystemPanel.Body>
-    </SystemPanel>
+      </Panel.Body>
+    </Panel>
   );
 }

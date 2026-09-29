@@ -16,6 +16,7 @@ const { tmpdir } = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
+const { englishT, kitMock } = require("./kit-mock.cjs");
 const { drizzle } = require(
   path.join(path.dirname(require.resolve("drizzle-orm/expo-sqlite")), "driver.cjs")
 );
@@ -245,6 +246,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   };
   const jsx = (type, props) => ({ type, props });
   let keypad, picker;
+  const kit = kitMock(load);
+  const announced = [];
   const dependencies = {
     react,
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
@@ -264,7 +267,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       ActivityIndicator: "ActivityIndicator",
       AppState: {},
       Platform: { OS: "ios" },
-      AccessibilityInfo: { announceForAccessibility: () => {} },
+      AccessibilityInfo: { announceForAccessibility: (message) => announced.push(message) },
       Alert: { alert: (...args) => alerts.push(args) },
       Linking: { openSettings: async () => {} },
       Keyboard: { addListener: () => ({ remove: () => {} }) },
@@ -272,11 +275,13 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     "heroui-native": {
       TextField: "TextField",
       Input: "Input",
+      InputGroup: { Input: "InputGroup.Input", Suffix: "InputGroup.Suffix" },
       Label: "Label",
       Description: "Description",
       FieldError: "FieldError",
       useThemeColor: () => "#000000",
     },
+    "@/vector": kit,
     "react-native-svg": { __esModule: true, default: "Svg", Circle: "Circle" },
     "@/components/system": {
       SystemButton: "Button",
@@ -294,11 +299,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       Choices: "Choices",
       DateInput: "DateInput",
       ErrorText: "Error",
-      SearchInput: "SearchInput",
       Screen: "Screen",
-      ActionMenu: "ActionMenu",
-      DayPicker: "DayPicker",
-      SwipeRow: "SwipeRow",
     },
     "@/lib/diary": diary,
     "@/lib/metrics": metrics,
@@ -309,10 +310,7 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
       lookupBarcode: async () => null,
       searchCatalog: async () => ({ foods: [], fixes: {} }),
     },
-    "@/lib/food-icons": load("src/lib/food-icons.ts"),
-    "./food-icon": { FoodIcon: "FoodIcon" },
     "./nutrient-list": { FoodNutrients: "FoodNutrients", DayNutrients: "DayNutrients" },
-    "./ai-mark": { AiMark: "AiMark" },
     "@/lib/local-ai": { textRecognitionAvailable: () => false, recognizeText: async () => [] },
     "@/lib/nutrition-label": {},
     "./photo-capture": { PhotoCapture: "PhotoCapture", discardPhoto: () => {} },
@@ -353,7 +351,12 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
     },
     ...extraDependencies,
   };
-  const store = { diaryLayout: "meals", number: (n) => String(n), date: (day) => day };
+  const store = {
+    diaryLayout: "meals",
+    number: (n) => String(n),
+    date: (day) => day,
+    t: englishT,
+  };
   Object.assign(store, storeOverrides);
   dependencies["@/lib/store"] = dependencies["./store"] = { useStore: () => store };
   dependencies["./health-schedule"] ??= { syncHealthFood: async () => {} };
@@ -362,6 +365,8 @@ function screenHarness(diary, storeOverrides = {}, extraDependencies = {}) {
   return {
     context,
     alerts,
+    kit,
+    announced,
     load: (file) => load(file, dependencies, true),
     render(Component, props) {
       cursor = 0;
@@ -400,37 +405,43 @@ function nodes(tree) {
     ...nodes(tree.props?.children),
     ...nodes(tree.props?.footer),
     ...nodes(tree.props?.header),
+    // A kit RecordRow draws the elements it is handed in these slots.
+    ...(tree.type === "RecordRow"
+      ? [tree.props.leading, tree.props.description, tree.props.value].flatMap(nodes)
+      : []),
   ];
 }
 const button = (tree, label) =>
   tree.find((node) => node.type === "Button" && node.props.children === label);
 /** Taps the editor's folded day-and-time line open, if it has one. */
 const openWhen = (tree) =>
-  tree
-    .find((node) => node.type === "Button" && node.props.icon === "time-outline")
-    ?.props.onPress();
-/** Types a keypad key into the amount field as the system keyboard would: a selected amount is replaced. */
+  tree.find((node) => node.type === "Button" && node.props.icon === "time")?.props.onPress();
+/** The amount picker's unit chip named `label`, as a pressable (the kit ChipRow draws the chips). */
+function unitChip(pad, label) {
+  const row = pad.find((node) => node.type === "ChipRow");
+  const key = row?.props.values.find((value) => row.props.label(value) === label);
+  return key === undefined
+    ? undefined
+    : { props: { selected: row.props.value === key, onPress: () => row.props.onChange(key) } };
+}
+/** Types a keypad key into the amount field (a kit Field) as the system keyboard would: a selected amount is replaced. */
 function typeKey(input, key) {
   const { value, selection } = input.props;
   const selected = !!selection && selection.end > selection.start;
-  input.props.onChangeText(
+  input.props.onChange(
     key === "⌫" ? (selected ? "" : value.slice(0, -1)) : (selected ? "" : value) + key
   );
 }
+/** The amount picker's field. */
+const amountField = (pad) => pad.find((node) => node.type === "Field");
 /** Types keys into the amount field of the screen `render` shows, rendering it for each. */
 function press(harness, render, ...keys) {
-  for (const key of keys)
-    typeKey(
-      harness.pad(render()).find((node) => node.type === "TextInput"),
-      key
-    );
+  for (const key of keys) typeKey(amountField(harness.pad(render())), key);
 }
 /** What the amount field of the screen in `tree` reads: "355 g", "1 bar". */
 const amountText = (harness, tree) => {
-  const { value, accessibilityLabel } = harness
-    .pad(tree)
-    .find((node) => node.type === "TextInput").props;
-  return `${value || "0"} ${accessibilityLabel.replace("Amount in ", "")}`;
+  const { value, unit } = amountField(harness.pad(tree)).props;
+  return `${value || "0"} ${unit}`;
 };
 
 test("typed times read as HH:mm in 24-hour, compact and am/pm forms", () => {
@@ -1029,7 +1040,7 @@ function homeScreen(diary, storeOverrides = {}, extraDependencies = {}) {
   const row = (tree, name) =>
     tree.find(
       (node) =>
-        node.type === "Button" &&
+        node.type === "RecordRow" &&
         (node.props.accessibilityLabel === `Edit ${name}` ||
           (node.props.accessibilityState && node.props.accessibilityLabel === name))
     );
@@ -1044,7 +1055,10 @@ function homeScreen(diary, storeOverrides = {}, extraDependencies = {}) {
         typeof node.props.children === "string" &&
         pattern.test(node.props.children)
     );
-  return { harness, render, row, swipe, says };
+  // The Undo in the dock (the kit's useUndo), and its button.
+  const offered = (pattern) => pattern.test(harness.kit.currentUndo()?.message ?? "");
+  const undo = () => harness.kit.pressUndo();
+  return { harness, render, row, swipe, says, offered, undo };
 }
 
 test("compiled Home deletes with a swipe, logs again with the other and undoes both", (t) => {
@@ -1054,28 +1068,31 @@ test("compiled Home deletes with a swipe, logs again with the other and undoes b
   const oats = logAt(diary, today, "08:00", "Oats");
   const eggs = logAt(diary, today, "08:30", "Eggs");
   diary.setDayStatus(today, "partial");
-  const { render, row, swipe, says } = homeScreen(diary);
+  const { harness, render, row, swipe, offered, undo } = homeScreen(diary);
 
   let tree = render();
   assert.equal(swipe(tree, "Oats").props.enabled, true);
-  swipe(tree, "Oats").props.swipeLeft.onAction();
+  swipe(tree, "Oats").props.trailingAction.onAction();
   assert.deepEqual(diary.entriesForDay(today), [eggs]);
   tree = render();
-  assert.ok(says(tree, /^Oats deleted\.$/));
+  assert.ok(offered(/^Oats deleted\.$/));
   assert.equal(row(tree, "Oats"), undefined);
-  button(tree, "Undo").props.onPress();
+  undo();
   assert.deepEqual(diary.entriesForDay(today), [oats, eggs], "the same rows come back");
   assert.equal(diary.dayStatus(today), "partial");
-  assert.ok(says(render(), /^Oats restored\.$/));
+  // Home says what Undo did once the revert holds; the kit's undoneMessage (said even when the
+  // revert fails) is left unset.
+  assert.equal(harness.announced.at(-1), "Oats restored.");
+  assert.deepEqual(harness.kit.spoken, []);
 
-  swipe(render(), "Eggs").props.swipeRight.onAction();
+  swipe(render(), "Eggs").props.leadingAction.onAction();
   const again = diary.entriesForDay(today).at(-1);
   assert.equal(again.food.name, "Eggs");
   assert.notEqual(again.id, eggs.id);
   assert.equal(again.loggedTime, "12:00");
-  tree = render();
-  assert.ok(says(tree, /^Eggs · 180 kcal/));
-  button(tree, "Undo").props.onPress();
+  render();
+  assert.ok(offered(/^Eggs · 180 kcal/));
+  undo();
   assert.deepEqual(diary.entriesForDay(today), [oats, eggs]);
 
   // VoiceOver reaches the same actions from the row.
@@ -1086,7 +1103,7 @@ test("compiled Home deletes with a swipe, logs again with the other and undoes b
   );
   oatsRow.props.onAccessibilityAction({ nativeEvent: { actionName: "delete" } });
   assert.deepEqual(diary.entriesForDay(today), [eggs]);
-  button(render(), "Undo").props.onPress();
+  undo();
   assert.deepEqual(diary.entriesForDay(today), [oats, eggs]);
   sqlite.close();
 });
@@ -1099,9 +1116,9 @@ test("compiled Home selection copies, deletes, moves and saves chosen foods with
   const oats = logAt(diary, yesterday, "08:00", "Oats");
   const eggs = logAt(diary, yesterday, "08:30", "Eggs");
   diary.setDayStatus(yesterday, "complete");
-  const { render, row, swipe, says } = homeScreen(diary);
+  const { render, row, swipe, says, offered, undo } = homeScreen(diary);
   const action = (tree, label) =>
-    tree.find((node) => node.type === "Button" && node.props.accessibilityLabel === label);
+    tree.find((node) => node.type === "Pressable" && node.props.accessibilityLabel === label);
   const select = () => {
     render()
       .find((node) => node.type === "WeekStrip")
@@ -1109,11 +1126,7 @@ test("compiled Home selection copies, deletes, moves and saves chosen foods with
     row(render(), "Oats").props.onLongPress();
     row(render(), "Eggs").props.onPress();
     const tree = render();
-    assert.deepEqual(
-      tree.find((node) => node.type === "Text" && node.props.children?.[1] === " selected").props
-        .children[0],
-      2
-    );
+    assert.ok(tree.some((node) => node.type === "Text" && node.props.children === "2 selected"));
     assert.equal(row(tree, "Eggs").props.accessibilityState.selected, true);
     assert.equal(swipe(tree, "Oats").props.enabled, false, "no swiping while choosing");
     return tree;
@@ -1126,20 +1139,26 @@ test("compiled Home selection copies, deletes, moves and saves chosen foods with
     ["Oats", "Eggs"]
   );
   let tree = render();
-  assert.ok(says(tree, /^2 foods · 360 kcal/));
+  assert.ok(offered(/^2 foods · 360 kcal/));
   assert.ok(!says(tree, /selected/));
-  button(tree, "Undo").props.onPress();
-  assert.equal(diary.entriesForDay(today).length, 2, "a quick second tap can't land on Undo");
-  t.mock.timers.tick(1000);
-  button(render(), "Undo").props.onPress();
+  // The quick-log bar comes back where the selection bar was; Undo stacks above it.
+  tree.find((node) => node.type === "QuickLogBar").props.onAction("scan");
+  assert.equal(
+    render().find((node) => node.type === "FastLogger"),
+    undefined,
+    "a quick second tap opens no logger"
+  );
+  undo();
   assert.equal(diary.entriesForDay(today).length, 0);
+  t.mock.timers.tick(1000);
 
   action(select(), "Delete").props.onPress();
   assert.equal(diary.entriesForDay(yesterday).length, 0);
   assert.equal(diary.dayStatus(yesterday), "in-progress");
-  assert.ok(says(render(), /^2 foods deleted\.$/));
+  render();
+  assert.ok(offered(/^2 foods deleted\.$/));
   t.mock.timers.tick(1000);
-  button(render(), "Undo").props.onPress();
+  undo();
   assert.deepEqual(diary.entriesForDay(yesterday), [oats, eggs]);
   assert.equal(diary.dayStatus(yesterday), "complete");
 
@@ -1151,8 +1170,9 @@ test("compiled Home selection copies, deletes, moves and saves chosen foods with
   );
   moving.props.close();
   moving.props.onMoved(diary.moveEntries([oats.id, eggs.id], today, "09:00"));
-  assert.ok(says(render(), /^2 foods moved to Today at /));
-  button(render(), "Undo").props.onPress();
+  render();
+  assert.ok(offered(/^2 foods moved to Today at /));
+  undo();
   assert.deepEqual(diary.entriesForDay(yesterday), [oats, eggs]);
 
   action(select(), "Save as meal").props.onPress();
@@ -1332,7 +1352,7 @@ test("compiled copy-day and reuse sheets hand Home an undoable receipt", () => {
   };
   let tree = nodes(harness.render(MealEditor, props));
   assert.equal(tree.find((node) => node.type === "Editor").props.title, "Reuse 2 foods");
-  tree.find((node) => node.type === "Choices").props.onChange("Copy meal");
+  tree.find((node) => node.type === "Choices").props.onChange("copy");
   tree = nodes(harness.render(MealEditor, props));
   tree
     .find((node) => node.type === "Button" && /^Log at /.test(node.props.children))
@@ -1480,29 +1500,31 @@ test("a restore asks about yesterday instead of counting over an answer it doesn
 });
 
 function countingHome(diary, store = {}, focus = { current: true }) {
-  return homeScreen(
+  const announced = [];
+  const home = homeScreen(
     diary,
     { countLoggedDays: true, ...store },
     {
       "expo-router": { router: {}, useIsFocused: () => focus.current },
       "react-native": {
         View: "View",
+        Pressable: "Pressable",
         Platform: { OS: "ios" },
         AppState: { addEventListener: () => ({ remove: () => {} }) },
-        // The Undo message's 8 s timeout isn't under test here.
         AccessibilityInfo: {
-          announceForAccessibility: () => {},
           isScreenReaderEnabled: () => new Promise(() => {}),
+          announceForAccessibility: (message) => announced.push(message),
         },
       },
     }
   );
+  return { ...home, announced };
 }
 const asks = (tree) => !!button(tree, "Yes, complete");
 
 test("compiled Home counts a full yesterday with Undo and asks about a short one", (t) => {
   const { diary, sqlite } = loggedYesterday(t, fullDay);
-  const { harness, render, says } = countingHome(diary);
+  const { harness, render, offered, undo, announced } = countingHome(diary);
   let tree = render();
   assert.ok(!asks(tree), "the card doesn't flash while yesterday is being counted");
   harness.runEffects();
@@ -1510,19 +1532,20 @@ test("compiled Home counts a full yesterday with Undo and asks about a short one
   assert.equal(diary.dayStatus(yesterday), "complete");
   tree = render();
   harness.runEffects();
-  assert.ok(says(tree, /^Yesterday counted as complete\.$/));
+  assert.ok(offered(/^Yesterday counted as complete\.$/));
   assert.ok(!asks(tree));
   assert.ok(
     tree.some((node) => node.type === "HomeCheckIn"),
     "the check-in no longer waits"
   );
 
-  button(tree, "Undo").props.onPress();
+  undo();
   assert.equal(diary.dayStatus(yesterday), "in-progress");
   tree = render();
   harness.runEffects();
   t.mock.timers.tick(1);
-  assert.ok(says(tree, /^Change undone\.$/));
+  assert.equal(announced.at(-1), "Change undone.");
+  assert.deepEqual(harness.kit.spoken, []);
   assert.ok(asks(tree), "Undo hands the question back");
   assert.equal(diary.dayStatus(yesterday), "in-progress");
   button(tree, "Yes, complete").props.onPress();
@@ -1535,13 +1558,13 @@ test("compiled Home counts a full yesterday with Undo and asks about a short one
     [fullDay, { countLoggedDays: false }],
   ]) {
     const { diary, sqlite } = loggedYesterday(t, meals);
-    const { harness, render, says } = countingHome(diary, store);
+    const { harness, render, offered } = countingHome(diary, store);
     assert.ok(asks(render()));
     harness.runEffects();
     t.mock.timers.tick(1);
     tree = render();
     assert.ok(asks(tree));
-    assert.ok(!says(tree, /counted/));
+    assert.ok(!offered(/counted/));
     assert.equal(diary.dayStatus(yesterday), "in-progress");
     sqlite.close();
     t.mock.timers.reset();
@@ -1551,7 +1574,7 @@ test("compiled Home counts a full yesterday with Undo and asks about a short one
 test("compiled Home counts yesterday only once it's on screen, where its Undo is seen", (t) => {
   const { diary, sqlite } = loggedYesterday(t, fullDay);
   const focus = { current: false };
-  const { harness, render, says } = countingHome(diary, {}, focus);
+  const { harness, render, offered } = countingHome(diary, {}, focus);
   render();
   harness.runEffects();
   t.mock.timers.tick(1);
@@ -1562,9 +1585,9 @@ test("compiled Home counts yesterday only once it's on screen, where its Undo is
   harness.runEffects();
   t.mock.timers.tick(1);
   assert.equal(diary.dayStatus(yesterday), "complete");
-  const tree = render();
-  assert.ok(says(tree, /^Yesterday counted as complete\.$/));
-  assert.ok(button(tree, "Undo"));
+  render();
+  assert.ok(offered(/^Yesterday counted as complete\.$/));
+  assert.ok(harness.kit.currentUndo().onUndo, "with its Undo");
   sqlite.close();
   t.mock.timers.reset();
 });
@@ -1647,38 +1670,63 @@ test("every link redirects to Today and an action link leaves one pending action
 });
 
 test("only the newest Home hears a link, and open sheets outside Home close first", () => {
-  // The shared Editor, with just enough React to run its effects.
+  // The shared Editor over the kit Editor, with just enough React to run the kit's link-closer effect.
   let home = false;
+  let presence = null;
   const effects = [];
   const react = {
     createContext: (value) => ({ value }),
-    useContext: (context) => (context === actions.HomeSheets ? home : context.value),
+    // The shim reads HomeSheets; the kit Editor reads the closer the nearest provider gives it.
+    useContext: (context) => (context === actions.HomeSheets ? home : presence),
     useEffect: (effect) => effects.push(effect),
+    useCallback: (callback) => callback,
     useId: () => "sheet",
+    // The kit Editor queues a sheet behind one still sliding away; none is leaving here.
+    useState: (value) => [value, () => {}],
+    useRef: (value) => ({ current: value }),
+    useLayoutEffect: () => {},
   };
+  const jsx = (type, props) => ({ type, props });
+  const runtime = { jsx, jsxs: jsx, Fragment: "Fragment" };
   const actions = load("src/lib/app-actions.ts", { react });
+  const kit = load("src/vector/editor.tsx", {
+    react,
+    "react/jsx-runtime": runtime,
+    "react-native": { Platform: { OS: "ios" } },
+    "react-native-safe-area-context": {},
+    "react-native-gesture-handler": {},
+    "expo-router": {},
+    "heroui-native": {},
+    uniwind: { withUniwind: (component) => component },
+    "./button": {},
+    "./provider": {},
+    "./screen": {},
+    "./sheets": load("src/vector/sheets.ts"),
+    "./text": {},
+  });
   const { Editor } = load("src/components/ui.tsx", {
     react,
-    "react/jsx-runtime": { jsx: (type, props) => ({ type, props }), jsxs: () => null },
-    "react-native": { Platform: { OS: "ios" } },
-    "react-native-safe-area-context": { useSafeAreaInsets: () => ({ top: 0 }) },
-    uniwind: { withUniwind: (component) => component },
-    "heroui-native": {},
-    "heroui-native/portal": {},
-    "heroui-native-pro": {},
-    "react-native-gesture-handler": {},
-    "react-native-gesture-handler/ReanimatedSwipeable": { __esModule: true },
-    "./system": {},
+    "react/jsx-runtime": runtime,
+    "react-native": { View: "View" },
+    "@/vector": kit,
     "@/lib/app-actions": actions,
-    "@/lib/metrics": metrics,
     "@/lib/store": { useStore: () => ({ t: (key) => key }) },
+    "@/lib/translations": { isMessage: () => false },
   });
-  const heard = [];
   const mount = (open, close) => {
     effects.length = 0;
-    Editor({ title: "Sheet", open, close, children: null });
+    let sheet = Editor({ title: "Sheet", open, close, children: null });
+    // src/vector-adapter.tsx gives every Editor the app's link closer; Home's shim opts out of it.
+    presence = actions.closeOnAppAction;
+    if (sheet.type === kit.EditorPresenceProvider) {
+      presence = sheet.props.value;
+      sheet = sheet.props.children;
+    }
+    assert.equal(sheet.type, kit.Editor);
+    sheet.type(sheet.props);
     return effects.map((effect) => effect()).find(Boolean);
   };
+  const heard = [];
   const older = actions.subscribeAppActions(() => heard.push("older"));
   const newer = actions.subscribeAppActions(() => heard.push("newer"));
   const closed = [];
@@ -1702,7 +1750,8 @@ test("only the newest Home hears a link, and open sheets outside Home close firs
   assert.deepEqual(heard, ["newer", "older"]);
 });
 
-test("compiled Screen scrolls the end of its list clear of however tall its footer grows", () => {
+test("compiled Screen docks its footer under the list, so no bar covers the end of it", () => {
+  let kit;
   const harness = screenHarness(
     {},
     {},
@@ -1711,6 +1760,7 @@ test("compiled Screen scrolls the end of its list clear of however tall its foot
         View: "View",
         ScrollView: "ScrollView",
         Platform: { OS: "ios" },
+        AccessibilityInfo: {},
         useWindowDimensions: () => ({ width: 393, height: 852 }),
       },
       "react-native-safe-area-context": {
@@ -1718,29 +1768,49 @@ test("compiled Screen scrolls the end of its list clear of however tall its foot
         useSafeAreaInsets: () => ({ top: 59, bottom: 83 }),
       },
       uniwind: { withUniwind: (component) => component },
-      "heroui-native": {},
-      "heroui-native/portal": {},
+      "expo-router": { Stack: {}, useFocusEffect: () => {}, useIsFocused: () => true },
+      "heroui-native": { useToast: () => ({ toast: {} }) },
       "heroui-native-pro": {},
-      "react-native-gesture-handler": {},
       "react-native-gesture-handler/ReanimatedSwipeable": { __esModule: true },
+      // The kit Screen's own modules, as plain elements.
+      "./button": { OnSignalProvider: "OnSignalProvider" },
+      "./feedback": { SystemState: "SystemState" },
+      "./icons": { icons: {} },
+      "./list": {},
+      "./native": {},
+      "./provider": {
+        SignalBudget: "SignalBudget",
+        useKit: () => ({ flags: { scrollUnderStatusBar: false } }),
+      },
+      "./text": { Heading: "Heading", Label: "Label", Note: "Note", Text: "Text" },
+      "./tokens": { light: {} },
+      // The shim reaches the kit Screen loaded below (the harness copies its modules up front).
+      "@/vector": new Proxy({}, { get: (_, name) => kit[name] }),
       "./system": {},
+      "@/lib/translations": { isMessage: () => false },
     }
   );
-  const { Screen, ScreenFooter } = harness.load("src/components/ui.tsx");
-  // No tab shares a footer here.
-  ScreenFooter.value = null;
-  const render = (footer) =>
-    nodes(harness.render(Screen, { title: "Today", footer, children: null }));
-  const padding = (tree) =>
-    tree.find((node) => node.type === "ScrollView").props.contentContainerStyle.paddingBottom;
-  assert.equal(padding(render()), 123, "clear of the floating tab bar");
-  const tree = render("Undo");
-  assert.equal(padding(tree), 160, "an Undo message fits the usual space");
-  // The Undo message stacked on the selection bar.
-  tree
-    .find((node) => node.props.onLayout)
-    .props.onLayout({ nativeEvent: { layout: { height: 192 } } });
-  assert.equal(padding(render("Undo and selection")), 83 + 8 + 192 + 16);
+  kit = harness.load("src/vector/screen.tsx");
+  const { Screen } = harness.load("src/components/ui.tsx");
+  const render = (footer) => {
+    const screen = harness.render(Screen, { title: "Today", footer, children: "List" });
+    assert.equal(screen.type, kit.Screen);
+    return nodes(harness.render(kit.Screen, screen.props));
+  };
+  const scroll = (tree) => tree.find((node) => node.type === "ScrollView");
+  let tree = render();
+  assert.ok(nodes(scroll(tree)).length, "the list scrolls");
+  assert.ok(!tree.some((node) => node.props?.style?.position === "absolute"), "nothing floats");
+
+  // The Undo message or the selection bar sits below the list, above the tab bar, instead of over it.
+  tree = render("Undo");
+  assert.ok(!nodes(scroll(tree)).some((node) => node.props?.children === "Undo"));
+  // The Undo strip stacks above this footer in the same docked View.
+  const dock = tree.find(
+    (node) => node.type === "View" && [node.props.children].flat().includes("Undo")
+  );
+  assert.equal(dock.props.style.paddingBottom, 83, "clear of the floating tab bar");
+  assert.ok(!tree.some((node) => node.props?.style?.position === "absolute"), "nothing floats");
 });
 
 function linkedHome(diary, actions, ai = "available") {
@@ -1759,6 +1829,7 @@ function linkedHome(diary, actions, ai = "available") {
       },
       "react-native": {
         View: "View",
+        Pressable: "Pressable",
         Platform: { OS: "ios" },
         AppState: { addEventListener: () => ({ remove: () => {} }) },
         AccessibilityInfo: {
@@ -1998,7 +2069,7 @@ function scanner(diary, props, dependencies) {
     render,
     quantity: () => amountText(harness, render()),
     press: (...keys) => press(harness, render, ...keys),
-    chip: (label) => harness.pad(render()).find((node) => node.props.unit?.label === label),
+    chip: (label) => unitChip(harness.pad(render()), label),
     action: (label) => button(harness.pad(render()), label) ?? button(render(), label),
     scan,
     FoodRow,
@@ -2136,7 +2207,7 @@ test("compiled Add & scan another hands the food over and reopens the camera pas
   // Too long to share the actions row, it keeps a full-width button of its own below it.
   const keypad = editor.harness.pad(editor.render());
   assert.equal(button(keypad, "Add & scan another"), undefined);
-  assert.equal(button(editor.render(), "Add & scan another").props.icon, "barcode-outline");
+  assert.equal(button(editor.render(), "Add & scan another").props.icon, "scan");
   assert.equal(button(keypad, "Log").props.fit, true, "actions shrink to one line");
   editor.chip("g").props.onPress();
   // "2/" is a fraction cut short.
@@ -2246,5 +2317,85 @@ test("compiled Scan from Home: Scan another builds a selection instead of loggin
     nodes(other.render(Logger, props)).find((node) => node.type === "FoodEditor").props.scanAnother,
     false
   );
+  sqlite.close();
+});
+
+test("measurement editors open in the locale's decimal at the readout's precision", () => {
+  const { db, sqlite } = diaryDatabase();
+  const { createFormat } = load("src/vector/format.ts");
+  const measuredAt = "2024-01-10T08:00:00.000Z";
+  // A hook with its own state; each use() is a render.
+  function measurementLog(kind, units, tag, weights = [], records = []) {
+    const slots = [];
+    let cursor = 0;
+    const react = {
+      useState(initial) {
+        const slot = cursor++;
+        if (!(slot in slots)) slots[slot] = typeof initial === "function" ? initial() : initial;
+        return [
+          slots[slot],
+          (next) => (slots[slot] = typeof next === "function" ? next(slots[slot]) : next),
+        ];
+      },
+    };
+    const { useMeasurementLog } = load("src/components/measurements/use-measurement-log.ts", {
+      react,
+      "react-native": { Alert: { alert() {} } },
+      "@/vector": { useKitFormat: () => createFormat(tag) },
+      "@/db": { db, ...schema },
+      "@/lib/store": {
+        useStore: () => ({ weights, measurements: records, units, t: englishT, refresh() {} }),
+      },
+      "@/lib/weigh-in": { deleteWeight() {}, setWeightExcluded() {} },
+      "@/lib/metrics": metrics,
+    });
+    return () => {
+      cursor = 0;
+      return useMeasurementLog(kind);
+    };
+  }
+  const weigh = (weightKg) => {
+    const row = db.insert(schema.weightEntries).values({ weightKg, measuredAt }).returning().get();
+    return { ...row, excluded: false };
+  };
+  const stored = (id) =>
+    db
+      .select()
+      .from(schema.weightEntries)
+      .all()
+      .find((row) => row.id === id).weightKg;
+
+  // de: the field and the readout agree on the decimal comma.
+  const german = weigh(80.5123);
+  let use = measurementLog("weight", "metric", "de-DE", [german]);
+  use().launch(use().rows[0]);
+  assert.equal(use().inputs.weight, "80,5");
+  assert.equal(use().format("weight", german.weightKg), "80,5 kg");
+  // Saved untouched, the stored precision stays.
+  use().save();
+  assert.equal(stored(german.id), 80.5123);
+  use().launch(use().rows[0]);
+  use().setInputs({ weight: "81,2" });
+  use().save();
+  assert.equal(stored(german.id), 81.2);
+
+  // Stone keeps the readout's two decimals.
+  const stone = weigh(12.57 * 6.35029318);
+  use = measurementLog("weight", "stone", "en-GB", [stone]);
+  use().launch(use().rows[0]);
+  assert.equal(use().inputs.weight, "12.57");
+  use().save();
+  assert.equal(stored(stone.id), stone.weightKg);
+
+  // A body reading and its body fat, in fr.
+  use = measurementLog(
+    "body",
+    "metric",
+    "fr-FR",
+    [],
+    [{ id: 9, kind: "body", measuredAt, values: { waist: 81.25, bodyFat: 18.4 } }]
+  );
+  use().launch(use().rows[0]);
+  assert.deepEqual(use().inputs, { waist: "81,3", bodyFat: "18,4" });
   sqlite.close();
 });

@@ -1,10 +1,27 @@
 import { TimeField } from "./time-field";
 import { currentFoodTime, formatClock, mealAtTime, validFoodTime } from "@/lib/food-time";
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Linking, View } from "react-native";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  ActivityIndicator,
+  Linking,
+  View,
+  type AccessibilityActionEvent,
+  type AccessibilityActionInfo,
+} from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { SystemButton, SystemIconButton, SystemText as Text } from "@/components/system";
+import { SystemButton } from "@/components/system";
 import { Choices, Editor, ErrorText, Field } from "@/components/ui";
+import {
+  Callout,
+  Heading,
+  IconButton,
+  ListRow,
+  Meta,
+  Note,
+  Panel,
+  Text,
+  useKitFormat,
+} from "@/vector";
 import type { FoodEntry } from "@/db";
 import {
   favoriteFoods,
@@ -22,7 +39,6 @@ import {
 } from "@/lib/diary";
 import { portionFor } from "@/lib/fast-log";
 import { lookupBarcode, searchCatalog } from "@/lib/food-catalog";
-import { foodIcon } from "@/lib/food-icons";
 import { matchesQuery, rankSearch } from "@/lib/food-rank";
 import { recognizeText, textRecognitionAvailable } from "@/lib/local-ai";
 import { labelFound, readNutritionLabel, type LabelReading } from "@/lib/nutrition-label";
@@ -39,6 +55,7 @@ import {
   portionItem,
   portionOf,
   portionUnits,
+  shiftDay,
   unitLabel,
   type Food,
   type Meal,
@@ -48,7 +65,6 @@ import {
 import { dayLabel, localDay, parseNumber } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import { AmountPicker, PortionPreview, type AmountDraft } from "./amount-picker";
-import { FoodIcon } from "./food-icon";
 import { discardPhoto, PhotoCapture } from "./photo-capture";
 
 /** The amount field for a food, starting at `portion` or the food's usual portion. */
@@ -56,35 +72,51 @@ function draftFor(food: Food, portion = defaultPortion(food)): AmountDraft {
   return { unit: portion.unit, text: countText(food, portion.unit, portion.count), fresh: true };
 }
 
-export function FoodRow({ food, onPress }: { food: Food; onPress: () => void }) {
-  const { number } = useStore();
+// Catalog names, the same in every language.
+const catalogNames = { usda: "USDA", off: "Open Food Facts" } as const;
+const usdaName = "USDA FoodData Central";
+
+/** A food in a list: its name, where it comes from and its energy, opening its portion. */
+export function FoodRow({
+  food,
+  onPress,
+  trailing,
+  accessibilityActions,
+  onAccessibilityAction,
+}: {
+  food: Food;
+  onPress: () => void;
+  /** Replaces the chevron, e.g. with an edit button. */
+  trailing?: ReactNode;
+  /** A trailing button inside the row is not its own stop, so screen readers get it here. */
+  accessibilityActions?: AccessibilityActionInfo[];
+  onAccessibilityAction?: (event: AccessibilityActionEvent) => void;
+}) {
+  const { t } = useStore();
+  const format = useKitFormat();
+  const kcal = format.number(food.nutrients.calories);
   return (
-    <SystemButton
-      variant="ghost"
-      className="justify-start gap-3 rounded-2xl bg-surface px-4 py-4"
-      accessibilityLabel={`Log ${food.name}`}
+    <ListRow
+      title={food.name}
+      description={t("foodSourceEnergy", {
+        source:
+          food.brand ||
+          (food.source === "usda" || food.source === "off"
+            ? catalogNames[food.source]
+            : food.source === "recipe"
+              ? t("recipe")
+              : t("myFood")),
+        energy:
+          food.basis === "serving"
+            ? t("kcalPerServing", { value: kcal })
+            : t("kcalPer100", { value: kcal, basis: food.basis }),
+      })}
+      accessibilityLabel={t("logFoodNamed", { name: food.name })}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={onAccessibilityAction}
+      trailing={trailing}
       onPress={onPress}
-    >
-      <FoodIcon icon={foodIcon(food)} />
-      <View className="flex-1 gap-1">
-        <Text className="font-medium" numberOfLines={2}>
-          {food.name}
-        </Text>
-        <Text className="text-sm text-muted">
-          {food.brand ||
-            (food.source === "usda"
-              ? "USDA"
-              : food.source === "off"
-                ? "Open Food Facts"
-                : food.source === "recipe"
-                  ? "Recipe"
-                  : "My food")}{" "}
-          · {number(food.nutrients.calories, 0)} kcal /{" "}
-          {food.basis === "serving" ? "serving" : `100 ${food.basis}`}
-        </Text>
-      </View>
-      <Text className="text-sm text-accent-soft-foreground">Add</Text>
-    </SystemButton>
+    />
   );
 }
 
@@ -96,28 +128,27 @@ export function BarcodeCamera({
   /** A code just added, still in view while the camera reopens for the next one. */
   skip?: string;
 }) {
+  const { t } = useStore();
   const [permission, requestPermission] = useCameraPermissions();
   const [error, setError] = useState("");
   // One lookup at a time. A code that was rejected or not found is skipped while it
   // stays in view, so the camera keeps scanning for the next one.
   const scanning = useRef(false);
   const last = useRef(skip);
-  if (!permission) return <Text className="text-muted">Checking camera access…</Text>;
+  if (!permission) return <Text tone="muted">{t("checkingCamera")}</Text>;
   if (!permission.granted)
     return (
       <View className="gap-3">
-        <Text className="text-muted">
-          Allow camera access to scan a food barcode, or enter its digits below.
-        </Text>
+        <Text tone="muted">{t("allowCameraBarcode")}</Text>
         <SystemButton
           variant="secondary"
           onPress={() => {
             void (permission.canAskAgain ? requestPermission() : Linking.openSettings()).catch(() =>
-              setError("Camera access is unavailable. You can enter the barcode below.")
+              setError(t("cameraAccessUnavailableBarcode"))
             );
           }}
         >
-          {permission.canAskAgain ? "Allow camera" : "Open camera settings"}
+          {t(permission.canAskAgain ? "allowCamera" : "openCameraSettings")}
         </SystemButton>
         <ErrorText message={error} />
       </View>
@@ -125,37 +156,45 @@ export function BarcodeCamera({
   return (
     <View className="gap-3">
       {!error && (
-        <CameraView
-          style={{ height: 220, borderRadius: 8 }}
-          facing="back"
-          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "itf14"] }}
-          onMountError={() => setError("The camera is unavailable. Enter the barcode below.")}
-          onBarcodeScanned={({ data, type }) => {
-            if (scanning.current || data === last.current) return;
-            scanning.current = true;
-            last.current = data;
-            void onScan(data, type).finally(() => {
-              scanning.current = false;
-            });
-          }}
-        />
+        // A 1pt keyline and the 4pt corner every panel has.
+        <View className="overflow-hidden rounded-control border border-border">
+          <CameraView
+            style={{ height: 220 }}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "itf14"] }}
+            onMountError={() => setError(t("cameraUnavailableBarcode"))}
+            onBarcodeScanned={({ data, type }) => {
+              if (scanning.current || data === last.current) return;
+              scanning.current = true;
+              last.current = data;
+              void onScan(data, type).finally(() => {
+                scanning.current = false;
+              });
+            }}
+          />
+        </View>
       )}
       <ErrorText message={error} />
-      <Text className="text-sm text-muted">
-        Center the barcode in the camera. Lookups stay on this phone.
-      </Text>
+      <Note>{t("barcodeCameraNote")}</Note>
     </View>
   );
 }
 
 const macroFields = [
-  ["calories", "Calories (kcal)"],
-  ["protein", "Protein (g)"],
-  ["carbs", "Carbs (g)"],
-  ["fat", "Fat (g)"],
-  ["fiber", "Fiber (g, optional)"],
-  ["sodium", "Sodium (mg, optional)"],
+  ["calories", "caloriesKcalField"],
+  ["protein", "proteinGramsField"],
+  ["carbs", "carbsGramsField"],
+  ["fat", "fatGramsField"],
+  ["fiber", "fiberOptionalField"],
+  ["sodium", "sodiumOptionalField"],
 ] as const;
+// The label names a scan can miss, as the note lists them.
+const labelNames = {
+  calories: "calories",
+  protein: "macroProtein",
+  carbs: "macroCarbs",
+  fat: "macroFat",
+} as const;
 // The rest of a US Nutrition Facts panel, in its order.
 const labelMicros = [
   "saturatedFat",
@@ -182,6 +221,7 @@ function LabelScanner({
   onRead: (reading: LabelReading) => void;
   onCancel: () => void;
 }) {
+  const { t } = useStore();
   const [reading, setReading] = useState(false);
   const [error, setError] = useState("");
   async function read(uri: string) {
@@ -190,12 +230,9 @@ function LabelScanner({
     try {
       const label = readNutritionLabel(await recognizeText(uri));
       if (labelFound(label)) onRead(label);
-      else
-        setError(
-          "Couldn't find Nutrition Facts in that photo. Fill the frame with the label, hold it flat and avoid glare."
-        );
+      else setError(t("labelNotFound"));
     } catch {
-      setError("Couldn't read that photo. Try again.");
+      setError(t("labelUnreadable"));
     } finally {
       discardPhoto(uri);
       setReading(false);
@@ -205,23 +242,16 @@ function LabelScanner({
     return (
       <View className="flex-row items-center gap-3 py-6" accessibilityLiveRegion="polite">
         <ActivityIndicator />
-        <Text className="font-medium">Reading the label…</Text>
+        <Text variant="bodyStrong">{t("readingLabel")}</Text>
       </View>
     );
   return (
     <View className="gap-3">
-      <PhotoCapture
-        subject="the Nutrition Facts label"
-        alternative="enter the values"
-        onPhoto={(uri) => void read(uri)}
-        onError={setError}
-      />
+      <PhotoCapture kind="label" onPhoto={(uri) => void read(uri)} onError={setError} />
       <ErrorText message={error} />
-      <Text className="text-sm text-muted">
-        Read on this phone. You can check every value before saving.
-      </Text>
+      <Note>{t("labelScanNote")}</Note>
       <SystemButton variant="ghost" className="self-start" onPress={onCancel}>
-        Enter values by hand
+        {t("enterValuesByHand")}
       </SystemButton>
     </View>
   );
@@ -236,12 +266,17 @@ function CustomFoodForm({
   barcode,
   scanFirst = false,
   onSave,
+  onDirty,
 }: {
   barcode: string;
   /** Opens the label camera straight away, e.g. after an unknown barcode. */
   scanFirst?: boolean;
   onSave: (food: Food) => void;
+  /** Hears whether anything has been typed or read from a label, so the sheet can hold. */
+  onDirty: (dirty: boolean) => void;
 }) {
+  const { t } = useStore();
+  const format = useKitFormat();
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
   const [code, setCode] = useState(barcode);
@@ -260,6 +295,15 @@ function CustomFoodForm({
   const [scanning, setScanning] = useState(scanFirst && textRecognitionAvailable());
   const [note, setNote] = useState<LabelNote | null>(null);
   const [error, setError] = useState("");
+  const dirty =
+    !!name.trim() ||
+    !!brand.trim() ||
+    code !== barcode ||
+    note !== null ||
+    [...Object.values(values), ...Object.values(micros), serving.label, serving.amount].some(
+      (text) => text.trim()
+    );
+  useEffect(() => onDirty(dirty), [dirty, onDirty]);
   function fill(label: LabelReading) {
     setBasis("serving");
     setValues({
@@ -284,14 +328,18 @@ function CustomFoodForm({
     );
     const lines = [
       ...label.warnings,
-      ...(label.estimatedCalories
-        ? ["Calories weren't in the photo, so they're estimated from fat, carbs and protein."]
+      ...(label.estimatedCalories ? [t("labelCaloriesEstimated")] : []),
+      ...(missing.length
+        ? [
+            t("labelMissingValues", {
+              names: format.list(missing.map((key) => t(labelNames[key]))),
+            }),
+          ]
         : []),
-      ...(missing.length ? [`Not found: ${missing.join(", ")}. Enter them from the label.`] : []),
-      ...(label.servingAmount === null ? ["Add the serving weight to log by grams too."] : []),
+      ...(label.servingAmount === null ? [t("labelAddServingWeight")] : []),
     ];
     setNote({
-      lines: ["Filled from the label. Check each value.", ...lines],
+      lines: [t("labelFilled"), ...lines],
       warn: lines.length > 0,
     });
     setScanning(false);
@@ -300,7 +348,7 @@ function CustomFoodForm({
   function save() {
     const normalized = code.trim() ? normalizeBarcode(code) : null;
     if (code.trim() && !normalized) {
-      setError("Check the barcode digits, or leave the barcode blank.");
+      setError(t("checkBarcodeDigits"));
       return;
     }
     const optional = (text: string) => (text.trim() ? parseNumber(text) : null);
@@ -331,53 +379,59 @@ function CustomFoodForm({
       saveCustomFood(food);
       onSave(food);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't save this food.");
+      setError(e instanceof Error ? e.message : t("couldNotSaveFood"));
     }
   }
   if (scanning) return <LabelScanner onRead={fill} onCancel={() => setScanning(false)} />;
   return (
     <View className="gap-4">
       {textRecognitionAvailable() && (
-        <SystemButton variant="secondary" icon="scan-outline" onPress={() => setScanning(true)}>
-          {note ? "Scan the label again" : "Scan nutrition label"}
+        <SystemButton variant="secondary" icon="scanText" onPress={() => setScanning(true)}>
+          {t(note ? "scanLabelAgain" : "scanNutritionLabel")}
         </SystemButton>
       )}
       {note && (
-        <View className="gap-1 rounded-2xl bg-surface p-3" accessibilityLiveRegion="polite">
+        <Callout tone={note.warn ? "warning" : "info"}>
           {note.lines.map((line, i) => (
-            <Text key={i} className={`text-sm ${i && note.warn ? "text-warning" : "text-muted"}`}>
+            <Text key={i} variant="small" tone={i && note.warn ? "warning" : "muted"}>
               {line}
             </Text>
           ))}
-        </View>
+        </Callout>
       )}
       <Field
-        label="Food name"
+        label={t("foodName")}
         value={name}
         onChange={setName}
-        placeholder="e.g. My overnight oats"
+        placeholder={t("foodNamePlaceholder")}
       />
-      <Field label="Brand (optional)" value={brand} onChange={setBrand} />
-      <Text className="font-medium">Nutrition per</Text>
+      <Field label={t("brandOptional")} value={brand} onChange={setBrand} />
+      <Text variant="fieldLabel" tone="secondary">
+        {t("nutritionPer")}
+      </Text>
       <Choices
         values={["g", "ml", "serving"] as const}
         value={basis}
         onChange={setBasis}
-        label={(value) => (value === "serving" ? "1 serving" : `100 ${value}`)}
+        label={(value) =>
+          value === "serving"
+            ? t("oneServing")
+            : t("amountUnit", { count: format.number(100), unit: value })
+        }
       />
       {basis === "serving" && (
         <View className="flex-row flex-wrap gap-4">
           <View style={{ flexBasis: "44%", flexGrow: 1 }}>
             <Field
-              label="Serving size (optional)"
+              label={t("servingSizeOptional")}
               value={serving.label}
               onChange={(label) => setServing((old) => ({ ...old, label }))}
-              placeholder="e.g. 2/3 cup"
+              placeholder={t("servingSizePlaceholder")}
             />
           </View>
           <View style={{ flexBasis: "44%", flexGrow: 1 }}>
             <Field
-              label={`Serving weight (${serving.unit}, optional)`}
+              label={t("servingWeightOptional", { unit: serving.unit })}
               value={serving.amount}
               numeric
               onChange={(amount) => setServing((old) => ({ ...old, amount }))}
@@ -387,7 +441,7 @@ function CustomFoodForm({
             values={["g", "ml"] as const}
             value={serving.unit}
             onChange={(unit) => setServing((old) => ({ ...old, unit }))}
-            label={(value) => (value === "g" ? "Grams" : "Milliliters")}
+            label={(value) => t(value === "g" ? "gramsUnitName" : "millilitersUnitName")}
           />
         </View>
       )}
@@ -395,7 +449,7 @@ function CustomFoodForm({
         {macroFields.map(([key, label]) => (
           <View key={key} style={{ flexBasis: "44%", flexGrow: 1 }}>
             <Field
-              label={label}
+              label={t(label)}
               value={values[key]}
               numeric
               onChange={(value) => setValues((old) => ({ ...old, [key]: value }))}
@@ -408,7 +462,10 @@ function CustomFoodForm({
           {labelMicros.map((key) => (
             <View key={key} style={{ flexBasis: "44%", flexGrow: 1 }}>
               <Field
-                label={`${nutrientInfo[key].label} (${unitLabel(nutrientInfo[key].unit)})`}
+                label={t("nutrientField", {
+                  name: nutrientInfo[key].label,
+                  unit: unitLabel(nutrientInfo[key].unit),
+                })}
                 value={micros[key]}
                 numeric
                 onChange={(value) => setMicros((old) => ({ ...old, [key]: value }))}
@@ -418,16 +475,13 @@ function CustomFoodForm({
         </View>
       ) : (
         <SystemButton variant="ghost" className="self-start" onPress={() => setMore(true)}>
-          More nutrients from the label
+          {t("moreNutrientsFromLabel")}
         </SystemButton>
       )}
-      <Text className="text-sm text-muted">
-        Use the label values. Enter 0 for a macro only when the food contains none; leave a nutrient
-        blank when the label doesn&apos;t list it.
-      </Text>
-      <Field label="Barcode (optional)" value={code} onChange={setCode} />
+      <Note>{t("customFoodNote", { zero: format.number(0) })}</Note>
+      <Field label={t("barcodeOptional")} value={code} onChange={setCode} />
       <ErrorText message={error} />
-      <SystemButton onPress={save}>Save food & choose portion</SystemButton>
+      <SystemButton onPress={save}>{t("saveFoodChoosePortion")}</SystemButton>
     </View>
   );
 }
@@ -472,7 +526,8 @@ export function FoodEditor({
   onChanged?: (receipt: DiaryReceipt, change: "saved" | "deleted") => void;
 }) {
   const { refresh } = useNutrition();
-  const { diaryLayout } = useStore();
+  const { diaryLayout, t } = useStore();
+  const format = useKitFormat();
   const [mode, setMode] = useState<"search" | "barcode" | "custom" | "portion">(
     entry || initialFood ? "portion" : initialMode
   );
@@ -511,6 +566,10 @@ export function FoodEditor({
   // An unknown barcode goes straight to photographing its label.
   const [scanLabel, setScanLabel] = useState(false);
   const [favorites, setFavorites] = useState(() => favoriteFoods());
+  // A typed custom food, or a portion changed from how it opened, holds the sheet.
+  const [typed, setTyped] = useState(false);
+  const portionState = JSON.stringify([food?.id, amount.unit, amount.text, day, loggedTime, meal]);
+  const [opened, setOpened] = useState(portionState);
   const saveLock = useRef(false);
   // Only the search list shows history, so typing an amount or a label doesn't read it.
   const { recent, personal } = useNutritionQuery(
@@ -552,9 +611,7 @@ export function FoodEditor({
         .catch(() => {
           if (active) {
             setResults(own);
-            setError(
-              "The bundled catalog couldn't open. You can still create and log a custom food."
-            );
+            setError(t("bundledCatalogUnavailable"));
           }
         })
         .finally(() => {
@@ -565,11 +622,13 @@ export function FoodEditor({
       active = false;
       clearTimeout(timer);
     };
-  }, [mode, query, favorites, recent, personal]);
+  }, [mode, query, favorites, recent, personal, t]);
 
   function select(selected: Food) {
+    const draft = draftFor(selected, rememberedPortion(selected));
     setFood(selected);
-    setAmount(draftFor(selected, rememberedPortion(selected)));
+    setAmount(draft);
+    setOpened(JSON.stringify([selected.id, draft.unit, draft.text, day, loggedTime, meal]));
     setMode("portion");
     setError("");
   }
@@ -581,7 +640,7 @@ export function FoodEditor({
     // An 8-digit code can be EAN-8 or UPC-E; catalogs hold products under either form.
     const codes = barcodeCandidates(input, symbology);
     if (!codes.length) {
-      setError("Enter a valid 8, 12, 13, or 14-digit food barcode.");
+      setError(t("invalidFoodBarcode"));
       setBusy(false);
       return;
     }
@@ -591,7 +650,7 @@ export function FoodEditor({
       if (found) select(found);
       else setNotFound(true);
     } catch {
-      setError("The food catalog couldn't open. Try again or create a custom food.");
+      setError(t("foodCatalogUnavailable"));
     } finally {
       setBusy(false);
     }
@@ -621,7 +680,7 @@ export function FoodEditor({
         setMode("barcode");
         return;
       }
-      if (!entry && !loggedTime) throw new Error("Choose a time for this entry.");
+      if (!entry && !loggedTime) throw new Error(t("chooseEntryTime"));
       const receipt = saveEntry({
         id: entry?.id,
         day,
@@ -637,7 +696,7 @@ export function FoodEditor({
       close();
       onChanged?.(receipt, "saved");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't save this entry.");
+      setError(e instanceof Error ? e.message : t("couldNotSaveEntry"));
       saveLock.current = false;
     }
   }
@@ -661,17 +720,20 @@ export function FoodEditor({
     <Editor
       title={
         onPick
-          ? (pickerTitle ?? "Add ingredient")
-          : entry
-            ? "Edit food"
-            : mode === "custom"
-              ? "Create a food"
-              : mode === "portion"
-                ? "Log food"
-                : "Add food"
+          ? (pickerTitle ?? t("addIngredient"))
+          : t(
+              entry
+                ? "editFood"
+                : mode === "custom"
+                  ? "createAFood"
+                  : mode === "portion"
+                    ? "logFood"
+                    : "addFood"
+            )
       }
       open
       close={close}
+      dirty={(mode === "custom" && typed) || (mode === "portion" && portionState !== opened)}
       compact={!!onPick}
       footer={
         mode === "portion" && food ? (
@@ -687,20 +749,24 @@ export function FoodEditor({
               actions={[
                 {
                   label: onPick
-                    ? (pickLabel ?? (pickerTitle ? "Add to meal" : "Use ingredient"))
+                    ? (pickLabel ?? t(pickerTitle ? "addToMeal" : "useIngredient"))
                     : entry
-                      ? "Save changes"
+                      ? t("saveChanges")
                       : diaryLayout === "timeline"
-                        ? `Log at ${validFoodTime(loggedTime) ? formatClock(loggedTime) : loggedTime}`
-                        : `Add to ${meal.toLowerCase()}`,
+                        ? t("logAtTime", {
+                            time: validFoodTime(loggedTime)
+                              ? formatClock(loggedTime, format.tag)
+                              : loggedTime,
+                          })
+                        : t("addToNamedMeal", { meal: meal.toLowerCase() }),
                   onPress: () => save(),
                 },
               ]}
             />
             {/* Its own row: the actions row above has no room for a third label. */}
             {scanAnother && onPick && (
-              <SystemButton variant="secondary" icon="barcode-outline" onPress={() => save(true)}>
-                Add & scan another
+              <SystemButton variant="secondary" icon="scan" onPress={() => save(true)}>
+                {t("addAndScanAnother")}
               </SystemButton>
             )}
           </View>
@@ -717,20 +783,20 @@ export function FoodEditor({
             setBusy(false);
           }}
         >
-          Back to search
+          {t("backToSearch")}
         </SystemButton>
       )}
       {mode === "search" && (
         <>
           <Field
-            label="Search foods"
+            label={t("searchFoods")}
             value={query}
             onChange={(value) => {
               setQuery(value);
               setResults([]);
               setBusy(false);
             }}
-            placeholder="Chicken, oats, Greek yogurt…"
+            placeholder={t("searchFoodsPlaceholder")}
           />
           <View className="flex-row gap-3">
             <SystemButton
@@ -741,7 +807,7 @@ export function FoodEditor({
                 setMode("barcode");
               }}
             >
-              Scan barcode
+              {t("scanBarcode")}
             </SystemButton>
             <SystemButton
               className="flex-1"
@@ -751,61 +817,58 @@ export function FoodEditor({
                 setMode("custom");
               }}
             >
-              Create food
+              {t("createFood")}
             </SystemButton>
           </View>
           <ErrorText message={error} />
-          <Text className="text-sm text-muted">
+          <Note>
             {query.trim()
               ? busy
-                ? "Searching on your phone…"
-                : `${results.length} matches`
-              : history.length
-                ? "Saved & recent foods"
-                : "Search the offline catalog or create your own food."}
-          </Text>
-          {(query.trim() ? results : history).map((item) => (
-            <FoodRow key={item.id} food={item} onPress={() => select(item)} />
-          ))}
+                ? t("searchingOnPhone")
+                : t(format.plural(results.length) === "one" ? "matchCountOne" : "matchCount", {
+                    count: format.number(results.length),
+                  })
+              : t(history.length ? "savedAndRecentFoods" : "searchOrCreateFood")}
+          </Note>
+          {!!(query.trim() ? results : history).length && (
+            <Panel inset="none">
+              {(query.trim() ? results : history).map((item) => (
+                <FoodRow key={item.id} food={item} onPress={() => select(item)} />
+              ))}
+            </Panel>
+          )}
           {query.trim() && !busy && !results.length && !error && (
-            <Text className="text-muted">
-              Try a simpler name, or create the food from its label.
-            </Text>
+            <Text tone="muted">{t("trySimplerFoodName")}</Text>
           )}
         </>
       )}
       {mode === "barcode" && (
         <>
           <BarcodeCamera onScan={scan} skip={lastCode} />
-          <Field label="Barcode digits" value={barcode} onChange={setBarcode} />
+          <Field label={t("barcodeDigits")} value={barcode} onChange={setBarcode} />
           <SystemButton
             isDisabled={busy}
             onPress={() => {
               void scan(barcode);
             }}
           >
-            {busy ? "Looking up…" : "Look up barcode"}
+            {t(busy ? "lookingUp" : "lookUpBarcode")}
           </SystemButton>
           <ErrorText message={error} />
-          {notFound && (
-            <Text className="text-muted">
-              This product isn’t in your installed catalog yet. Save its label values once to find
-              it by barcode next time.
-            </Text>
-          )}
+          {notFound && <Text tone="muted">{t("productNotInCatalog")}</Text>}
           {notFound && textRecognitionAvailable() && (
             <SystemButton
-              icon="scan-outline"
+              icon="scanText"
               onPress={() => {
                 setScanLabel(true);
                 setMode("custom");
               }}
             >
-              Scan its nutrition label
+              {t("scanItsNutritionLabel")}
             </SystemButton>
           )}
           <SystemButton variant="outline" onPress={() => setMode("custom")}>
-            {notFound ? "Enter the label by hand" : "Create this food"}
+            {t(notFound ? "enterLabelByHand" : "createThisFood")}
           </SystemButton>
         </>
       )}
@@ -817,36 +880,34 @@ export function FoodEditor({
             refresh();
             select(value);
           }}
+          onDirty={setTyped}
         />
       )}
       {mode === "portion" && food && (
         <>
           <View className="flex-row items-start gap-1">
             <View className="flex-1 gap-1">
-              <Text className="text-xl font-semibold">{food.name}</Text>
-              <Text className="text-sm text-muted">
-                {food.brand ? `${food.brand} · ` : ""}
-                {food.source === "usda"
-                  ? "USDA FoodData Central"
-                  : food.source === "off"
-                    ? "Open Food Facts · check the label"
-                    : food.source === "recipe"
-                      ? "My recipe"
-                      : "My food"}
-              </Text>
+              <Heading level={3}>{food.name}</Heading>
+              <Meta
+                items={[
+                  food.brand,
+                  food.source === "usda"
+                    ? usdaName
+                    : food.source === "off"
+                      ? t("offCheckLabel")
+                      : t(food.source === "recipe" ? "myRecipe" : "myFood"),
+                ]}
+              />
             </View>
-            <SystemIconButton
-              icon={favorites.some((item) => item.id === food.id) ? "heart" : "heart-outline"}
-              color={
-                favorites.some((item) => item.id === food.id)
-                  ? "accent-soft-foreground"
-                  : "foreground"
-              }
+            <IconButton
+              icon="favorite"
+              tone={favorites.some((item) => item.id === food.id) ? "tint" : "foreground"}
               accessibilityLabel={
                 favorites.some((item) => item.id === food.id)
-                  ? "Remove from saved foods"
-                  : "Save to my library"
+                  ? t("removeFromSavedFoods")
+                  : t("saveToLibrary")
               }
+              accessibilityState={{ selected: favorites.some((item) => item.id === food.id) }}
               onPress={() => {
                 toggleFavorite(food);
                 setFavorites(favoriteFoods());
@@ -857,13 +918,22 @@ export function FoodEditor({
           {!onPick && (
             <SystemButton
               variant="ghost"
-              icon="time-outline"
+              icon="time"
               className="self-start px-2"
-              accessibilityHint="Changes the day and time for this food"
+              accessibilityHint={t("changeFoodTimeHint")}
               accessibilityState={{ expanded: when }}
               onPress={() => setWhen((open) => !open)}
             >
-              {`${dayLabel(day)} · ${validFoodTime(loggedTime) ? formatClock(loggedTime) : "No time"}${diaryLayout === "meals" ? ` · ${meal}` : ""}`}
+              {t(diaryLayout === "meals" ? "whenMeal" : "whenTime", {
+                day:
+                  day === localDay()
+                    ? t("today")
+                    : day === shiftDay(localDay(), -1)
+                      ? t("yesterday")
+                      : dayLabel(day, format.tag),
+                time: validFoodTime(loggedTime) ? formatClock(loggedTime, format.tag) : t("noTime"),
+                meal,
+              })}
             </SystemButton>
           )}
           {!onPick && when && (
@@ -895,11 +965,11 @@ export function FoodEditor({
                   onChanged?.(receipt, "deleted");
                 } catch {
                   saveLock.current = false;
-                  setError("Couldn't delete this entry. Try again.");
+                  setError(t("couldNotDeleteEntry"));
                 }
               }}
             >
-              Delete entry
+              {t("deleteEntry")}
             </SystemButton>
           )}
         </>

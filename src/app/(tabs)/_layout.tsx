@@ -1,36 +1,41 @@
 import { NativeTabs } from "expo-router/unstable-native-tabs";
-import { useThemeColor } from "heroui-native";
+import { DockProvider, tabOptions, useKit } from "@/vector";
+import { useStore } from "@/lib/store";
 
+/** The system draws the bar (Liquid Glass on iOS 26); only its tint and the triggers are ours. */
 export default function TabsLayout() {
-  const background = useThemeColor("background");
-  const accent = useThemeColor("accent-soft-foreground");
+  const { scheme } = useKit();
+  const { t } = useStore();
   return (
-    <NativeTabs
-      tintColor={accent}
-      backgroundColor={background}
-      labelVisibilityMode="labeled"
-      backBehavior="initialRoute"
-    >
-      <NativeTabs.Trigger name="index" contentStyle={{ backgroundColor: background }}>
-        <NativeTabs.Trigger.Label>Today</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="fork.knife" md="restaurant" />
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="progress" contentStyle={{ backgroundColor: background }}>
-        <NativeTabs.Trigger.Label>Progress</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="chart.xyaxis.line" md="monitoring" />
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="plan" contentStyle={{ backgroundColor: background }}>
-        <NativeTabs.Trigger.Label>Plan</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="slider.horizontal.3" md="tune" />
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="library" contentStyle={{ backgroundColor: background }}>
-        <NativeTabs.Trigger.Label>Library</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="books.vertical" md="bookmarks" />
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="settings" contentStyle={{ backgroundColor: background }}>
-        <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="gearshape" md="settings" />
-      </NativeTabs.Trigger>
-    </NativeTabs>
+    <DockProvider>
+      <NativeTabs {...tabOptions(scheme)}>
+        <NativeTabs.Trigger name="index">
+          <NativeTabs.Trigger.Label>{t("today")}</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Icon sf="fork.knife" md="restaurant" />
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="plan">
+          <NativeTabs.Trigger.Label>{t("plan")}</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Icon sf="slider.horizontal.3" md="tune" />
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="progress">
+          <NativeTabs.Trigger.Label>{t("progress")}</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Icon sf="chart.xyaxis.line" md="monitoring" />
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="library">
+          <NativeTabs.Trigger.Label>{t("library")}</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Icon
+            sf={{ default: "books.vertical", selected: "books.vertical.fill" }}
+            md="bookmarks"
+          />
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="settings">
+          <NativeTabs.Trigger.Label>{t("settings")}</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Icon
+            sf={{ default: "gearshape", selected: "gearshape.fill" }}
+            md="settings"
+          />
+        </NativeTabs.Trigger>
+      </NativeTabs>
+    </DockProvider>
   );
 }

@@ -3,13 +3,20 @@ import { Alert, View } from "react-native";
 import { weekOf } from "@/components/plan/calorie-shift";
 import { CheckInRing, ProgramCard } from "@/components/plan/strategy";
 import {
-  SystemButton,
-  SystemIconButton,
-  SystemLabel,
-  SystemPanel,
-  SystemText as Text,
-} from "@/components/system";
-import { ActionMenu, ErrorText } from "@/components/ui";
+  ActionMenu,
+  Button,
+  ErrorText,
+  Heading,
+  IconButton,
+  Label,
+  LinkButton,
+  Meta,
+  Note,
+  Panel,
+  Text,
+  Value,
+  useKitFormat,
+} from "@/vector";
 import { useNutrition, useNutritionQuery } from "@/lib/nutrition-store";
 import {
   coverage,
@@ -27,25 +34,44 @@ import { CheckInAdjuster } from "./check-in-adjuster";
 import { OutlierPrompt } from "./home-check-in";
 import { ProgramEditor } from "./program-editor";
 
-const decisions = { accepted: "Accepted", kept: "Kept", adjusted: "Adjusted" };
-const weekdayOf = (day: string, language: string) =>
-  new Date(`${day}T12:00:00`).toLocaleDateString(language === "zh" ? "zh-CN" : language, {
-    weekday: "long",
-  });
+const decisions = {
+  accepted: "decisionAccepted",
+  kept: "decisionKept",
+  adjusted: "decisionAdjusted",
+} as const;
+const diets = {
+  balanced: "dietBalanced",
+  "lower-fat": "dietMoreCarbs",
+  "lower-carb": "dietMoreFat",
+} as const;
+/** A diary day as a local calendar date, at noon so no time zone moves it. */
+const dateOf = (day: string) => new Date(`${day}T12:00:00`);
 
-function Stat({ title, value, note }: { title: string; value: string; note?: string }) {
+/** One figure of the review: an eyebrow, the readout and an optional note. */
+function Stat({
+  title,
+  value,
+  unit,
+  note,
+}: {
+  title: string;
+  value: string;
+  unit?: string;
+  note?: string;
+}) {
   return (
-    <View className="grow gap-1 rounded-2xl bg-surface-secondary p-3" style={{ flexBasis: "40%" }}>
-      <SystemLabel>{title}</SystemLabel>
-      <Text className="text-lg font-semibold tabular-nums">{value}</Text>
-      {note && <Text className="text-sm text-muted">{note}</Text>}
+    <View className="grow basis-2/5 gap-1">
+      <Label>{title}</Label>
+      <Value size="m" value={value} unit={unit} />
+      {note && <Note>{note}</Note>}
     </View>
   );
 }
 
 export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => void }) {
   const { refresh } = useNutrition();
-  const { number, units, language } = useStore();
+  const { units, t } = useStore();
+  const format = useKitFormat();
   // Clock reads stay inside the query so they refresh with every revision.
   const data = useNutritionQuery(() => {
     const snapshot = planSnapshot(localDay());
@@ -64,8 +90,8 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
   // A shift a lower budget can't fit is paused, and each day gets the budget itself.
   const shiftedWeek = program?.shift && targets ? weekOf(targets, program.shift) : null;
   const week = targets ? (shiftedWeek ?? Array.from({ length: 7 }, () => targets)) : null;
-  const weight = (kg: number) => formatWeight(kg, units, number);
-  const pace = (kg: number | null) => (kg === null ? "—" : formatPace(kg, units, number));
+  const weight = (kg: number) => formatWeight(kg, units, format);
+  const pace = (kg: number | null) => (kg === null ? "—" : formatPace(kg, units, format, t));
   function act(action: () => void, setError: (message: string) => void) {
     try {
       action();
@@ -73,7 +99,7 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
       setError("");
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update your program.");
+      setError(e instanceof Error ? e.message : t("couldNotUpdateProgram"));
       return false;
     }
   }
@@ -106,135 +132,141 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
   // Open only for the check-in it was opened on, even if another screen answered that one.
   const adjusting = isDue && adjustingFor === due;
   function switchToManual() {
-    Alert.alert(
-      "Switch to manual targets?",
-      "Your current targets stay the same and weekly check-ins stop. You can build a program again at any time.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Switch", onPress: () => act(() => saveGoal("manual", 0), setProgramError) },
-      ]
-    );
+    Alert.alert(t("switchToManualQuestion"), t("switchToManualBody"), [
+      { text: t("cancel"), style: "cancel" },
+      {
+        text: t("switchAction"),
+        onPress: () => act(() => saveGoal("manual", 0), setProgramError),
+      },
+    ]);
   }
-  const diet = program?.custom
-    ? "Custom macros"
-    : program?.diet === "balanced"
-      ? "Balanced"
-      : program?.diet === "lower-fat"
-        ? "More carbs"
-        : "More fat";
+  const diet = t(program?.custom ? "dietCustom" : diets[program?.diet ?? "lower-carb"]);
+  const paceShown = goal ? format.percent(goal.pace / 100, 2) : "";
   const detail =
     goal && coached
       ? goal.mode === "maintain"
-        ? "Maintain"
-        : `${goal.mode === "gain" ? "Bulk" : "Cut"} ${number(goal.pace, Math.round(goal.pace * 100) % 10 ? 2 : 1)}%/wk`
+        ? t("modeMaintain")
+        : t(goal.mode === "gain" ? "bulkPace" : "cutPace", { pace: paceShown })
       : undefined;
   const notes = program
     ? [
-        ...(shiftedWeek && targets ? [`${number(targets.calories, 0)} kcal/day on average`] : []),
-        ...(program.shift && targets && !shiftedWeek
-          ? ["Calorie shifting is paused: it doesn’t fit this budget."]
+        ...(shiftedWeek && targets
+          ? [t("kcalDayAverage", { value: format.number(targets.calories) })]
           : []),
+        ...(program.shift && targets && !shiftedWeek ? [t("shiftPaused")] : []),
         [
-          review?.trendWeightKg !== undefined ? `Trend ${weight(review.trendWeightKg)}` : "",
-          `Goal ${weight(program.targetWeightKg)}`,
+          review?.trendWeightKg !== undefined
+            ? t("trendWeightValue", { weight: weight(review.trendWeightKg) })
+            : "",
+          t("goalWeightValue", { weight: weight(program.targetWeightKg) }),
           diet,
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        ].filter(Boolean),
       ]
     : [];
   const checkIn = coached && review && (
-    <SystemPanel className="p-4">
-      <SystemPanel.Body className="gap-3">
-        <View className="-my-2 -mr-2 flex-row items-center gap-2">
-          <SystemLabel className="flex-1">
-            {isDue
-              ? "Weekly check-in · due today"
-              : `Next check-in · ${shortDay(due, language, true)}`}
-          </SystemLabel>
-          <SystemButton
-            variant="ghost"
-            className="px-3"
+    <Panel>
+      <Panel.Header
+        eyebrow={
+          isDue
+            ? t("weeklyCheckInDue")
+            : t("nextCheckInOn", { day: shortDay(due, format.tag, true) })
+        }
+        meta={
+          <LinkButton
             accessibilityState={{ expanded: why }}
             onPress={() => setWhy((open) => !open)}
           >
-            {why ? "Less" : "Why?"}
-          </SystemButton>
-        </View>
+            {why ? t("less") : t("why")}
+          </LinkButton>
+        }
+      />
+      <Panel.Body>
         <View className="gap-1">
-          <Text accessibilityRole="header" className="text-2xl font-semibold">
-            {review.status === "ready"
-              ? "Your next adjustment"
-              : review.status === "learning"
-                ? "Learning your energy needs"
-                : "Holding steady"}
-          </Text>
-          <Text className="text-sm text-muted">
-            {shortDay(review.start, language)} – {shortDay(review.end, language)}
-          </Text>
+          <Heading level={3}>
+            {t(
+              review.status === "ready"
+                ? "nextAdjustment"
+                : review.status === "learning"
+                  ? "learningEnergyNeeds"
+                  : "holdingSteady"
+            )}
+          </Heading>
+          <Note>{format.dateRange(dateOf(review.start), dateOf(review.end))}</Note>
         </View>
-        <View className="flex-row flex-wrap gap-2">
+        <View className="flex-row flex-wrap gap-x-4 gap-y-3">
           <Stat
-            title="Expenditure"
-            value={review.expenditure === null ? "—" : `≈ ${number(review.expenditure, 0)} kcal`}
+            title={t("expenditure")}
+            value={review.expenditure === null ? "—" : format.number(review.expenditure)}
+            unit={review.expenditure === null ? undefined : t("kcal")}
             note={
               review.expenditure !== null && review.status === "learning"
-                ? "Provisional"
+                ? t("provisional")
                 : undefined
             }
           />
-          <Stat title="Your pace" value={pace(review.weeklyKg)} />
-          <Stat title="Goal pace" value={pace(review.desiredWeeklyKg)} />
+          <Stat title={t("paceYours")} value={pace(review.weeklyKg)} />
+          <Stat title={t("paceGoal")} value={pace(review.desiredWeeklyKg)} />
           <Stat
-            title={review.method === 2 ? "Usable days" : "Complete days"}
+            title={t(review.method === 2 ? "usableDaysTitle" : "completeDaysTitle")}
             value={coverage(review)}
-            note={`${review.weightDays} weigh-ins`}
+            note={t("weighInCount", { count: format.number(review.weightDays) })}
           />
         </View>
         <OutlierPrompt outlier={review.outlier} />
-        {why && <Text className="text-sm text-muted">{review.reason}</Text>}
+        {why && <Note>{review.reason}</Note>}
         {review.proposed && (
           <View className="gap-1">
-            <Text className="text-xl font-semibold tabular-nums">
-              {targets ? `${number(targets.calories, 0)} → ` : ""}
-              {number(review.proposed.calories, 0)} kcal/day
-            </Text>
-            <Text className="text-sm text-muted tabular-nums">
-              Protein {review.proposed.protein} g · Carbs {review.proposed.carbs} g · Fat{" "}
-              {review.proposed.fat} g
-            </Text>
+            <Value
+              size="m"
+              value={format.number(review.proposed.calories)}
+              unit={t("kcalPerDay")}
+            />
+            {targets && (
+              <Note>{t("currentTarget", { value: format.number(targets.calories) })}</Note>
+            )}
+            <Meta
+              items={[
+                t("proteinGrams", { value: format.number(review.proposed.protein) }),
+                t("carbsGrams", { value: format.number(review.proposed.carbs) }),
+                t("fatGrams", { value: format.number(review.proposed.fat) }),
+              ]}
+            />
           </View>
         )}
+        {/* Secondary buttons: the dock's barcode is the tab's one primary action. */}
         {maintainWeight && !adjusting && (
-          <SystemButton isDisabled={isDue && !!pending} onPress={maintain}>
-            {`Maintain ${maintainWeight}`}
-          </SystemButton>
+          <Button variant="secondary" disabled={isDue && !!pending} onPress={maintain}>
+            {t("maintainWeight", { weight: maintainWeight })}
+          </Button>
         )}
         {isDue && (
           <>
             {/* A check-in saved before this learns from incomplete data for a week. */}
             {pending && (
               <View className="gap-2 border-t border-separator pt-3">
-                <Text className="text-sm">
-                  Confirm {weekdayOf(pending.day, language)} first · {number(pending.calories, 0)}{" "}
-                  kcal logged
+                <Text variant="small">
+                  {t("confirmDayFirst", {
+                    day: format.weekdayLong(dateOf(pending.day)),
+                    kcal: format.number(pending.calories),
+                  })}
                 </Text>
                 <View className="flex-row gap-2">
-                  <SystemButton
+                  <Button
+                    variant="secondary"
                     className="flex-1"
                     onPress={() =>
                       act(() => setDayStatus(pending.day, "complete"), setCheckInError)
                     }
                   >
-                    Complete
-                  </SystemButton>
-                  <SystemButton
+                    {t("statusComplete")}
+                  </Button>
+                  <Button
                     variant="secondary"
                     className="flex-1"
                     onPress={() => act(() => setDayStatus(pending.day, "partial"), setCheckInError)}
                   >
-                    Not all
-                  </SystemButton>
+                    {t("notAll")}
+                  </Button>
                 </View>
               </View>
             )}
@@ -254,30 +286,29 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
             ) : (
               <View className="flex-row flex-wrap gap-2">
                 {review.proposed && (
-                  <SystemButton
-                    variant={maintainWeight ? "secondary" : "primary"}
+                  <Button
+                    variant="secondary"
                     className="grow"
-                    isDisabled={!!pending}
+                    disabled={!!pending}
                     onPress={() => finish("accepted")}
                   >
-                    Accept this week’s plan
-                  </SystemButton>
+                    {t("acceptWeekPlan")}
+                  </Button>
                 )}
-                <SystemButton
+                <Button
                   variant="secondary"
                   className="grow"
-                  isDisabled={!!pending}
+                  disabled={!!pending}
                   onPress={() => finish("kept")}
                 >
-                  Keep current plan
-                </SystemButton>
+                  {t("keepCurrentPlan")}
+                </Button>
                 {adjustFrom && (
-                  <SystemIconButton
-                    icon="options-outline"
+                  <IconButton
+                    icon="options"
                     variant="secondary"
-                    iconSize={20}
-                    accessibilityLabel="Adjust targets"
-                    isDisabled={!!pending}
+                    accessibilityLabel={t("adjustTargets")}
+                    disabled={!!pending}
                     onPress={() => {
                       setAdjustingFor(due);
                       setCheckInError("");
@@ -291,17 +322,21 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
         <ErrorText message={checkInError} />
         {history.length > 0 && (
           <View className="gap-1 border-t border-separator pt-3">
-            <SystemLabel>Recent check-ins</SystemLabel>
+            <Label accessibilityRole="header">{t("recentCheckIns")}</Label>
             {history.slice(0, 4).map((item) => (
-              <Text key={item.day} className="text-sm text-muted tabular-nums">
-                {shortDay(item.day, language)} · {decisions[item.decision]} ·{" "}
-                {number(item.targets.calories, 0)} kcal
-              </Text>
+              <Meta
+                key={item.day}
+                items={[
+                  shortDay(item.day, format.tag),
+                  t(decisions[item.decision]),
+                  t("kcalValue", { value: format.number(item.targets.calories) }),
+                ]}
+              />
             ))}
           </View>
         )}
-      </SystemPanel.Body>
-    </SystemPanel>
+      </Panel.Body>
+    </Panel>
   );
   return (
     <>
@@ -317,24 +352,24 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
       {isDue && checkIn}
       {coached || targets ? (
         <ProgramCard
-          name={coached ? "Coached program" : "Manual"}
+          name={t(coached ? "coachedProgram" : "programManual")}
           since={since?.day ?? null}
           detail={detail}
           week={week}
-          today={new Date(`${data.day}T12:00:00`).getDay()}
+          today={dateOf(data.day).getDay()}
           notes={notes}
           onPress={coached ? () => setEditing(true) : undefined}
           action={
             program && (
               <ActionMenu
-                accessibilityLabel="Program options"
+                accessibilityLabel={t("programOptions")}
                 sections={[
                   {
                     actions: [
                       {
                         key: "manual",
-                        label: "Switch to manual targets",
-                        icon: "create-outline",
+                        label: t("switchToManual"),
+                        icon: "edit",
                         onPress: switchToManual,
                       },
                     ],
@@ -345,21 +380,20 @@ export function CoachingPanel({ onTargetsChanged }: { onTargetsChanged: () => vo
           }
         >
           {!coached && (
-            <SystemButton variant="secondary" onPress={() => setEditing(true)}>
-              Build my program
-            </SystemButton>
+            <Button variant="secondary" onPress={() => setEditing(true)}>
+              {t("buildMyProgram")}
+            </Button>
           )}
         </ProgramCard>
       ) : (
-        <SystemPanel className="p-4">
-          <SystemPanel.Body className="gap-3">
-            <SystemLabel>Get started</SystemLabel>
-            <Text accessibilityRole="header" className="text-xl font-semibold">
-              Let your plan do the math
-            </Text>
-            <SystemButton onPress={() => setEditing(true)}>Build my program</SystemButton>
-          </SystemPanel.Body>
-        </SystemPanel>
+        <Panel>
+          <Panel.Header eyebrow={t("getStarted")} title={t("planDoesMath")} />
+          <Panel.Body>
+            <Button variant="secondary" onPress={() => setEditing(true)}>
+              {t("buildMyProgram")}
+            </Button>
+          </Panel.Body>
+        </Panel>
       )}
       <ErrorText message={programError} />
       {!isDue && checkIn}

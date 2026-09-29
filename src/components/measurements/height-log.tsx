@@ -1,5 +1,4 @@
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
-import { Screen } from "@/components/ui";
+import { Button, Panel, Screen, Value } from "@/vector";
 import { useStore } from "@/lib/store";
 import { useMeasurementLog } from "./use-measurement-log";
 import { HeightForm } from "./height-form";
@@ -8,25 +7,24 @@ import { MeasurementHistory } from "./measurement-history";
 export function HeightLog() {
   const { t, date } = useStore();
   const log = useMeasurementLog("height");
-  const { rows, format, launch } = log;
+  const { rows, readout, launch } = log;
   return (
     <>
-      <Screen title={t("height")} subtitle={`${t("cadence")}: ${t("monthly")} – ${t("yearly")}`}>
+      <Screen
+        title={t("height")}
+        subtitle={t("cadenceBetween", { from: t("monthly"), to: t("yearly") })}
+      >
         {rows[0] && (
-          <SystemPanel>
-            <SystemPanel.Body>
-              <SystemPanel.Description>
-                {t("latest")} · {date(rows[0].measuredAt)}
-              </SystemPanel.Description>
-              <Text className="mt-2 text-4xl font-mono tabular-nums text-foreground">
-                {format("height", rows[0].values.height)}
-              </Text>
-            </SystemPanel.Body>
-          </SystemPanel>
+          <Panel>
+            <Panel.Header eyebrow={t("latest")} meta={date(rows[0].measuredAt)} />
+            <Panel.Body>
+              <Value size="l" {...readout("height", rows[0].values.height)} />
+            </Panel.Body>
+          </Panel>
         )}
-        <SystemButton onPress={() => launch(null)}>
-          {t("add")} · {t("height")}
-        </SystemButton>
+        <Button icon="add" onPress={() => launch(null)}>
+          {t("addHeight")}
+        </Button>
         <MeasurementHistory log={log} />
       </Screen>
       <HeightForm log={log} />

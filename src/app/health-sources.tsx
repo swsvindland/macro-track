@@ -1,16 +1,11 @@
 import { useState } from "react";
 import { Linking, View } from "react-native";
-import { Stack } from "expo-router";
-import { useThemeColor } from "heroui-native";
-import { Screen } from "@/components/ui";
-import { SystemButton, SystemText as Text } from "@/components/system";
+import { DetailScreen, ErrorText, Heading, LinkButton, Note, Text } from "@/vector";
 import { metricSources } from "@/lib/metric-sources";
 import { useStore } from "@/lib/store";
 
 export default function HealthSources() {
   const { t } = useStore();
-  const background = useThemeColor("background");
-  const foreground = useThemeColor("foreground");
   const [failedSource, setFailedSource] = useState<string | null>(null);
 
   async function openSource(url: string) {
@@ -23,41 +18,26 @@ export default function HealthSources() {
   }
 
   return (
-    <Screen title={t("sourcesTitle")} nativeHeader>
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          title: t("sourcesTitle"),
-          headerBackButtonDisplayMode: "minimal",
-          headerStyle: { backgroundColor: background },
-          headerTintColor: foreground,
-          contentStyle: { backgroundColor: background },
-        }}
-      />
-      <Text className="text-muted">{t("healthDisclaimer")}</Text>
+    <DetailScreen title={t("sourcesTitle")}>
+      <Note>{t("healthDisclaimer")}</Note>
       {metricSources.map((section) => (
         <View key={section.metric} className="gap-3">
-          <Text accessibilityRole="header" className="text-xl font-semibold">
-            {t(section.metric)}
-          </Text>
+          <Heading level={3}>{t(section.metric)}</Heading>
           <Text>{t(section.method)}</Text>
           {section.references.map((source) => (
             <View key={source.url} className="gap-2">
-              <SystemButton
-                variant="ghost"
+              <LinkButton
+                icon="external"
                 accessibilityRole="link"
-                accessibilityLabel={source.title}
-                className="justify-start"
+                accessibilityHint={t("opensInBrowser")}
                 onPress={() => void openSource(source.url)}
               >
-                <Text className="flex-1 text-link underline">{source.title}</Text>
-              </SystemButton>
+                {source.title}
+              </LinkButton>
               {failedSource === source.url && (
                 <>
-                  <Text accessibilityRole="alert" className="text-danger">
-                    {t("sourceUnavailable")}
-                  </Text>
-                  <Text selectable className="text-sm text-muted">
+                  <ErrorText message={t("sourceUnavailable")} />
+                  <Text variant="small" tone="muted" selectable>
                     {source.url}
                   </Text>
                 </>
@@ -66,6 +46,6 @@ export default function HealthSources() {
           ))}
         </View>
       ))}
-    </Screen>
+    </DetailScreen>
   );
 }

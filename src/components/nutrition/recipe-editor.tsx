@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
-import { SystemButton, SystemPanel, SystemText as Text } from "@/components/system";
+import { SystemButton } from "@/components/system";
 import { Editor, ErrorText, Field } from "@/components/ui";
+import { Heading, Meta, Note, Panel, Text, Value, useKitFormat } from "@/vector";
 import { useCloseForAppAction } from "@/lib/app-actions";
 import { deleteRecipe, saveRecipe } from "@/lib/diary";
 import { parseNumber } from "@/lib/metrics";
@@ -12,13 +13,17 @@ import { FoodEditor } from "./food-editor";
 
 export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => void }) {
   const { refresh } = useNutrition();
-  const { number } = useStore();
+  const { number, t } = useStore();
+  const format = useKitFormat();
   const [name, setName] = useState(recipe?.name ?? "");
   const [servings, setServings] = useState(String(recipe?.servings ?? 4));
   const [yieldGrams, setYieldGrams] = useState(recipe?.yieldGrams ? String(recipe.yieldGrams) : "");
   const [ingredients, setIngredients] = useState<RecipeIngredient[]>(recipe?.ingredients ?? []);
   const [picker, setPicker] = useState<{ index?: number } | null>(null);
   const [error, setError] = useState("");
+  // What the form opened with; any change holds the sheet against a swipe.
+  const [opened] = useState(() => JSON.stringify([name, servings, yieldGrams, ingredients]));
+  const dirty = JSON.stringify([name, servings, yieldGrams, ingredients]) !== opened;
   const locked = useRef(false);
   // The ingredient picker takes this sheet's place, so a link closes the recipe with it.
   useCloseForAppAction(!!picker, close);
@@ -30,7 +35,12 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
   };
   let preview = null;
   try {
-    preview = recipeFood({ ...draft, name: name.trim() || "Recipe", id: "preview", revision: 1 });
+    preview = recipeFood({
+      ...draft,
+      name: name.trim() || t("recipe"),
+      id: "preview",
+      revision: 1,
+    });
   } catch {
     /* Show validation on save, not while typing. */
   }
@@ -53,86 +63,83 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
     );
   }
   return (
-    <Editor title={recipe ? "Edit recipe" : "Create a recipe"} open close={close}>
-      <Text className="text-muted">Build the whole batch. We’ll work out each serving.</Text>
+    <Editor title={t(recipe ? "editRecipe" : "createARecipe")} open close={close} dirty={dirty}>
+      <Text tone="muted">{t("recipeIntro")}</Text>
       <Field
-        label="Recipe name"
+        label={t("recipeName")}
         value={name}
         onChange={setName}
-        placeholder="e.g. Weeknight chili"
+        placeholder={t("recipeNamePlaceholder")}
       />
-      <Field label="Servings in the whole batch" value={servings} onChange={setServings} numeric />
-      <Text className="text-sm text-muted">
-        A batch split into four equal portions makes 4 servings.
-      </Text>
-      <Field
-        label="Cooked batch weight (g, optional)"
-        value={yieldGrams}
-        onChange={setYieldGrams}
-        numeric
-      />
-      <Text className="text-sm text-muted">
-        Weigh the finished food without its container to log portions by grams.
-      </Text>
+      <Field label={t("recipeServings")} value={servings} onChange={setServings} numeric />
+      <Note>{t("recipeServingsNote")}</Note>
+      <Field label={t("recipeBatchWeight")} value={yieldGrams} onChange={setYieldGrams} numeric />
+      <Note>{t("recipeBatchWeightNote")}</Note>
       <View className="gap-3">
-        <Text className="text-lg font-semibold">Ingredients</Text>
-        {!ingredients.length && (
-          <Text className="text-sm text-muted">
-            Add each ingredient with the quantity used in the whole batch.
-          </Text>
-        )}
+        <Heading level={3}>{t("ingredients")}</Heading>
+        {!ingredients.length && <Note>{t("recipeIngredientsEmpty")}</Note>}
         {ingredients.map((item, index) => (
-          <SystemPanel key={index}>
-            <SystemPanel.Body className="gap-2">
-              <Text className="font-semibold">{item.food.name}</Text>
-              <Text className="text-sm text-muted">
-                {number(item.amount, 2)}{" "}
-                {item.food.basis === "serving" ? "servings" : item.food.basis}
-              </Text>
+          <Panel key={index}>
+            <Panel.Body className="gap-2">
+              <Text variant="bodyStrong">{item.food.name}</Text>
+              <Note>
+                {item.food.basis === "serving"
+                  ? t(format.plural(item.amount) === "one" ? "servingCountOne" : "servingCount", {
+                      count: number(item.amount, 2),
+                    })
+                  : t("amountUnit", { count: number(item.amount, 2), unit: item.food.basis })}
+              </Note>
               <View className="flex-row gap-2">
                 <SystemButton
                   variant="ghost"
                   onPress={() => setPicker({ index })}
-                  accessibilityLabel={`Change ${item.food.name} quantity`}
+                  accessibilityLabel={t("changeQuantityNamed", { name: item.food.name })}
                 >
-                  Change quantity
+                  {t("changeQuantity")}
                 </SystemButton>
                 <SystemButton
                   variant="danger-soft"
                   onPress={() => setIngredients((old) => old.filter((_, i) => i !== index))}
-                  accessibilityLabel={`Remove ${item.food.name}`}
+                  accessibilityLabel={t("removeNamed", { name: item.food.name })}
                 >
-                  Remove
+                  {t("remove")}
                 </SystemButton>
               </View>
-            </SystemPanel.Body>
-          </SystemPanel>
+            </Panel.Body>
+          </Panel>
         ))}
         <SystemButton
           variant="secondary"
           isDisabled={ingredients.length >= 100}
           onPress={() => setPicker({})}
         >
-          Add ingredient
+          {t("addIngredient")}
         </SystemButton>
       </View>
       {preview && (
-        <SystemPanel>
-          <SystemPanel.Body className="gap-2">
-            <Text className="text-sm text-muted">
-              {draft.yieldGrams ? "Per 100 g" : "Per serving"} · {number(draft.servings, 2)}{" "}
-              servings in batch
-            </Text>
-            <Text className="text-3xl font-semibold tabular-nums">
-              {number(preview.nutrients.calories, 0)}{" "}
-              <Text className="text-base text-muted">kcal</Text>
-            </Text>
-            <Text className="text-sm text-muted">
-              {number(preview.nutrients.protein)} g protein · {number(preview.nutrients.carbs)} g
-              carbs · {number(preview.nutrients.fat)} g fat
-            </Text>
-          </SystemPanel.Body>
-        </SystemPanel>
+        <Panel>
+          <Panel.Body className="gap-2">
+            <Meta
+              items={[
+                t(draft.yieldGrams ? "per100g" : "perServing"),
+                t(
+                  format.plural(draft.servings) === "one"
+                    ? "servingsInBatchOne"
+                    : "servingsInBatch",
+                  { count: number(draft.servings, 2) }
+                ),
+              ]}
+            />
+            <Value size="l" value={format.number(preview.nutrients.calories)} unit={t("kcal")} />
+            <Meta
+              items={[
+                t("proteinGrams", { value: format.number(preview.nutrients.protein, 1) }),
+                t("carbsGrams", { value: format.number(preview.nutrients.carbs, 1) }),
+                t("fatGrams", { value: format.number(preview.nutrients.fat, 1) }),
+              ]}
+            />
+          </Panel.Body>
+        </Panel>
       )}
       <ErrorText message={error} />
       <SystemButton
@@ -145,24 +152,22 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
             close();
           } catch (e) {
             locked.current = false;
-            setError(e instanceof Error ? e.message : "Couldn't save this recipe.");
+            setError(e instanceof Error ? e.message : t("couldNotSaveRecipe"));
           }
         }}
       >
-        Save recipe
+        {t("saveRecipe")}
       </SystemButton>
       {recipe && (
         <>
-          <Text className="text-sm text-muted">
-            Changes apply to future portions. Previously logged food keeps its original nutrition.
-          </Text>
+          <Note>{t("recipeChangesNote")}</Note>
           <SystemButton
             variant="danger-soft"
             onPress={() =>
-              Alert.alert("Delete recipe?", "Food already logged will stay in your diary.", [
-                { text: "Cancel", style: "cancel" },
+              Alert.alert(t("deleteRecipeTitle"), t("deleteRecipeBody"), [
+                { text: t("cancel"), style: "cancel" },
                 {
-                  text: "Delete",
+                  text: t("delete"),
                   style: "destructive",
                   onPress: () => {
                     try {
@@ -170,14 +175,14 @@ export function RecipeEditor({ recipe, close }: { recipe?: Recipe; close: () => 
                       refresh();
                       close();
                     } catch {
-                      setError("Couldn't delete this recipe. Try again.");
+                      setError(t("couldNotDeleteRecipe"));
                     }
                   },
                 },
               ])
             }
           >
-            Delete recipe
+            {t("deleteRecipe")}
           </SystemButton>
         </>
       )}
