@@ -1,0 +1,67 @@
+diff --git a/ios/CameraViewModule.swift b/ios/CameraViewModule.swift
+index cccd73f006589bed21d54532752e0995886ad34f..fc364f45bf55db09ff49b7bc6e6fdee98307fb14 100644
+--- a/ios/CameraViewModule.swift
++++ b/ios/CameraViewModule.swift
+@@ -344,11 +344,11 @@ public final class CameraViewModule: Module, ScannerResultHandler {
+       }
+     }
+ 
++    // Resolves once the scanner has left the screen, so the app can present its next sheet: UIKit
++    // ignores a present while another view controller is still being dismissed.
+     AsyncFunction("dismissScanner") {
+       if #available(iOS 16.0, *) {
+-        await MainActor.run {
+-          dismissScanner()
+-        }
++        await dismissScanner()
+       }
+     }
+ 
+@@ -419,12 +419,20 @@ public final class CameraViewModule: Module, ScannerResultHandler {
+ 
+   @available(iOS 16.0, *)
+   @MainActor
+-  private func dismissScanner() {
++  private func dismissScanner() async {
+     guard let controller = scannerContext?.controller as? DataScannerViewController else {
+       return
+     }
+-    controller.dismiss(animated: true) { [weak self] in
+-      self?.onScannerDismissed()
++    // Swiped away already: dismiss would have nothing to do and never call back.
++    guard controller.presentingViewController != nil else {
++      onScannerDismissed()
++      return
++    }
++    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
++      controller.dismiss(animated: true) { [weak self] in
++        self?.onScannerDismissed()
++        continuation.resume()
++      }
+     }
+   }
+ 
+diff --git a/ios/Current/VisionScannerDelegate.swift b/ios/Current/VisionScannerDelegate.swift
+index f7ceabca264f0bcf804ad8429b01aef73c9ec7ee..9baf5a1e303965c957586884484d572ce1fbe12f 100644
+--- a/ios/Current/VisionScannerDelegate.swift
++++ b/ios/Current/VisionScannerDelegate.swift
+@@ -14,8 +14,18 @@ class VisionScannerDelegate: NSObject, DataScannerViewControllerDelegate, UIAdap
+     self.handler = handler
+   }
+ 
++  // A code is reported as soon as it is recognized, not only once its bounds next change: a phone
++  // held still over a barcode otherwise waits for a hand movement.
++  func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
++    report(addedItems)
++  }
++
+   func dataScanner(_ dataScanner: DataScannerViewController, didUpdate updatedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+-    if let item = updatedItems.first {
++    report(updatedItems)
++  }
++
++  private func report(_ items: [RecognizedItem]) {
++    if let item = items.first {
+       switch item {
+       case .barcode(let code):
+         handler.onItemScanned(result: BarcodeScannerUtils.visionDataScannerObjectToDictionary(item: code))

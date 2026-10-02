@@ -7,4 +7,5 @@ allowBuilds:
   unrs-resolver: true
 
 patchedDependencies:
+  '@expo/metro-config@57.0.12': patches/@expo__metro-config@57.0.12.patch
   react-native-health-connect@4.1.3: patches/react-native-health-connect@4.1.3.patch

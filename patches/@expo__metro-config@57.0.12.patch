@@ -1,0 +1,15 @@
+diff --git a/build/transform-worker/metro-transform-worker.js b/build/transform-worker/metro-transform-worker.js
+index d265b882837a37259697041f6a5f5a9977a4076a..07613fa3c104f516c8ec837ff29863860ef43fc0 100644
+--- a/build/transform-worker/metro-transform-worker.js
++++ b/build/transform-worker/metro-transform-worker.js
+@@ -575,7 +575,9 @@ async function transform(config, projectRoot, filename, data, options) {
+         projectRoot,
+         options,
+     };
+-    const sourceCode = data.toString('utf8');
++    // An asset's module is generated from its path, never its bytes, and a binary asset past
++    // V8's string limit (about 512 MiB) can't be decoded at all.
++    const sourceCode = options.type === 'asset' ? '' : data.toString('utf8');
+     const { unstable_dependencyMapReservedName } = config;
+     if (unstable_dependencyMapReservedName != null) {
+         const position = sourceCode.indexOf(unstable_dependencyMapReservedName);

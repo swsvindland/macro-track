@@ -16,6 +16,7 @@
       },
       "supportsTablet": false,
       "bundleIdentifier": "dev.svindland.vector.macro",
+      "appleTeamId": "9HAG9PT8LJ",
       "entitlements": {
         "com.apple.security.application-groups": ["group.dev.svindland.vector.macro"]
       },
