@@ -8,6 +8,7 @@ import {
   allowedTypos,
   countWords,
   misread,
+  profileFor,
   rankSearch,
   readQuery,
   searchForms,
@@ -253,14 +254,17 @@ async function spell(word: string, catalogs: Catalog[]): Promise<string[]> {
     const least = (known < rare ? 10 : 75) * (known + 1);
     // A half-typed word is the start of a catalog word; typos rarely touch both of the first two
     // letters, so words starting with either are read. A whole word may have a typo anywhere.
+    // What it meant is in `least` foods, nearly always through one word in many of them, so the
+    // words in a few foods, half of every catalog's, are left unread.
     const terms = new Map<string, number>();
     for (const start of new Set([word[0], word[1]]))
       for (const [term, foods] of await count(
         catalogs,
-        `${range} AND length(term) >= ?`,
+        `${range} AND length(term) >= ? AND foods >= ?`,
         start,
         `${start}\uffff`,
-        word.length - limit
+        word.length - limit,
+        Math.max(2, Math.floor(least / 25))
       ))
         terms.set(term, foods);
     for (const [term, foods] of await count(
@@ -320,22 +324,74 @@ async function spell(word: string, catalogs: Catalog[]): Promise<string[]> {
   return fixes;
 }
 
+/** Whether words name a brand, by their FTS expression, remembered for the launch. */
+const brandish = new Map<string, boolean>();
+
 /**
- * A typed search, best match first, with the corrections it searched for. Each word is a
- * stemmed prefix, a word the catalogs barely know is also searched as what it probably meant, and
- * a search that finds nothing falls back to the word that names the food. The person's own foods
- * in `known` rank higher, and packaged foods people scan more rank higher among themselves.
+ * Whether words name a brand: they are in the brand of at least 20 packaged foods and half again
+ * as many brands as names ("trader joes", "kirkland", "great value"). Brands that name their
+ * products ("oreo", "cheerios", "coke") are searched as names.
+ */
+async function isBrand(words: string[], catalog: Catalog, fixes: Fixes) {
+  const expression = words.map((word) => searchTerm(word, fixes)).join(" AND ");
+  const remembered = brandish.get(expression);
+  if (remembered !== undefined) return remembered;
+  // Counting stops at 2,000: past that, a word is too common in names to be only a brand.
+  const count = async (column: "brand" | "name") =>
+    (
+      await catalog.database.getFirstAsync<{ found: number }>(
+        `SELECT count(*) AS found FROM (
+           SELECT rowid FROM food_search WHERE food_search MATCH ? LIMIT 2000
+         )`,
+        `{${column}}: (${expression})`
+      )
+    )?.found ?? 0;
+  const inBrands = await count("brand");
+  const brand = inBrands >= 20 && inBrands >= 1.5 * (await count("name"));
+  if (brandish.size > 500) brandish.clear();
+  brandish.set(expression, brand);
+  return brand;
+}
+
+/**
+ * The words at the start or end of a search that name a brand, the most words first: "trader
+ * joes" in "trader joes mini wheats" or "mini wheats trader joes". At least one word is left to
+ * name the food; a search for a brand alone ("kirkland", or "pop" on its way to Pop-Tarts) is
+ * searched as any other.
+ */
+async function findBrand(words: string[], catalogs: Catalog[], fixes: Fixes) {
+  const branded = catalogs.find((catalog) => catalog.kind === "branded");
+  if (!branded) return null;
+  for (let size = Math.min(words.length - 1, 3); size > 0; size--)
+    for (const start of new Set([0, words.length - size])) {
+      const span = words.slice(start, start + size);
+      // A letter on its own is a size or a variety ("k cup"), whatever brands start with it.
+      if (span.some((word) => word.length > 1) && (await isBrand(span, branded, fixes)))
+        return { start, end: start + size };
+    }
+  return null;
+}
+
+/**
+ * A typed search, best match first, with the corrections it searched for and the words that
+ * named a brand. Each word is a stemmed prefix and a word the catalogs barely know is also
+ * searched as what it probably meant. A search that names a brand also finds the brand's foods
+ * that share a word with the rest ("Shredded Bite Size Wheats" for "trader joes mini wheats") and
+ * the foods the rest names under any brand; a longer search that finds little also finds foods
+ * missing one of its words; and a search that finds nothing falls back to the word that names
+ * the food. The person's own foods in `known` rank higher, and packaged foods people scan more
+ * rank higher among themselves.
  */
 export async function searchCatalog(
   query: string,
   known: Known = new Set()
-): Promise<{ foods: Food[]; fixes: Fixes }> {
+): Promise<{ foods: Food[]; fixes: Fixes; brand: string[] }> {
   const { words, counts } = readQuery(query);
   // A single letter matches most of the catalog, so the search waits for a second one.
   const last = words.at(-1) ?? "";
   const searched = last.length < 2 && !/^\d$/.test(last) ? words.slice(0, -1) : words;
   const foods = searched.filter((word) => !/^\d+$/.test(word));
-  if (!foods.length) return { foods: [], fixes: {} };
+  if (!foods.length) return { foods: [], fixes: {}, brand: [] };
   const catalogs = await openCatalogs();
   const fixes: Record<string, string[]> = {};
   for (const word of new Set(foods)) {
@@ -343,30 +399,56 @@ export async function searchCatalog(
     if (meant.length) fixes[word] = meant;
   }
   const limits = { generic: 150, branded: 60 };
-  const expression = searched.map((word) => searchTerm(word, fixes)).join(" AND ");
+  const term = (word: string) => searchTerm(word, fixes);
+  const expression = searched.map(term).join(" AND ");
   // USDA names lead with the food ("Chicken, broilers or fryers, breast…"), so those come first.
   const leadOf = (word: string) => fixes[word]?.[0] ?? searchForms(word)[0];
   // The words alone rank 12-grain bread too low to reach it for "12 grain bread".
   const phrases = counts.map(([count, next]) => `"${count} ${stem(next)}"*`);
-  let pool = (
-    await Promise.all([
-      phrases.length ? match(catalogs, [...phrases, expression].join(" AND ")) : [],
-      match(catalogs, expression, limits, leadOf(foods[0])),
-    ])
-  ).flat();
-  if (!pool.length && searched.length > 1) {
-    // "Pizza slice" names pizza.
+  const span = await findBrand(searched, catalogs, fixes);
+  const brand = span ? searched.slice(span.start, span.end) : [];
+  const named = span ? searched.filter((_, i) => i < span.start || i >= span.end) : [];
+  const product = named.filter((word) => !/^\d+$/.test(word));
+  // With a brand, also the brand's foods with any of the other words, and those words' foods by
+  // any brand.
+  const branded = catalogs.filter((catalog) => catalog.kind === "branded");
+  const theirs = `{brand}: (${brand.map(term).join(" AND ")})`;
+  const [anyBrand, ...found] = await Promise.all([
+    product.length ? match(catalogs, named.map(term).join(" AND "), limits) : [],
+    phrases.length ? match(catalogs, [...phrases, expression].join(" AND ")) : [],
+    match(catalogs, expression, limits, leadOf(foods[0])),
+    product.length ? match(branded, `${theirs} AND (${named.map(term).join(" OR ")})`, limits) : [],
+  ]);
+  const pool = [...found, anyBrand].flat();
+  if (pool.length < 10 && searched.length > 1) {
+    // Few foods have every word, so also the word that names the food ("pizza slice" names
+    // pizza) and, without a brand, foods missing one word ("zesty homestyle banana").
     const head = foods.findLast((word) => !countWords.test(word)) ?? foods.at(-1)!;
-    pool = await match(catalogs, searchTerm(head, fixes), limits, leadOf(head));
+    const more = [match(catalogs, term(head), limits, leadOf(head))];
+    if (!span && foods.length > 2) {
+      const missing = searched.map((_, i) => searched.filter((__, j) => j !== i).map(term));
+      more.push(
+        match(catalogs, missing.map((rest) => `(${rest.join(" AND ")})`).join(" OR "), limits)
+      );
+    }
+    pool.push(...(await Promise.all(more)).flat());
   }
   const popularity = new Map(pool.map(({ food, popularity }) => [food.id, popularity]));
+  // What the words besides the brand usually name, from the foods they name by any brand.
+  const kind = product.length
+    ? profileFor(
+        named,
+        anyBrand.map(({ food }) => food),
+        fixes
+      )
+    : null;
   const ranked = rankSearch(
     query,
-    pool.map(({ food }) => food),
+    [...new Map(pool.map(({ food }) => [food.id, food])).values()],
     known,
-    { fixes, popularity, away: awayIds(pool) }
+    { fixes, popularity, away: awayIds(pool), brand, profile: kind }
   );
-  return { foods: ranked, fixes };
+  return { foods: ranked, fixes, brand };
 }
 
 /** A typed search, best match first; see searchCatalog. */

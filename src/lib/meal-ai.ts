@@ -4,6 +4,7 @@ import {
   forms,
   isBranded,
   nameWords,
+  profileFor,
   same,
   scoreFoods,
   stem,
@@ -671,14 +672,26 @@ async function candidates(seen: SeenFood, deps: AnalysisDeps, known: ReadonlySet
   const add = (foods: Food[]) => {
     for (const food of foods) if (!pool.has(food.id)) pool.set(food.id, food);
   };
+  const searched = new Map<string, Food[]>();
+  const search = async (query: string) => {
+    const found = searched.get(query) ?? (await deps.search(query));
+    searched.set(query, found);
+    add(found);
+    return found;
+  };
   for (const query of catalogQueries(seen)) {
     if (pool.size >= 40) break;
-    add(await deps.search(query));
+    await search(query);
   }
-  // A misread brand should cost one tap, so the plain food stays among the options.
+  // A misread brand should cost one tap, so the plain food stays among the options. What it
+  // usually is also tells the brand's own name for it from the brand's other foods: Trader Joe's
+  // Mini-Wheats are its "Shredded Bite Size Wheats", not its wheat bread.
   const plain = seen.brand ? catalogQueries({ ...seen, brand: "" })[0] : undefined;
-  if (plain) add(await deps.search(plain));
-  const ranked = scoreFoods(seen, [...pool.values()], known, false, { away: deps.away });
+  const kind = plain ? profileFor(nameWords(seen), await search(plain)) : null;
+  const ranked = scoreFoods(seen, [...pool.values()], known, false, {
+    away: deps.away,
+    profile: kind,
+  });
   const head = ranked.slice(0, seen.brand ? 6 : 8);
   const generic = seen.brand
     ? ranked.filter((row) => !head.includes(row) && !isBranded(row.food)).slice(0, 2)

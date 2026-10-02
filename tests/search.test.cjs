@@ -205,6 +205,29 @@ test("typed searches match the person's own foods by word, not by substring", ()
   assert.ok(!rank.matchesQuery("93/7 beef", named("Ground beef 80/20")));
 });
 
+test("a profile tells a kind of food from others named with the same words", () => {
+  const food = (calories, protein, carbs, fat, basis = "g") => ({
+    basis,
+    nutrients: { calories, protein, carbs, fat, fiber: null, sodium: null },
+  });
+  // Mini-Wheats as their labels give them.
+  const cereal = rank.profile([
+    food(360, 9, 82, 2),
+    food(350, 8.3, 85, 2.2),
+    food(370, 10, 80, 1.7),
+    food(345, 9.1, 81.7, 2.5),
+  ]);
+  assert.ok(rank.likeness(food(377, 16.4, 78.7, 0), cereal) > 0.9, "shredded wheat");
+  assert.ok(rank.likeness(food(229, 11.4, 42.9, 4.3), cereal) < -0.9, "wheat bread");
+  assert.ok(rank.likeness(food(268, 10.7, 51.8, 0.9), cereal) < 0, "pita pockets");
+  // A food counted per serving has no amounts to compare, and three foods are too few to say.
+  assert.equal(rank.likeness(food(110, 3, 23, 0.5, "serving"), cereal), 0);
+  assert.equal(
+    rank.profile([food(360, 9, 82, 2), food(350, 8, 85, 2), food(370, 10, 80, 2)]),
+    null
+  );
+});
+
 test("everyday searches put a plain staple in the top three", async () => {
   const basket = [
     ["egg", /^Egg, whole, /],
@@ -310,6 +333,35 @@ test("branded foods stay reachable, and a named brand is not marked down", async
     assert.equal((await catalog.searchFoods(query))[0].source, "usda", query);
 });
 
+test("a search naming a brand finds that brand's version first, then the name brand", async () => {
+  const names = async (query, n = 5) =>
+    (await catalog.searchFoods(query)).slice(0, n).map((food) => `${food.name} [${food.brand}]`);
+  // Trader Joe's sells Mini-Wheats as "Shredded Bite Size Wheats", in either word order; its
+  // pita pockets have every word but bread's macros, and come after Kellogg's own.
+  for (const query of ["trader joes mini wheats", "mini wheats trader joes"]) {
+    const found = await names(query, 12);
+    assert.match(found[0], /^Shredded Bite Size Wheats \[Trader Joe/, query);
+    const kelloggs = found.findIndex((name) => /mini.?wheats.*\[Kellog/i.test(name));
+    const bread = found.findIndex((name) => /pita|bread|wraps|tortilla/i.test(name));
+    assert.ok(kelloggs > 0 && kelloggs < 5, `${query}: ${found.join(" | ")}`);
+    assert.ok(bread < 0 || bread > kelloggs, `${query}: ${found.join(" | ")}`);
+    assert.deepEqual((await catalog.searchCatalog(query)).brand, ["trader", "joes"]);
+  }
+  // A brand that doesn't make the food leaves the name brand first, not the word's raw grain.
+  assert.match((await names("kirkland mini wheats"))[0], /mini.?wheats.*\[Kellogg/i);
+  // A brand selling the food by that name keeps all of those ahead of its other cereal flakes.
+  for (const name of await names("great value frosted flakes", 3))
+    assert.match(name, /frosted.*flakes.*\[Great Value\]/i);
+  // The brand's spread, not the cups and cookies named after it.
+  for (const name of await names("trader joes peanut butter", 4))
+    assert.match(name, /peanut butter\b(?! (cups?|brittle|filled))/i);
+  // Brands that name their products, lone letters and a search for a brand alone stay names.
+  for (const query of ["oreo cookies", "k cup", "pop", "kirkland", "chicken breast"])
+    assert.deepEqual((await catalog.searchCatalog(query)).brand, [], query);
+  // A word found only in a brand counts half: "wheats" is not the brand Wheaty.
+  assert.ok(!(await names("mini wheats", 8)).some((name) => /wheaty/i.test(name)));
+});
+
 test("the person's own foods lead a search, more so the more often they are eaten", async () => {
   const pool = await catalog.searchFoods("eggs");
   const boiled = pool.find((food) => food.name === "Egg, whole, cooked, hard-boiled");
@@ -393,7 +445,15 @@ test("packaged foods people scan more come first among a brand's products", asyn
 
 test("a keystroke search with reranking stays within its budget", async () => {
   await catalog.searchFoods("warm");
-  for (const query of ["ch", "co", "ba", "sa", "po", "chicken", "cheese", "2% milk", "2 eggs"]) {
+  // The first search for a word the catalogs barely know reads the words it may be a typo of.
+  for (const query of ["celsius", "kodiak cakes"]) {
+    const start = performance.now();
+    await catalog.searchFoods(query);
+    const took = performance.now() - start;
+    assert.ok(took < 60, `${query} took ${took.toFixed(1)} ms the first time`);
+  }
+  const queries = ["ch", "co", "ba", "sa", "po", "chicken", "cheese", "2% milk", "2 eggs"];
+  for (const query of [...queries, "trader joes mini wheats", "great value whole milk"]) {
     let best = Infinity;
     for (let run = 0; run < 3; run++) {
       const start = performance.now();

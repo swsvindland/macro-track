@@ -596,14 +596,14 @@ export function FoodEditor({
         known
       );
       searchCatalog(query, known)
-        .then(({ foods, fixes }) => {
+        .then(({ foods, fixes, brand }) => {
           if (!active) return;
           // A typo the catalog corrected ("chiken") finds the person's own foods too.
           const matched = rankSearch(
             query,
             mine.filter((item) => matchesQuery(query, item, fixes)),
             known,
-            { fixes }
+            { fixes, brand }
           );
           const shown = new Set(matched.map((item) => item.id));
           setResults([...matched, ...foods.filter((food) => !shown.has(food.id))]);

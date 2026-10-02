@@ -154,6 +154,7 @@ export function FastLogger({
     query: string;
     foods: Food[];
     fixes: Fixes;
+    brand: string[];
     error: string;
   } | null>(null);
   const [cart, setCart] = useState<LogChoice[]>([]),
@@ -196,8 +197,8 @@ export function FastLogger({
     let active = true;
     const timer = setTimeout(() => {
       void searchCatalog(trimmed, known)
-        .then(({ foods, fixes }) => {
-          if (active) setResults({ query: trimmed, foods, fixes, error: "" });
+        .then(({ foods, fixes, brand }) => {
+          if (active) setResults({ query: trimmed, foods, fixes, brand, error: "" });
         })
         .catch(() => {
           if (active)
@@ -205,6 +206,7 @@ export function FastLogger({
               query: trimmed,
               foods: [],
               fixes: {},
+              brand: [],
               error: t("catalogUnavailable"),
             });
         });
@@ -218,6 +220,7 @@ export function FastLogger({
   // results reuse the last portion of any the person has eaten.
   // Once the catalog answers, a typo it corrected ("chiken") finds the person's own foods too.
   const fixes = results?.query === trimmed ? results.fixes : undefined;
+  const brand = results?.query === trimmed ? results.brand : undefined;
   const recalled = useMemo(
     () => (trimmed ? data.recall((food) => matchesQuery(trimmed, food, fixes)) : []),
     [data, trimmed, fixes]
@@ -234,7 +237,7 @@ export function FastLogger({
           .map((choice) => choice.items[0].food)
           .filter((food) => matchesQuery(trimmed, food, fixes)),
         known,
-        { fixes }
+        { fixes, brand }
       ).map((food) => byKey.get(`food:${food.id}`)!)
     : [];
   const listed = new Set(own.map((choice) => choice.key));

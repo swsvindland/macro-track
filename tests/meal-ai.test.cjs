@@ -509,6 +509,20 @@ test("a named chain's item is logged whole, with plain foods kept as alternative
   );
 });
 
+test("a named brand's food is found under the brand's own name for it", async () => {
+  const { drafts } = await draft([
+    { brand: "Trader Joe's", name: "Mini Wheats", quantity: 1, unit: "cup", grams: 55 },
+    { brand: "Kirkland", name: "Mini Wheats", quantity: 1, unit: "cup", grams: 55 },
+    { brand: "Trader Joe's", name: "peanut butter", quantity: 2, unit: "tbsp", grams: 32 },
+  ]);
+  const picked = drafts.map((row) => `${row.item?.food.name} [${row.item?.food.brand}]`);
+  // Trader Joe's calls them "Shredded Bite Size Wheats"; its wheat bread is another food.
+  assert.match(picked[0], /^Shredded Bite Size Wheats \[Trader Joe/);
+  // Kirkland makes none, so Kellogg's, not a Kirkland bagel or raw wheat.
+  assert.match(picked[1], /mini.?wheats/i);
+  assert.match(picked[2], /^(Crunchy |Creamy )?Peanut Butter \[Trader Joe/i);
+});
+
 test("amounts come from catalog portions, checked against the model's weight", () => {
   const food = (portions, basis = "g") => ({
     id: "usda:test",

@@ -20,6 +20,10 @@ export type SearchHints = {
   popularity?: ReadonlyMap<string, number>;
   /** Packaged foods sold only in other countries than the phone's. */
   away?: ReadonlySet<string>;
+  /** The search's words that name a brand: "trader joes" in "trader joes mini wheats". */
+  brand?: readonly string[];
+  /** What the food the other words name is usually like; see profile. */
+  profile?: Profile | null;
 };
 
 const stop = new Set("a an and the of with in on or s to for style".split(" "));
@@ -55,7 +59,8 @@ export const countWords =
   /^(?:slices?|pieces?|strips?|leaf|leaves|wedges?|chunks?|servings?|portions?|cups?|bowls?|plates?|sides?|orders?|small|medium|large|regular|jumbo|mini|kids?|tall|grande|venti)$/;
 export function nameWords(seen: Named) {
   const list = words(seen.name);
-  const food = list.filter((word) => !countWords.test(word));
+  // "Mini" names products more often than a size: Mini-Wheats, mini pretzels, mini peppers.
+  const food = list.filter((word) => word === "mini" || !countWords.test(word));
   return (food.length ? food : list).slice(0, 6);
 }
 
@@ -235,7 +240,7 @@ export function isBranded(food: Pick<Food, "name" | "brand" | "source">) {
 }
 
 /** The brand's words, including a restaurant USDA writes first: "McDONALD'S, BIG MAC". */
-function brandWords(food: Food) {
+function brandWords(food: Named) {
   if (food.brand) return words(food.brand);
   const first = food.name.split(",")[0];
   const plain = first.replace(/\bMc/g, "");
@@ -316,20 +321,28 @@ export const same = (word: string, form: string) =>
 
 /**
  * How well a food's name covers the words that were said. In a search the words may be half
- * typed, so a longer word also counts ("chic" finds chicken), below the word itself.
+ * typed, so a longer word also counts ("chic" finds chicken), below the word itself, and a word
+ * found only in the brand counts half: "wheats" names a cereal, not the brand Wheaty. With
+ * `nameOnly`, the words describe the product and only its name is read.
  */
 export function coverage(
   seen: Named,
   food: Named,
   target = nameWords(seen),
   prefix = false,
-  fixes: Fixes = {}
+  fixes: Fixes = {},
+  nameOnly = false
 ) {
   // "Dry heat" is how USDA says cooked.
   const name = food.name.replace(/\b(?:dry|moist) heat\b/gi, "cooked");
-  const found = words(`${name} ${food.brand}`).map(stem);
-  // Notes in brackets can match but barely make it a different food: "(Alaska Native)".
-  const said = words(`${name.replace(/\([^)]*\)/g, " ")} ${food.brand}`).map(stem);
+  const titled = words(name).map(stem);
+  const found = nameOnly ? titled : [...titled, ...words(food.brand).map(stem)];
+  // Notes in brackets can match but barely make it a different food: "(Alaska Native)". The
+  // brand, wherever it is written, is who makes the food, not more of it.
+  const own = brandWords(food).map(stem);
+  const said = words(name.replace(/\([^)]*\)/g, " "))
+    .map(stem)
+    .filter((w) => !own.includes(w));
   const noted = words(
     [...name.matchAll(/\(([^)]*)\)/g)]
       .map((note) => note[1])
@@ -354,10 +367,18 @@ export function coverage(
       );
     });
   const has = (word: string) => literal(word) || fixed(word);
+  const branded = (word: string) =>
+    prefix &&
+    !nameOnly &&
+    !options(word).some((form) => titled.some((w) => fits(w, form))) &&
+    !(fixes[word] ?? []).some((fix) => titled.some((w) => w.startsWith(fix.split(" ")[0])));
   // The last word names the food ("coffee" in "black coffee"); earlier words describe it.
   const weight = (i: number) => (i === target.length - 1 ? 2 : 1);
   const total = target.reduce((sum, _, i) => sum + weight(i), 0);
-  const hits = target.reduce((sum, word, i) => sum + (has(word) ? weight(i) : 0), 0);
+  const hits = target.reduce(
+    (sum, word, i) => sum + (has(word) ? weight(i) * (branded(word) ? 0.5 : 1) : 0),
+    0
+  );
   const mentioned = [
     ...new Set(
       target.flatMap((word) => [
@@ -381,6 +402,8 @@ export function coverage(
   return {
     name: total ? hits / total : 0,
     partial: target.filter((word) => !whole(word) && literal(word)).length,
+    // The word that names the food is in its name: "wheats" in "Shredded Bite Size Wheats".
+    head: target.length > 0 && has(target.at(-1)!) && !branded(target.at(-1)!),
     // Words found only as corrected: "chiken" in "Chicken breast".
     fixed: target.filter((word) => !literal(word) && fixed(word)).length,
     usual:
@@ -411,6 +434,79 @@ function counted(food: Named, [count, next]: [string, string]) {
   return list.some((w, i) => w === count && stem(list[i + 1] ?? "").startsWith(stem(next)));
 }
 
+/**
+ * A kind of food's usual energy and macros per 100 g or ml: the middle of the foods that name it
+ * and how far they stray. Calories are on a log scale, since a kind of food sets its density
+ * rather than its exact calories.
+ */
+export type Profile = { center: number[]; spread: number[] };
+const point = (food: Food) =>
+  food.basis === "serving"
+    ? null
+    : [
+        Math.log(Math.max(0, food.nutrients.calories) + 10),
+        food.nutrients.protein,
+        food.nutrients.carbs,
+        food.nutrients.fat,
+      ];
+// The least spread a profile allows: labels round, and recipes for one food differ this much.
+const leastSpread = [0.15, 3, 6, 3];
+function middle(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const half = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2;
+}
+
+/** The profile of some foods, or null for too few to say what such a food is like. */
+export function profile(foods: Food[]): Profile | null {
+  const points = foods.map(point).filter((p) => p !== null);
+  if (points.length < 4) return null;
+  const center = leastSpread.map((_, d) => middle(points.map((p) => p[d])));
+  const spread = leastSpread.map((least, d) =>
+    Math.max(least, 1.4826 * middle(points.map((p) => Math.abs(p[d] - center[d]))))
+  );
+  return { center, spread };
+}
+
+/**
+ * The profile of what words name, from the foods named little more than them: "peanut butter"
+ * is the spread, not the cups and cookies named after it.
+ */
+export function profileFor(product: string[], foods: Food[], fixes: Fixes = {}) {
+  const seen = { name: product.join(" "), brand: "" };
+  const named = foods.filter((food) => {
+    const match = coverage(seen, food, product, true, fixes, true);
+    return match.name === 1 && match.others + match.variations <= 1;
+  });
+  return profile(named.slice(0, 12));
+}
+
+/**
+ * How much a food is like a profile's kind: 1 alike, 0 unsure, -1 another kind of food. A store's
+ * shredded wheat cereal is like Mini-Wheats; its wheat bread, with half the carbs, is not.
+ */
+export function likeness(food: Food, { center, spread }: Profile) {
+  const p = point(food);
+  if (!p) return 0;
+  const distance = Math.sqrt(
+    p.reduce((sum, x, d) => sum + ((x - center[d]) / spread[d]) ** 2, 0) / p.length
+  );
+  return Math.max(-1, Math.min(1, (2.25 - distance) / 0.75));
+}
+
+/** Whether a food is the brand a search names: each of its words starts a word of the brand. */
+function ofBrand(food: Named, brand: readonly string[], fixes: Fixes) {
+  const own = brandWords(food).map(stem);
+  return (
+    own.length > 0 &&
+    brand.every((word) =>
+      (number(word) ? [word] : [...searchForms(word), ...(fixes[word] ?? [])]).some((form) =>
+        own.some((w) => (number(form) ? w === form : w.startsWith(form)))
+      )
+    )
+  );
+}
+
 /** The person's own foods rank higher, and more so the more often they eat them. */
 function boost(known: Known, id: string) {
   if (!known.has(id)) return 0;
@@ -420,18 +516,24 @@ function boost(known: Known, id: string) {
 
 /**
  * Orders candidates: name match, common form, brand agreement, the person's own foods. A search
- * has no brand of its own; a food whose brand it names ("oreo", "mcdonalds big mac") is not
- * marked down as branded.
+ * has no brand of its own unless `brand` says which of its words name one; a food whose brand it
+ * names in passing ("oreo", "mcdonalds big mac") is not marked down as branded. With a profile,
+ * a food unlike the kind of food the words name ranks lower, and the named brand's food most like
+ * it ranks first even under another name: Trader Joe's calls its Mini-Wheats "Shredded Bite Size
+ * Wheats".
  */
 export function scoreFoods(
   seen: Named,
   foods: Food[],
   known: Known = new Set(),
   search = false,
-  { fixes = {}, popularity, away }: SearchHints = {}
+  { fixes = {}, popularity, away, brand = [], profile: kind }: SearchHints = {}
 ) {
   const read = search ? readQuery(seen.name) : null;
   const target = read ? read.words : nameWords(seen);
+  // With a brand named, the other words describe the product, and only its name is read for them.
+  const asked = search && brand.length > 0;
+  const named = asked ? target.filter((word) => !brand.includes(word)) : target;
   const cooked =
     search &&
     !target.includes("raw") &&
@@ -443,11 +545,25 @@ export function scoreFoods(
     const key = listed ? `${food.name}|${food.brand}`.toLowerCase() : food.id;
     if (!unique.has(key) || known.has(food.id)) unique.set(key, food);
   }
-  return [...unique.values()]
-    .map((food, index) => {
-      const match = coverage(seen, food, target, search, fixes);
+  const rows = [...unique.values()].map((food, index) => {
+    const match = coverage(
+      seen,
+      food,
+      named.length ? named : target,
+      search,
+      fixes,
+      asked && named.length > 0
+    );
+    const mine = asked ? ofBrand(food, brand, fixes) : match.brand === true;
+    // A search for a brand alone matches all of its foods.
+    const name = asked && !named.length && mine ? 1 : match.name;
+    return { food, index, match, mine, name, like: kind ? likeness(food, kind) : 0 };
+  });
+  const sold = rows.some((row) => row.mine && row.name === 1 && row.like > 0);
+  return rows
+    .map(({ food, index, match, mine, name, like }) => {
       let score =
-        3 * match.name +
+        3 * name +
         (match.leads ? (search ? 0.75 : 0.5) : 0) +
         (cooked ? 0.4 * match.cooked - (match.fried ? 0.2 : 0) : 0) +
         (match.usual ? 0.6 : 0) +
@@ -457,21 +573,37 @@ export function scoreFoods(
         0.8 * match.variations -
         0.25 * match.others -
         0.05 * match.notes;
-      if (match.brand !== null) score += match.brand ? 2 : -1;
-      else if (isBranded(food)) score -= 2;
+      if (asked) {
+        // The brand asked for; then other brands' products, among them the one the search is
+        // usually named after ("Kellogg's Mini-Wheats"); then plain foods.
+        if (mine) score += 1.5;
+        else if (!isBranded(food)) score -= 1;
+      } else if (match.brand !== null) score += match.brand ? 2 : -1;
+      // A brand's words aren't counted as ones the search didn't ask for (see coverage), so a
+      // packaged food's markdown includes them.
+      else if (isBranded(food)) score -= 2.25;
       if (read) {
-        const brand = brandWords(food);
-        if (brand.length && brand.every((w) => target.some((word) => mentions(word, stem(w)))))
+        const own = brandWords(food);
+        if (
+          !asked &&
+          own.length &&
+          own.every((w) => target.some((word) => mentions(word, stem(w))))
+        )
           score += 2;
         score += 2 * read.counts.filter((count) => counted(food, count)).length;
       }
+      // Like the kind of food named, and for the brand asked for, more so when it is named the same
+      // kind of food: its "wheats" are its Mini-Wheats, its "mini pretzels" are not. A brand
+      // that sells the food by the name searched for isn't searched for another name of it.
+      const version = mine && match.head && (name === 1 || !sold);
+      score += like + (version ? Math.max(0, like) : 0);
       score += boost(known, food.id);
       // Among packaged foods, the ones people scan most: Coca-Cola before a store's cola.
       score += 0.12 * (popularity?.get(food.id) ?? 0);
       // Another country's product, as much as four words the search didn't ask for: it still
       // answers a search nothing sold here matches as well ("Domino's" in France or the US).
       if (away?.has(food.id)) score -= 1;
-      return { food, score, index, name: match.name };
+      return { food, score, index, name };
     })
     .filter((row) => row.name > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index);
