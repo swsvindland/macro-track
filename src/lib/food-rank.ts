@@ -15,7 +15,12 @@ export type Known = ReadonlySet<string> | ReadonlyMap<string, number>;
  */
 export type Fixes = Readonly<Record<string, readonly string[]>>;
 /** What a typed search knows beyond its words: corrections and how often foods are scanned. */
-export type SearchHints = { fixes?: Fixes; popularity?: ReadonlyMap<string, number> };
+export type SearchHints = {
+  fixes?: Fixes;
+  popularity?: ReadonlyMap<string, number>;
+  /** Packaged foods sold only in other countries than the phone's. */
+  away?: ReadonlySet<string>;
+};
 
 const stop = new Set("a an and the of with in on or s to for style".split(" "));
 /** Catalog wording differs from everyday names: USDA files burger buns under "Rolls, hamburger". */
@@ -209,7 +214,8 @@ export const searchForms = (word: string) => [
  * searched too, as prefixes or, for a word typed without its space, as a phrase.
  */
 export function searchTerm(word: string, fixes: Fixes = {}) {
-  if (number(word)) return `"${word}"`;
+  // A search waits for a last word's second letter, so a letter on its own is whole: "k cup".
+  if (number(word) || word.length === 1) return `"${word}"`;
   return either([...new Set([...searchForms(word), ...(fixes[word] ?? [])])].map((f) => `"${f}"*`));
 }
 
@@ -304,9 +310,9 @@ const cookedWords = new Set(
 // USDA files some foods under a group: "Fish, salmon", "Beverages, coffee", "Nuts, almonds".
 const group = /^(?:fish|beverages?|alcoholic beverages?|nuts|crustaceans|mollusks|spices)$/i;
 
-/** Both sides are stemmed, so a match may only differ by a plural-length ending. */
+/** Both sides are stemmed, so a match may only differ by a plural-length ending; a letter can't. */
 export const same = (word: string, form: string) =>
-  word === form || (word.startsWith(form) && word.length - form.length <= 2);
+  word === form || (form.length > 1 && word.startsWith(form) && word.length - form.length <= 2);
 
 /**
  * How well a food's name covers the words that were said. In a search the words may be half
@@ -332,7 +338,7 @@ export function coverage(
   ).map(stem);
   // A number matches only itself: 2% milk is not 25%.
   const fits = (w: string, form: string) =>
-    number(form) ? w === form : same(w, form) || (prefix && w.startsWith(form));
+    number(form) ? w === form : same(w, form) || (prefix && form.length > 1 && w.startsWith(form));
   // A typed word is whole only as typed: "chic" is as far from chicory as from chicken.
   const exact = (w: string, form: string) => (prefix || number(form) ? w === form : same(w, form));
   const options = prefix ? searchForms : forms;
@@ -422,7 +428,7 @@ export function scoreFoods(
   foods: Food[],
   known: Known = new Set(),
   search = false,
-  { fixes = {}, popularity }: SearchHints = {}
+  { fixes = {}, popularity, away }: SearchHints = {}
 ) {
   const read = search ? readQuery(seen.name) : null;
   const target = read ? read.words : nameWords(seen);
@@ -462,6 +468,9 @@ export function scoreFoods(
       score += boost(known, food.id);
       // Among packaged foods, the ones people scan most: Coca-Cola before a store's cola.
       score += 0.12 * (popularity?.get(food.id) ?? 0);
+      // Another country's product, as much as four words the search didn't ask for: it still
+      // answers a search nothing sold here matches as well ("Domino's" in France or the US).
+      if (away?.has(food.id)) score -= 1;
       return { food, score, index, name: match.name };
     })
     .filter((row) => row.name > 0)

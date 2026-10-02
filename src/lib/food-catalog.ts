@@ -1,7 +1,9 @@
 import { Directory, File, Paths } from "expo-file-system";
+import { getLocales } from "expo-localization";
 import { importDatabaseFromAssetAsync, openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import { Platform } from "react-native";
 import manifest from "../../assets/food/manifest.json";
+import { catalogFood, type CatalogRow } from "./catalog-row";
 import {
   allowedTypos,
   countWords,
@@ -78,19 +80,31 @@ function tidy() {
   prune(legacy, () => true);
 }
 
-/** Opens a catalog file read-only if it is the whole bundled version, and closes it otherwise. */
+/**
+ * Opens a catalog file read-only if it is the whole bundled version, and closes it otherwise.
+ * Also reads the order its rows keep nutrient values in and whether they name the countries a
+ * food is sold in, which catalogs before version 3 lack.
+ */
 async function openChecked(folder: Directory, file: File, source: Source) {
   // A copy cut short by a full disk or a closed app is smaller than the bundled one.
   if (file.size !== source.bytes) throw new Error(`${file.name} is incomplete.`);
   const database = await openDatabaseAsync(file.name, undefined, localPath(folder));
   try {
-    const metadata = await database.getFirstAsync<{ value: string }>(
-      "SELECT value FROM catalog_meta WHERE key = 'version'"
+    const metadata = new Map(
+      (
+        await database.getAllAsync<{ key: string; value: string }>(
+          "SELECT key, value FROM catalog_meta WHERE key IN ('version', 'nutrients')"
+        )
+      ).map(({ key, value }) => [key, value])
     );
-    if (metadata?.value !== source.version)
+    if (metadata.get("version") !== source.version)
       throw new Error(`${file.name} is not ${source.version}.`);
     await database.execAsync("PRAGMA query_only = ON");
-    return database;
+    const order = metadata.get("nutrients");
+    const markets = await database.getFirstAsync(
+      "SELECT 1 FROM pragma_table_info('foods') WHERE name = 'markets'"
+    );
+    return { database, order: order ? (JSON.parse(order) as string[]) : null, markets: !!markets };
   } catch (error) {
     await database.closeAsync().catch(() => {});
     throw error;
@@ -110,7 +124,7 @@ async function install(folder: Directory, { source, assetId }: Bundled) {
       { assetId, forceOverwrite: true },
       localPath(folder)
     );
-    await (await openChecked(folder, pending, source)).closeAsync();
+    await (await openChecked(folder, pending, source)).database.closeAsync();
     pending.moveSync(installed, { overwrite: true });
   }
   return openChecked(folder, installed, source);
@@ -134,9 +148,10 @@ async function open(catalog: Bundled) {
   }
 }
 
+type Opened = { database: SQLiteDatabase; order: string[] | null; markets: boolean };
 type Opening = {
-  done: Promise<SQLiteDatabase | undefined>;
-  database?: SQLiteDatabase;
+  done: Promise<Opened | undefined>;
+  opened?: Opened;
   failedAt?: number;
   retry: boolean;
 };
@@ -149,7 +164,7 @@ function openCatalog(catalog: Bundled) {
   const next: Opening = {
     retry: Boolean(last),
     done: open(catalog).then(
-      (database) => (next.database = database),
+      (opened) => (next.opened = opened),
       () => {
         next.failedAt = Date.now();
         return undefined;
@@ -168,13 +183,13 @@ function openCatalog(catalog: Bundled) {
 async function openAll(complete = false) {
   tidy();
   const current = bundled.map(openCatalog);
-  let databases = await Promise.all(
-    current.map(({ retry, database, done }) => (retry ? database : done))
+  let catalogs = await Promise.all(
+    current.map(({ retry, opened, done }) => (retry ? opened : done))
   );
-  if (databases.includes(undefined) && (complete || !databases.some(Boolean)))
-    databases = await Promise.all(current.map(({ done }) => done));
-  const opened = databases.flatMap((database, i) =>
-    database ? [{ kind: bundled[i].kind, version: bundled[i].source.version, database }] : []
+  if (catalogs.includes(undefined) && (complete || !catalogs.some(Boolean)))
+    catalogs = await Promise.all(current.map(({ done }) => done));
+  const opened = catalogs.flatMap((catalog, i) =>
+    catalog ? [{ kind: bundled[i].kind, version: bundled[i].source.version, ...catalog }] : []
   );
   return { opened, failed: opened.length < bundled.length };
 }
@@ -190,38 +205,23 @@ export async function openCatalogs() {
 }
 
 type Catalog = Awaited<ReturnType<typeof openCatalogs>>[number];
-type Row = { id: string; name: string; brand: string; barcode: string | null; data: string };
-type Ranked = Row & { popularity: number };
+type Ranked = CatalogRow & { popularity: number; away: number };
 const columns = "foods.id, foods.name, foods.brand, foods.barcode, foods.data";
 
-/** A catalog row as a food: its columns, plus the basis, nutrients and portions kept as JSON. */
-function catalogFood({ kind, version }: Catalog, row: Row): Food {
-  const { basis, nutrients, portions } = JSON.parse(row.data) as Pick<
-    Food,
-    "basis" | "nutrients" | "portions"
-  >;
-  return {
-    id: row.id,
-    name: row.name,
-    brand: row.brand,
-    barcode: row.barcode,
-    basis,
-    nutrients,
-    portions,
-    source: kind === "generic" ? "usda" : "off",
-    sourceVersion: version,
-  };
-}
+const rowFood = ({ kind, version, order }: Catalog, row: CatalogRow): Food =>
+  catalogFood(kind === "generic" ? "usda" : "off", version, order, row);
 
 /** What a typed word probably meant, when the catalogs barely know it as typed. */
 const spellings = new Map<string, string[]>();
 /**
  * A word in fewer foods than `rare` is also searched as a word a typo away in ten times as many.
  * A longer one in fewer than `uncommon` is too, when that word is in 75 times as many: "protien"
- * is on 35 labels. Short words have too many real neighbors: "coke" is not cake.
+ * is on 700 labels. Short words have too many real neighbors: "coke" is not cake. Labels misspell
+ * in proportion, so both grow with the catalogs: one food in 4,800 and one in 480.
  */
-const rare = 20;
-const uncommon = 200;
+const foods = manifest.usda.included + manifest.off.included;
+const rare = foods / 4800;
+const uncommon = foods / 480;
 
 async function count(catalogs: Catalog[], sql: string, ...params: (string | number)[]) {
   const found = new Map<string, number>();
@@ -364,7 +364,7 @@ export async function searchCatalog(
     query,
     pool.map(({ food }) => food),
     known,
-    { fixes, popularity }
+    { fixes, popularity, away: awayIds(pool) }
   );
   return { foods: ranked, fixes };
 }
@@ -375,10 +375,34 @@ export async function searchFoods(query: string, known: Known = new Set()): Prom
 }
 
 /**
+ * How many matches a catalog ranks. Millions of packaged foods match "ch" or "chicken", so only
+ * the first matches in row order, the most scanned, are ranked; the generic catalog is small
+ * enough to rank whole.
+ */
+const candidates = { generic: -1, branded: 1000 };
+
+/** The phone's region as a catalog names a market ("us"), if it has one. */
+function region() {
+  const code = getLocales()[0]?.regionCode?.toLowerCase();
+  return code && /^[a-z]{2}$/.test(code) ? code : null;
+}
+
+/**
+ * Whether a catalog row is a packaged food sold only in countries other than `here`, as SQL. A
+ * brand's recipe differs between countries (US and French Oreos), so these rank below the foods
+ * sold here; a food whose countries aren't known isn't one.
+ */
+function awayFrom(catalog: Catalog, here: string | null) {
+  if (!catalog.markets || !here) return "0";
+  const sold = (market: string) => `instr(' ' || foods.markets || ' ', ' ${market} ')`;
+  return `(foods.markets <> '' AND ${sold(here)} = 0 AND ${sold("world")} = 0)`;
+}
+
+/**
  * Runs a prepared FTS5 expression against every catalog, generic foods first. The generic
  * catalog is small, so a deeper limit there reaches plain foods that rank below variations.
- * Names starting with `lead` come before the full-text ranking, and among packaged foods the
- * ones scanned more often come sooner.
+ * Names starting with `lead` come before the full-text ranking, then the foods sold in the
+ * phone's region, and among packaged foods the ones scanned more often come sooner.
  */
 async function match(
   catalogs: Catalog[],
@@ -386,33 +410,48 @@ async function match(
   limits: { generic: number; branded: number } = { generic: 30, branded: 30 },
   lead = ""
 ) {
+  const here = region();
   const results = await Promise.all(
-    catalogs.map(async (catalog) =>
-      (
+    catalogs.map(async (catalog) => {
+      return (
         await catalog.database.getAllAsync<Ranked>(
-          `SELECT ${columns}, foods.popularity FROM food_search
-           JOIN foods ON foods.rowid = food_search.rowid
-           WHERE food_search MATCH ?
-           ORDER BY foods.name LIKE ? DESC, bm25(food_search, 3.0, 1.0) - 0.5 * foods.popularity
+          `SELECT ${columns}, foods.popularity, ${awayFrom(catalog, here)} AS away FROM (
+             SELECT rowid, bm25(food_search, 3.0, 1.0) AS score FROM food_search
+             WHERE food_search MATCH ? LIMIT ?
+           ) AS hit
+           JOIN foods ON foods.rowid = hit.rowid
+           ORDER BY foods.name LIKE ? DESC, away, hit.score - 0.5 * foods.popularity
            LIMIT ?`,
           expression,
+          candidates[catalog.kind],
           lead ? `${lead}%` : "",
           limits[catalog.kind]
         )
-      ).map((row) => ({ food: catalogFood(catalog, row), popularity: row.popularity }))
-    )
+      ).map((row) => ({
+        food: rowFood(catalog, row),
+        popularity: row.popularity,
+        away: row.away === 1,
+      }));
+    })
   );
   // Each catalog ranks within its own corpus; keep generic foods first for ingredient searches.
   return results.flat();
 }
 
-/** Runs a prepared FTS5 expression against every catalog; see match. */
+const awayIds = (found: { food: Food; away: boolean }[]) =>
+  new Set(found.filter(({ away }) => away).map(({ food }) => food.id));
+
+/**
+ * Runs a prepared FTS5 expression against every catalog; see match. `away` holds the packaged
+ * foods found that are sold only in other countries.
+ */
 export async function searchCatalogMatch(
   expression: string,
   limits?: { generic: number; branded: number },
   lead = ""
-): Promise<Food[]> {
-  return (await match(await openCatalogs(), expression, limits, lead)).map(({ food }) => food);
+): Promise<{ foods: Food[]; away: Set<string> }> {
+  const found = await match(await openCatalogs(), expression, limits, lead);
+  return { foods: found.map(({ food }) => food), away: awayIds(found) };
 }
 
 export async function lookupBarcode(input: string): Promise<Food | null> {
@@ -420,11 +459,12 @@ export async function lookupBarcode(input: string): Promise<Food | null> {
   if (!barcode) return null;
   const { opened, failed } = await openAll(true);
   for (const catalog of opened) {
-    const row = await catalog.database.getFirstAsync<Row>(
+    // A catalog that keeps barcodes as numbers reads the 14 digits as one.
+    const row = await catalog.database.getFirstAsync<CatalogRow>(
       `SELECT ${columns} FROM foods WHERE barcode = ? LIMIT 1`,
       barcode
     );
-    if (row) return catalogFood(catalog, row);
+    if (row) return rowFood(catalog, row);
   }
   // Without every catalog, "not found" would be a guess.
   if (failed) throw unavailable();

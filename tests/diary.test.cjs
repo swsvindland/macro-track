@@ -169,6 +169,7 @@ function bundledCatalog() {
     "../../assets/food/usda.db": 1,
     "../../assets/food/off.db": 2,
     "./nutrition": nutrition,
+    "./catalog-row": load("src/lib/catalog-row.ts"),
     "expo-file-system": {
       Directory,
       File,
@@ -179,6 +180,7 @@ function bundledCatalog() {
       },
     },
     "react-native": { Platform: { OS: "ios" } },
+    "expo-localization": { getLocales: () => [{ languageCode: "en", regionCode: "US" }] },
     "expo-sqlite": {
       async importDatabaseFromAssetAsync(name, { assetId, forceOverwrite }, directory) {
         const target = path.join(directory, name);
@@ -728,7 +730,7 @@ test("compiled barcode lookup finds bundled products under their EAN-8 or UPC-A 
   // Trader Joe's codes are EAN-8; 00030205 would expand to another product's UPC-A.
   assert.equal(await lookup("00030205"), "Orzo");
   assert.equal(await lookup("00030205", "ean8"), "Orzo");
-  assert.equal(await lookup("00001977"), "Sliced Cracked Wheat Sourdough Bread");
+  assert.equal(await lookup("00001977"), "Cracked Wheat Sourdough Bread");
   assert.equal(await lookup("00818469"), "Traditional Caramel Flan");
   // UPC-E codes stored only in their UPC-A form.
   assert.equal(await lookup("01223004", "upc_e"), "Pepsi Cola");

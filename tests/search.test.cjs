@@ -33,6 +33,7 @@ function load(file, dependencies = {}) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const rank = load("src/lib/food-rank.ts");
+const catalogRow = load("src/lib/catalog-row.ts");
 
 const manifest = JSON.parse(readFileSync("assets/food/manifest.json", "utf8"));
 const assets = { 1: "assets/food/usda.db", 2: "assets/food/off.db" };
@@ -98,6 +99,7 @@ function phone() {
     load("src/lib/food-catalog.ts", {
       "expo-file-system": { Directory, File, Paths: { document, cache, availableDiskSpace: free } },
       "react-native": { Platform: { OS: android ? "android" : "ios" } },
+      "expo-localization": { getLocales: () => [{ languageCode: "en", regionCode: "US" }] },
       "expo-sqlite": {
         importDatabaseFromAssetAsync: async (name, { assetId, forceOverwrite }, directory) => {
           const target = path.join(directory, name);
@@ -125,6 +127,7 @@ function phone() {
       "../../assets/food/off.db": 2,
       "./nutrition": nutrition,
       "./food-rank": rank,
+      "./catalog-row": catalogRow,
     });
   return { root, folders, files, imports, launch };
 }
@@ -165,7 +168,8 @@ test("search expressions keep the food words as stemmed prefixes", () => {
     // Count and unit words stay when they name the food.
     ["cup", '"cup"*'],
     ["cup noodles", '"cup"* AND "noodle"*'],
-    ["k cup", '"k"* AND "cup"*'],
+    // A letter on its own is a whole word: a search waits for a last word's second letter.
+    ["k cup", '"k" AND "cup"*'],
     ["peanut butter cups", '"peanut"* AND "butter"* AND "cup"*'],
     ["mini wheats", '"mini"* AND "wheat"*'],
     ["or", '"or"*'],
@@ -256,7 +260,7 @@ test("everyday searches put a plain staple in the top three", async () => {
     // Count and unit words that name the food.
     ["cup noodles", /cup noodle/i],
     ["glass noodles", /glass noodle/i],
-    ["k cup", /k-cup/i],
+    ["k cup", /\bk.?cups?\b/i],
     ["peanut butter cups", /peanut butter cup/i],
     ["mini wheats", /mini.wheats/i],
     ["strip steak", /strip steak/i],
@@ -345,12 +349,13 @@ test("typos and joined words still find the food that was meant", async () => {
     ["chiken breast", /^Chicken, broilers or fryers, breast, /],
     ["chikc", /^Chicken, /],
     ["bananna", /^Bananas, raw/],
-    ["brocoli", /^Broccoli, raw/],
+    // Worldwide, hundreds of labels spell these as typed, so those products answer them.
+    ["brocoli", /^(Broccoli, raw|brocoli$)/i],
     ["avacado", /^Avocados, raw/],
     ["straberries", /^Strawberries, raw/],
     ["yogrt", /^Yogurt, /],
     ["greek yougurt", /^Yogurt, Greek, plain/],
-    ["mozerella", /^Cheese, mozzarella/],
+    ["mozerella", /^(Cheese, mozzarella|mozz?arella$)/i],
     ["cheeze", /^Cheese, cheddar/],
     ["salmen", /^Fish, salmon, .*cooked/],
     ["quinao", /^Quinoa, cooked/],
@@ -492,7 +497,10 @@ test("a catalog that can't install leaves the other searching and is retried beh
   assert.equal(copies(), 2, "the launch copies it again, once");
   assert.deepEqual(files(folders.catalogs), installed.slice(1), "the cut copy doesn't keep space");
   const off = new DatabaseSync(assets[2], { readOnly: true });
-  const { barcode } = off.prepare("SELECT barcode FROM foods WHERE barcode <> '' LIMIT 1").get();
+  const { barcode: number } = off
+    .prepare("SELECT barcode FROM foods WHERE barcode <> '' LIMIT 1")
+    .get();
+  const barcode = String(number).padStart(14, "0");
   off.close();
   // Keystrokes, a fallback search and a barcode scan within the minute copy nothing more.
   for (const query of ["ap", "app", "appl", "apple", "apples", "zzqx pizza"])
