@@ -23,25 +23,36 @@ const modelJson = load("src/lib/model-json.ts");
 const rank = load("src/lib/food-rank.ts");
 const ai = load("src/lib/meal-ai.ts", { "./nutrition": nutrition, "./food-rank": rank });
 
-// The app's catalog search: generic foods first, with a deeper generic limit.
-const catalogs = ["usda", "off"].map(
-  (source) => new DatabaseSync(`assets/food/${source}.db`, { readOnly: true })
-);
+// The app's catalog search on a US phone: generic foods first, with a deeper generic limit; among
+// packaged foods only the most scanned matches are ranked, and ones not sold in the US come later
+// and are reported in `away`, as the photo logger does.
+const catalogRow = load("src/lib/catalog-row.ts");
+const catalogs = ["usda", "off"].map((source) => {
+  const database = new DatabaseSync(`assets/food/${source}.db`, { readOnly: true });
+  const order = database.prepare("SELECT value FROM catalog_meta WHERE key = 'nutrients'").get();
+  return { source, database, order: order ? JSON.parse(order.value) : null };
+});
+const sold = (market) => `instr(' ' || foods.markets || ' ', ' ${market} ')`;
+const elsewhere = `(foods.markets <> '' AND ${sold("us")} = 0 AND ${sold("world")} = 0)`;
+const away = new Set();
 const search = async (expression) =>
-  catalogs.flatMap((database, i) =>
+  catalogs.flatMap(({ source, database, order }, i) =>
     database
       .prepare(
-        `SELECT foods.id, foods.name, foods.brand, foods.barcode, foods.data FROM food_search
-         JOIN foods ON foods.rowid = food_search.rowid
-         WHERE food_search MATCH ? ORDER BY bm25(food_search, 3.0, 1.0) LIMIT ?`
+        `SELECT foods.id, foods.name, foods.brand, foods.barcode, foods.data,
+                ${i === 0 ? "0" : elsewhere} AS away FROM (
+           SELECT rowid, bm25(food_search, 3.0, 1.0) AS score FROM food_search
+           WHERE food_search MATCH ? LIMIT ?
+         ) AS hit
+         JOIN foods ON foods.rowid = hit.rowid
+         ORDER BY away, hit.score - 0.5 * foods.popularity LIMIT ?`
       )
-      .all(expression, i === 0 ? 100 : 30)
-      .map(({ data, ...row }) => ({
-        ...row,
-        ...JSON.parse(data),
-        source: i === 0 ? "usda" : "off",
-        sourceVersion: "test",
-      }))
+      .all(expression, i === 0 ? -1 : 1000, i === 0 ? 100 : 30)
+      .map(({ away: foreign, ...row }) => {
+        const food = catalogRow.catalogFood(source, "test", order, row);
+        if (foreign) away.add(food.id);
+        return food;
+      })
   );
 const seen = (name, extra = {}) => ({
   name,
@@ -68,7 +79,7 @@ async function draft(items, options = {}) {
   const model = scripted(items, options.picks);
   const drafts = await ai.analyzeMeal(
     { description: options.description ?? "my meal", imageUri: options.imageUri },
-    { generate: model.generate, search, known: options.known ?? [] }
+    { generate: model.generate, search, away, known: options.known ?? [] }
   );
   return { drafts, requests: model.requests };
 }
@@ -399,7 +410,7 @@ test("a chain dish drops small toppings but keeps real sides", () => {
 test("catalog queries are safe FTS expressions from specific to broad", () => {
   for (const name of ['" OR - NEAR ( *', "crème brûlée", "Domino's 14\" pizza", "x", "🍕"]) {
     for (const expression of ai.catalogQueries(seen(name, { brand: "Mc'Test" })))
-      for (const database of catalogs)
+      for (const { database } of catalogs)
         assert.doesNotThrow(
           () =>
             database.prepare("SELECT 1 FROM food_search WHERE food_search MATCH ?").all(expression),
@@ -461,10 +472,10 @@ test("seen foods match the everyday catalog food, not a variation", async () => 
 
 test("a weak best match is offered but not chosen", async () => {
   const { drafts } = await draft([
-    { brand: "", name: "salmon sashimi", quantity: 4, unit: "piece", grams: 120 },
+    { brand: "", name: "uni sashimi", quantity: 4, unit: "piece", grams: 120 },
   ]);
-  assert.equal(drafts[0].item, null, "the catalog has no sashimi, so nothing is logged unasked");
-  assert.ok(drafts[0].options.some((food) => /salmon/i.test(food.name)));
+  assert.equal(drafts[0].item, null, "the catalog has no uni, so nothing is logged unasked");
+  assert.ok(drafts[0].options.some((food) => /sashimi/i.test(food.name)));
 });
 
 test("a named chain's item is logged whole, with plain foods kept as alternatives", async () => {

@@ -172,11 +172,17 @@ export function PhotoLogger({
     setAsked(text.trim());
     setPhase({ step: "analyzing", stage: "reading", seen: [] });
     try {
+      const away = new Set<string>();
       const result = await analyzeMeal(
         { description: text, imageUri: image ?? undefined },
         {
           generate: generateJson,
-          search: (expression) => searchCatalogMatch(expression, { generic: 100, branded: 30 }),
+          search: async (expression) => {
+            const found = await searchCatalogMatch(expression, { generic: 100, branded: 30 });
+            for (const id of found.away) away.add(id);
+            return found.foods;
+          },
+          away,
           known: knownFoods(),
           onStage: (stage, seen) => {
             if (run.current === id) setPhase({ step: "analyzing", stage, seen: seen ?? [] });

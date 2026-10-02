@@ -657,6 +657,8 @@ export type AnalysisDeps = {
   generate: (request: ModelRequest) => Promise<unknown>;
   /** Runs one catalog search expression. */
   search: (expression: string) => Promise<Food[]>;
+  /** The packaged foods those searches found that are sold only in other countries. */
+  away?: ReadonlySet<string>;
   /** The person's own, saved and recent foods, preferred when they match. */
   known: Food[];
   /** Reports progress; the seen foods arrive before matching so they can be shown right away. */
@@ -676,7 +678,7 @@ async function candidates(seen: SeenFood, deps: AnalysisDeps, known: ReadonlySet
   // A misread brand should cost one tap, so the plain food stays among the options.
   const plain = seen.brand ? catalogQueries({ ...seen, brand: "" })[0] : undefined;
   if (plain) add(await deps.search(plain));
-  const ranked = scoreFoods(seen, [...pool.values()], known);
+  const ranked = scoreFoods(seen, [...pool.values()], known, false, { away: deps.away });
   const head = ranked.slice(0, seen.brand ? 6 : 8);
   const generic = seen.brand
     ? ranked.filter((row) => !head.includes(row) && !isBranded(row.food)).slice(0, 2)

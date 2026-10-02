@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "usda": {
     "version": "usda-v2-0fe8ae486a2c-c433e0e0",
     "sourceUrl": "https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_sr_legacy_food_json_2018-04.zip",
@@ -17,24 +17,25 @@
     "terms": 2699
   },
   "off": {
-    "version": "off-v2-2a1a5d8a0bea-c433e0e0",
-    "sourceUrl": "https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.csv.gz",
-    "recipeSha256": "c433e0e0aa97594cb612b4d251249f1cde651b57596869cc9c2b7fbe00b345fe",
-    "sourceSha256": "2a1a5d8a0beab199a0273ef4d292ca2af5c48267457ee349a6d3e7cc8d6e8d07",
-    "sha256": "b00c37a489d94ea417a978a156bd8099350d4f26dd462f6b3e70827676b294f1",
-    "bytes": 43401216,
+    "version": "off-v3-aedda10d75d7-6d3b87a4",
+    "sourceUrl": "https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz",
+    "recipeSha256": "6d3b87a493e61163ae064cf495be7864e2dda7d278a678dc29f6b17e23e894ee",
+    "sourceSha256": "aedda10d75d7e8f6e21d6973b8329618d05a8343218bd04f4d4e6e872c4a2dab",
+    "sha256": "4f1807d9416c6f01300dd6e5baf21e6b38168cb100c01600a465e138f9d26376",
+    "bytes": 581509120,
     "license": "ODbL-1.0",
     "developmentSample": false,
-    "sourceRecords": 4532767,
-    "excludedMarket": 3622635,
-    "excludedIdentity": 76540,
-    "excludedNutrition": 737365,
-    "microValues": 774663,
-    "withMicros": 82390,
-    "included": 83752,
-    "excludedAmbiguousBasis": 12473,
-    "excludedMicroValues": 8259,
-    "excludedMalformedRows": 2,
-    "terms": 23343
+    "sourceRecords": 4787849,
+    "excludedNutrition": 1112921,
+    "excludedIdentity": 465633,
+    "excludedAmbiguousBasis": 16292,
+    "excludedMicroValues": 22307,
+    "basisFromPackage": 68214,
+    "included": 3192971,
+    "microValues": 9129025,
+    "withMicros": 3072970,
+    "basisFromServingQuantity": 646,
+    "duplicates": 32,
+    "terms": 382415
   }
 }

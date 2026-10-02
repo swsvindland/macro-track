@@ -40,6 +40,7 @@ function load(file, dependencies = {}, compile = false) {
 }
 const nutrition = load("src/lib/nutrition.ts");
 const rank = load("src/lib/food-rank.ts");
+const catalogRow = load("src/lib/catalog-row.ts");
 const metrics = load("src/lib/metrics.ts");
 const foodTime = load("src/lib/food-time.ts", { "./nutrition": nutrition });
 const schema = load("src/db/schema.ts");
@@ -501,12 +502,21 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       manifest[source].included
     );
     const micros = new Set(nutrition.microKeys);
+    const meta = Object.fromEntries(
+      database
+        .prepare("SELECT key, value FROM catalog_meta")
+        .all()
+        .map((row) => [row.key, row.value])
+    );
+    const order = meta.nutrients ? JSON.parse(meta.nutrients) : null;
     let withMicros = 0;
-    for (const { data, ...row } of database
+    for (const row of database
       .prepare("SELECT id, name, brand, barcode, data FROM foods")
       .iterate()) {
-      const food = { ...row, ...JSON.parse(data), source, sourceVersion: manifest[source].version };
+      const food = catalogRow.catalogFood(source, manifest[source].version, order, row);
       assert.doesNotThrow(() => nutrition.validateFood(food), food.id);
+      // A packaged food's id is its code as Open Food Facts keeps it, and its barcode the 14 digits.
+      if (source === "off") assert.equal(food.id.slice(4).padStart(14, "0"), food.barcode, food.id);
       assert.ok(food.nutrients.fiber === null || food.nutrients.fiber <= 100, food.id);
       // Micronutrients are known values in the app's units; a missing one is left out.
       for (const [key, value] of Object.entries(food.nutrients))
@@ -520,12 +530,6 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       if (Object.keys(food.nutrients).length > 6) withMicros++;
     }
     assert.equal(withMicros, manifest[source].withMicros);
-    const meta = Object.fromEntries(
-      database
-        .prepare("SELECT key, value FROM catalog_meta")
-        .all()
-        .map((row) => [row.key, row.value])
-    );
     assert.equal(meta.version, manifest[source].version);
     // The license travels with the database file, not only with the app's screens.
     assert.equal(meta.license, manifest[source].license);
@@ -547,10 +551,14 @@ test("bundled catalogs have valid provenance, exact barcode lookup and working F
       );
     else {
       const row = database
-        .prepare("SELECT barcode FROM foods WHERE barcode IS NOT NULL LIMIT 1")
+        .prepare(
+          "SELECT id, name, brand, barcode, data FROM foods WHERE barcode IS NOT NULL LIMIT 1"
+        )
         .get();
-      assert.equal(nutrition.normalizeBarcode(row.barcode), row.barcode);
-      assert.ok(database.prepare("SELECT data FROM foods WHERE barcode = ?").get(row.barcode));
+      const { barcode } = catalogRow.catalogFood(source, manifest[source].version, order, row);
+      assert.equal(nutrition.normalizeBarcode(barcode), barcode);
+      // The app looks a barcode up by its 14 digits, as text.
+      assert.ok(database.prepare("SELECT data FROM foods WHERE barcode = ?").get(barcode));
     }
     database.close();
   }
@@ -3366,7 +3374,9 @@ function photoLoggerHarness(status = {}) {
         "./food-rank": rank,
       }),
       "@/lib/fast-log": fastLog,
-      "@/lib/food-catalog": { searchCatalogMatch: async () => [banana, apple] },
+      "@/lib/food-catalog": {
+        searchCatalogMatch: async () => ({ foods: [banana, apple], away: new Set() }),
+      },
     }
   );
   const { PhotoLogger } = harness.load("src/components/nutrition/photo-logger.tsx");
