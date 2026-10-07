@@ -79,7 +79,7 @@
   "healthPrivacy": "Os alimentos registados são gravados como nutrição (calorias, proteína, hidratos, gordura, fibra e sódio) a partir de 30 dias antes de ativar a sincronização. Peso e altura sincronizam nos dois sentidos. A gordura corporal registada é exportada nas duas plataformas e a cintura também para o Apple Health. As outras medidas e estimativas ficam na app. No iPhone, a data de nascimento e o sexo são lidos para preencher um novo programa.",
   "trendHelp": "Média diária suavizada com semivida de 7 dias. As primeiras tendências são provisórias.",
   "bodyHelp": "Usado para estimar a gordura corporal. Estimativas para adultos. Homem: pescoço e abdómen ao umbigo. Mulher: pescoço, cintura natural e ancas. Não aperte a fita.",
-  "localPhotos": "Fotos privadas neste dispositivo. Desinstalar a app pode apagá-las.",
+  "localPhotos": "Fotos privadas neste dispositivo, incluídas quando exporta os seus dados.",
   "dateHint": "AAAA-MM-DD",
   "manualFat": "Gordura corporal medida (%)",
   "measurements": "Medidas",

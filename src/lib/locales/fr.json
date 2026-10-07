@@ -79,7 +79,7 @@
   "healthPrivacy": "Les aliments saisis sont enregistrés comme nutrition — calories, protéines, glucides, lipides, fibres et sodium — à partir de 30 jours avant l’activation de la synchronisation. Le poids et la taille se synchronisent dans les deux sens. La masse grasse saisie est exportée sur les deux plateformes, et le tour de taille vers Apple Health. Les autres mesures et estimations restent dans l’app. Sur iPhone, votre date de naissance et votre sexe sont lus pour préremplir un nouveau programme.",
   "trendHelp": "Moyenne quotidienne lissée avec une demi-vie de 7 jours. Les premières tendances sont provisoires.",
   "bodyHelp": "Utilisé pour estimer la masse grasse. Estimations pour adultes. Homme : cou et abdomen au nombril. Femme : cou, taille naturelle et hanches. Ne serrez pas le ruban.",
-  "localPhotos": "Photos privées sur cet appareil. Désinstaller l’app peut les effacer.",
+  "localPhotos": "Photos privées sur cet appareil, incluses quand vous exportez vos données.",
   "dateHint": "AAAA-MM-JJ",
   "manualFat": "Masse grasse mesurée (%)",
   "measurements": "Mensurations",

@@ -324,12 +324,16 @@ export function createFormat(
   const intlUnitParts = (n: number, unit: IntlUnit, digits: number, s: NumberStyle) => {
     const num = plainNumber(n, digits, s);
     const full = trustedUnit(n, unit, digits, s);
-    if (full !== null && !intlSupport.parts) {
-      // No formatToParts (Hermes on iOS): the plain number sits inside the unit string. What is before or
-      // after it is the unit, and the whitespace touching the number is the locale's spacing.
+    if (full !== null) {
+      if (intlSupport.parts) {
+        const parts = splitParts(unitFormat(unit, digits, s).formatToParts(n), "unit");
+        // Android Hermes may return the entire unit string as one literal (or integer) part.
+        // Trust a split only when it preserves the number and identifies the unit separately.
+        if (parts.value === num && parts.unit) return parts;
+      }
+      // Missing or incomplete parts: the already-validated number sits inside the unit string.
+      // Preserve the locale's unit order and spacing instead of producing a blank readout.
       return splitAround(full, full.indexOf(num), num.length, abbr(unit));
-    } else if (full !== null) {
-      return splitParts(unitFormat(unit, digits, s).formatToParts(n), "unit");
     }
     return { value: num, unit: abbr(unit), unitFirst: false, space: "\u00A0" };
   };

@@ -1,0 +1,18 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+// The version follows modules/vector-vault/package.json, which `vault-kit bump` rewrites.
+def vaultPackage = new groovy.json.JsonSlurper().parse(file('../package.json'))
+
+group = 'dev.svindland.vectorvault'
+version = vaultPackage.version
+
+android {
+  namespace "dev.svindland.vectorvault"
+  defaultConfig {
+    // expo-module-gradle-plugin publishes the module under this version.
+    versionName vaultPackage.version
+  }
+}

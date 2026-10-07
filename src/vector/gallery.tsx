@@ -9,6 +9,7 @@ import {
   RangeSummary,
   Sparkline,
   TrendChart,
+  periodLabel,
   rangeStart,
   type ChartBandPoint,
   type ChartLine,
@@ -138,6 +139,8 @@ const sample = {
   trendWeight: "Trend weight",
   scaleWeight: "Scale weight",
   range: "Chart range",
+  averageBy: "Average by",
+  periods: { week: "Week", month: "Month", year: "Year" },
   estimate: "Expenditure",
   holding: "Holding",
   band: "Range",
@@ -906,12 +909,84 @@ function WeightChartSample() {
   );
 }
 
+const periodValues = ["week", "month", "year"] as const;
+type SamplePeriod = (typeof periodValues)[number];
+const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** Period averages keyed by each period's first day: the shape fitness-native's graphs aggregate to. */
+function averages(points: ChartPoint[], period: SamplePeriod): ChartPoint[] {
+  const groups = new Map<string, number[]>();
+  for (const p of points) {
+    const d = asDate(p.day);
+    const first =
+      period === "year"
+        ? new Date(d.getFullYear(), 0, 1)
+        : period === "month"
+          ? new Date(d.getFullYear(), d.getMonth(), 1)
+          : new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay());
+    const key = dayKey(first);
+    groups.set(key, [...(groups.get(key) ?? []), p.value]);
+  }
+  return [...groups]
+    .map(([day, values]) => ({ day, value: values.reduce((a, b) => a + b, 0) / values.length }))
+    .sort((a, b) => (a.day < b.day ? -1 : 1));
+}
+
+/** fitness-native's period switch: aggregates by week, month or year; ticks and the scrub name follow the period. */
+function PeriodChartSample() {
+  const f = useKitFormat();
+  const [period, setPeriod] = useState<SamplePeriod>("month");
+  const [at, setAt] = useState<ChartPoint | null>(null);
+  const raw = averages(
+    weights.map((p) => ({ day: p.day, value: p.raw })),
+    period
+  );
+  const trend = averages(
+    weights.map((p) => ({ day: p.day, value: p.trend })),
+    period
+  );
+  const latest = trend[trend.length - 1];
+  return (
+    <Panel>
+      <Panel.Body>
+        <Choices
+          values={periodValues}
+          value={period}
+          onChange={(p) => {
+            setPeriod(p);
+            setAt(null);
+          }}
+          label={(p) => sample.periods[p]}
+          accessibilityLabel={sample.averageBy}
+          size="sm"
+        />
+        <RangeSummary
+          label={at ? periodLabel(f, at.day, period) : sample.trend}
+          {...f.unitParts(at ? at.value : latest.value, "kilogram", 1)}
+        />
+        <TrendChart
+          granularity={period}
+          lines={[
+            { role: "reference", points: raw, label: sample.scaleWeight },
+            { role: "subject", points: trend, label: sample.trendWeight },
+          ]}
+          minSpan={2}
+          yFormat={(n) => f.number(n)}
+          summary={sample.trendWeight}
+          onScrub={setAt}
+        />
+      </Panel.Body>
+    </Panel>
+  );
+}
+
 function Charts() {
   const f = useKitFormat();
   const latestBac = bac[bac.length - 1].value;
   return (
     <Group title={sample.charts}>
       <WeightChartSample />
+      <PeriodChartSample />
       <Panel>
         <Panel.Body>
           <RangeSummary

@@ -28,9 +28,9 @@ struct VectorRGB: Sendable {
     let hcDark: UInt32
 }
 
-// TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.2.2). Do not edit.
+// TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.3.1). Do not edit.
 enum VectorTokens {
-    static let version = "1.2.2"
+    static let version = "1.3.1"
     static let background = VectorRGB(light: 0xFFFFFF, dark: 0x071017, hcLight: 0xFFFFFF, hcDark: 0x071017)
     static let foreground = VectorRGB(light: 0x15212B, dark: 0xF3F6F7, hcLight: 0x071017, hcDark: 0xFFFFFF)
     static let surface = VectorRGB(light: 0xFFFFFF, dark: 0x0D171E, hcLight: 0xFFFFFF, hcDark: 0x0D171E)

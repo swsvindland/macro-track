@@ -79,7 +79,7 @@
   "healthPrivacy": "Gelogd eten wordt als voeding geschreven – calorieën, eiwit, koolhydraten, vet, vezels en natrium – vanaf 30 dagen voordat synchronisatie werd ingeschakeld. Gewicht en lengte synchroniseren in beide richtingen. Ingevoerd lichaamsvet wordt op beide platforms geëxporteerd, tailleomtrek ook naar Apple Health. Andere maten en schattingen blijven in de app. Op iPhone worden je geboortedatum en geslacht gelezen om een nieuw programma in te vullen.",
   "trendHelp": "Afgevlakt daggemiddelde met een halveringstijd van 7 dagen. Vroege trends zijn voorlopig.",
   "bodyHelp": "Gebruikt om het vetpercentage te schatten. Schattingen voor volwassenen. Man: nek en buik bij de navel. Vrouw: nek, natuurlijke taille en heupen. Trek het meetlint niet strak.",
-  "localPhotos": "Foto’s blijven privé op dit apparaat. Verwijderen van de app kan ze wissen.",
+  "localPhotos": "Foto’s blijven privé op dit apparaat en gaan mee als je je gegevens exporteert.",
   "dateHint": "JJJJ-MM-DD",
   "manualFat": "Gemeten vetpercentage (%)",
   "measurements": "Lichaamsmaten",

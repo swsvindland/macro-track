@@ -1,0 +1,54 @@
+{
+  "body": {
+    "name": "Pendum Body",
+    "bundleId": "dev.svindland.vector.body",
+    "extension": "pendumbody",
+    "uti": "dev.svindland.pendum.body.archive",
+    "mime": "application/vnd.pendum.body+zip",
+    "typeName": "Pendum Body Backup",
+    "fileStem": "PendumBody",
+    "database": "body_track.db",
+    "journal": "delete",
+    "mediaDirs": ["progress-photos"],
+    "syncIdBaseline": 2
+  },
+  "lift": {
+    "name": "Pendum Lift",
+    "bundleId": "dev.svindland.vector.lift",
+    "extension": "pendumlift",
+    "uti": "dev.svindland.pendum.lift.archive",
+    "mime": "application/vnd.pendum.lift+zip",
+    "typeName": "Pendum Lift Backup",
+    "fileStem": "PendumLift",
+    "database": "lift_track.db",
+    "journal": "wal",
+    "mediaDirs": [],
+    "syncIdBaseline": 4
+  },
+  "macro": {
+    "name": "Pendum Macros",
+    "bundleId": "dev.svindland.vector.macro",
+    "extension": "pendummacros",
+    "uti": "dev.svindland.pendum.macros.archive",
+    "mime": "application/vnd.pendum.macros+zip",
+    "typeName": "Pendum Macros Backup",
+    "fileStem": "PendumMacros",
+    "database": "macro_track.db",
+    "journal": "wal",
+    "mediaDirs": ["progress-photos"],
+    "syncIdBaseline": 13
+  },
+  "water": {
+    "name": "Pendum Hydration",
+    "bundleId": "dev.svindland.vector.water",
+    "extension": "pendumwater",
+    "uti": "dev.svindland.pendum.water.archive",
+    "mime": "application/vnd.pendum.water+zip",
+    "typeName": "Pendum Hydration Backup",
+    "fileStem": "PendumHydration",
+    "database": "water-track.db",
+    "journal": "wal",
+    "mediaDirs": [],
+    "syncIdBaseline": 9
+  }
+}

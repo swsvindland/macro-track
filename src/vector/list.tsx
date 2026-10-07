@@ -1,5 +1,6 @@
 import {
   isValidElement,
+  useContext,
   useImperativeHandle,
   useRef,
   type ReactElement,
@@ -7,17 +8,20 @@ import {
   type Ref,
 } from "react";
 import {
+  Platform,
   Pressable,
   View,
   useWindowDimensions,
   type AccessibilityActionEvent,
   type AccessibilityActionInfo,
   type AccessibilityState,
+  type ViewStyle,
 } from "react-native";
 import ReanimatedSwipeable, {
   SwipeDirection,
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { Menu } from "heroui-native";
 import { twMerge } from "tailwind-merge";
 import { IconButton } from "./button";
@@ -26,7 +30,15 @@ import { isMonoSafe } from "./format";
 import { Icon } from "./icon";
 import type { IconName } from "./icons";
 import { Panel, useRowIndex } from "./panel";
-import { KitScope, useEditorPortalHost, useHaptics, useKit } from "./provider";
+import {
+  KitScope,
+  useEditorPortalHost,
+  useHaptics,
+  useKit,
+  webA11y,
+  webHeading,
+  webHidden,
+} from "./provider";
 import { Label, Text } from "./text";
 
 /**
@@ -39,6 +51,13 @@ export function RowRule({ icon, visible }: { icon?: boolean; visible?: boolean }
   if (!(visible ?? !!index)) return null;
   return <View className={twMerge("h-px bg-separator", icon ? "ms-12" : "ms-4")} />;
 }
+
+const web = Platform.OS === "web";
+const noPointer: ViewStyle = { pointerEvents: "none" };
+/** Web: react-native-web's View ref is the DOM element; inert takes its subtree out of focus, pointer and AT. */
+const makeInert = (node: View | null) => {
+  if (node) (node as unknown as HTMLElement).inert = true;
+};
 
 /** Text runs get the row's small muted style; an element (a Meta, two lines) renders as given. */
 const detail = (description: string | ReactElement | undefined) =>
@@ -56,6 +75,11 @@ const stateOf = (s: AccessibilityState) => {
   return Object.keys(set).length ? (set as AccessibilityState) : undefined;
 };
 
+/** The marks ListRow draws at its end itself. */
+export type ListRowTrailing = "chevron" | "check" | "toggle" | "none";
+/** Any other end node, text included; the intersection keeps `string` from swallowing the four marks. */
+type TrailingNode = ReactNode & Record<never, never>;
+
 export type ListRowProps = {
   title: string;
   /** A string reads as small muted; an element (a Meta, a second line) renders as given. */
@@ -67,7 +91,7 @@ export type ListRowProps = {
    * Default: a `forward` chevron when the row navigates (onPress, not destructive), else nothing. A node here
    * is decoration read with the row; an interactive control goes in `control`.
    */
-  trailing?: "chevron" | "check" | "toggle" | "none" | ReactNode;
+  trailing?: ListRowTrailing | TrailingNode | null;
   /**
    * An interactive control at the end (Button, IconButton, ActionMenu, Toggle). It stays its own touch target
    * and screen-reader element: the row's text becomes a separate element beside it, and `onPress` covers the
@@ -129,8 +153,16 @@ export function ListRow({
     ) : end === "check" ? (
       <Icon name="check" size={17} tone="tint" />
     ) : toggle ? (
-      // The row carries the switch semantics; the native switch stays tappable but is not a second stop.
-      <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+      // The row carries the switch semantics; the native switch stays tappable but is not a second stop. On web
+      // the switch is only drawn: react-native-web's is a focusable checkbox input, so it is inert (no tab stop
+      // under aria-hidden) and lets the click through to the row (whose press would otherwise toggle it twice).
+      <View
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden
+        {...webHidden}
+        ref={web ? makeInert : undefined}
+        style={web ? noPointer : undefined}
+      >
         <Toggle
           value={toggleValue}
           onChange={(v) => onToggle?.(v)}
@@ -176,17 +208,19 @@ export function ListRow({
       {toggle ? trailingNode : null}
     </>
   );
+  const state = stateOf({
+    checked: toggle ? toggleValue : undefined,
+    // A check row is the current choice: say so, not only show it (selected; aria-current on web).
+    selected: end === "check" ? true : undefined,
+    disabled: disabled || undefined,
+  });
   const a11y = {
     accessibilityLabel,
     accessibilityHint,
     accessibilityActions,
     onAccessibilityAction,
-    accessibilityState: stateOf({
-      checked: toggle ? toggleValue : undefined,
-      // A check row is the current choice: say so, not only show it.
-      selected: end === "check" ? true : undefined,
-      disabled: disabled || undefined,
-    }),
+    accessibilityState: state,
+    ...webA11y(state),
   };
   // With a control the text area gives up its end padding to the control's own slot.
   const row = twMerge(
@@ -238,7 +272,9 @@ export function SettingsSection({
   return (
     <View className="gap-2">
       {/* The section title (it replaces lift's heading-style labels), so it is a rotor heading. */}
-      <Label accessibilityRole="header">{eyebrow}</Label>
+      <Label accessibilityRole="header" {...webHeading(2)}>
+        {eyebrow}
+      </Label>
       <Panel inset="none">{children}</Panel>
       {footnote ? (
         <Text variant="caption" tone="muted">
@@ -311,29 +347,31 @@ export function RecordRow({
     "min-h-14 flex-row items-center gap-3 py-3 ps-4",
     hasControl ? "flex-1 pe-1" : "pe-4"
   );
+  const pressable = !!(onPress || onLongPress);
   const a11y = {
     accessibilityLabel,
     accessibilityHint,
     accessibilityState,
     accessibilityActions,
     onAccessibilityAction,
+    // A pressable row that is selected while choosing rows is a toggle on web; a static one is the current item.
+    ...webA11y(accessibilityState, null, pressable ? "pressed" : "current"),
   };
-  const main =
-    onPress || onLongPress ? (
-      <Pressable
-        accessibilityRole="button"
-        {...a11y}
-        onPress={onPress}
-        onLongPress={onLongPress}
-        className={twMerge(row, "active:bg-surface-secondary")}
-      >
-        {body}
-      </Pressable>
-    ) : (
-      <View accessible {...a11y} className={row}>
-        {body}
-      </View>
-    );
+  const main = pressable ? (
+    <Pressable
+      accessibilityRole="button"
+      {...a11y}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      className={twMerge(row, "active:bg-surface-secondary")}
+    >
+      {body}
+    </Pressable>
+  ) : (
+    <View accessible {...a11y} className={row}>
+      {body}
+    </View>
+  );
   return (
     <>
       <RowRule />
@@ -451,8 +489,8 @@ export type MenuAction = {
 
 /**
  * Secondary actions behind one `···` trigger: a HeroUI Menu popover (bottom, aligned to the end edge, so it is
- * RTL-safe), 44pt items, leading glyph 17 muted, destructive items last in danger. Width clamps to
- * 200…min(320, window − 32).
+ * RTL-safe), 44pt items, leading glyph 17 muted, destructive items last in danger. Width fits the longest label,
+ * clamped to 200…min(320, window − 32 − side safe areas); a label past the cap wraps inside the popover.
  */
 export function ActionMenu({
   accessibilityLabel,
@@ -466,8 +504,20 @@ export function ActionMenu({
 }) {
   const kit = useKit();
   const { width } = useWindowDimensions();
+  // Not useSafeAreaInsets: it throws without a SafeAreaProvider, and a closed menu must not need one (component
+  // tests render rows without it).
+  const safe = useContext(SafeAreaInsetsContext) ?? { top: 0, bottom: 0, left: 0, right: 0 };
   const host = useEditorPortalHost();
   const custom = isValidElement(trigger);
+  // `insets` replaces HeroUI's own (12 + the safe area), so the safe area is added back here.
+  const insets = {
+    top: safe.top + 16,
+    bottom: safe.bottom + 16,
+    left: safe.left + 16,
+    right: safe.right + 16,
+  };
+  const room = width - insets.left - insets.right;
+  const maxWidth = Math.min(320, room);
   return (
     <Menu>
       <Menu.Trigger asChild accessibilityLabel={custom ? accessibilityLabel : undefined}>
@@ -490,43 +540,60 @@ export function ActionMenu({
             placement="bottom"
             align="end"
             width="content-fit"
-            insets={{ top: 16, bottom: 16, left: 16, right: 16 }}
+            insets={insets}
             className="rounded-control border border-border bg-overlay p-1"
-            style={{ minWidth: Math.min(200, width - 32), maxWidth: Math.min(320, width - 32) }}
+            // The list below owns the inline padding, so every number in its cap is the kit's. Inline, because
+            // HeroUI's unlayered .menu__content beats a utility class on web.
+            style={{ minWidth: Math.min(200, room), maxWidth, paddingInline: 0 }}
           >
-            {sections.map((section, i) => (
-              <View
-                key={section.title ?? i}
-                className={i ? "mt-1 border-t border-separator pt-1" : undefined}
-              >
-                {section.title ? <Label className="px-3 pb-1 pt-2">{section.title}</Label> : null}
-                {[...section.actions]
-                  .sort((a, b) => Number(!!a.destructive) - Number(!!b.destructive))
-                  .map((action) => (
-                    <Menu.Item
-                      key={action.key}
-                      isDisabled={action.disabled}
-                      variant={action.destructive ? "danger" : "default"}
-                      accessibilityState={{
-                        disabled: action.disabled,
-                        ...(action.selected !== undefined ? { selected: action.selected } : {}),
-                      }}
-                      onPress={action.onPress}
-                      className="gap-3 px-3"
-                    >
-                      {action.icon ? (
-                        <Icon
-                          name={action.icon}
-                          size={17}
-                          tone={action.destructive ? "danger" : "muted"}
-                        />
-                      ) : null}
-                      <Menu.ItemTitle className="flex-1">{action.label}</Menu.ItemTitle>
-                      {action.selected ? <Icon name="check" size={17} tone="tint" /> : null}
-                    </Menu.Item>
-                  ))}
-              </View>
-            ))}
+            {/* Yoga measures the content-fit popover with no width bound and keeps that pass's height, so the
+                cap sits here too (less the 1pt border): a label past it wraps while measured, and the frame
+                includes the extra line. */}
+            <View className="px-1.5" style={{ maxWidth: maxWidth - 2 }}>
+              {sections.map((section, i) => (
+                <View
+                  key={section.title ?? i}
+                  className={i ? "mt-1 border-t border-separator pt-1" : undefined}
+                >
+                  {section.title ? <Label className="px-3 pb-1 pt-2">{section.title}</Label> : null}
+                  {[...section.actions]
+                    .sort((a, b) => Number(!!a.destructive) - Number(!!b.destructive))
+                    .map((action) => (
+                      <Menu.Item
+                        key={action.key}
+                        isDisabled={action.disabled}
+                        variant={action.destructive ? "danger" : "default"}
+                        accessibilityState={{
+                          disabled: action.disabled,
+                          ...(action.selected !== undefined ? { selected: action.selected } : {}),
+                        }}
+                        // The current choice of its section: aria-current on web.
+                        {...webA11y({ disabled: action.disabled, selected: action.selected })}
+                        onPress={action.onPress}
+                        className="gap-3 px-3"
+                      >
+                        {action.icon ? (
+                          <Icon
+                            name={action.icon}
+                            size={17}
+                            tone={action.destructive ? "danger" : "muted"}
+                          />
+                        ) : null}
+                        {/* flex -1 is 0 1 auto: the label sizes its row. HeroUI's flex: 1 made the basis 0
+                            (Yoga drops basis auto while flex > 0), so every menu measured at its minimum. It
+                            must not grow either: RN's Yoga errata stretch a growing row to the cap. */}
+                        <Menu.ItemTitle style={{ flex: -1 }}>{action.label}</Menu.ItemTitle>
+                        {action.selected ? (
+                          // The title doesn't grow, so the check takes the free space to the end edge.
+                          <View className="ms-auto">
+                            <Icon name="check" size={17} tone="tint" />
+                          </View>
+                        ) : null}
+                      </Menu.Item>
+                    ))}
+                </View>
+              ))}
+            </View>
           </Menu.Content>
         </KitScope>
       </Menu.Portal>

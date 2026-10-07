@@ -17,7 +17,8 @@ export function settle(id: string) {
   leaving.delete(id);
   sheet.done?.();
   if (leaving.size) return;
-  for (const go of [...waiting]) {
+  // A copy: each `go` is deleted from the set while it is iterated.
+  for (const go of Array.from(waiting)) {
     waiting.delete(go);
     go();
   }

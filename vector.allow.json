@@ -1,4 +1,5 @@
 {
+  "kit": "1.3.1",
   "rules": {
     "alert": {
       "src/components/measurements/use-measurement-log.ts": 1,
@@ -7,6 +8,11 @@
       "src/components/nutrition/meal-editor.tsx": 1,
       "src/components/nutrition/recipe-editor.tsx": 1,
       "src/components/screens/photos-screen.tsx": 1
+    },
+    "lines": {
+      "src/components/plan/calorie-shift.tsx": 1,
+      "src/components/plan/strategy.tsx": 4,
+      "src/components/progress/progress-screen.tsx": 1
     }
   },
   "eslintFiles": [
@@ -21,6 +27,9 @@
     "src/components/nutrition/meal-editor.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
     "src/components/nutrition/recipe-editor.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
     "src/components/screens/photos-screen.tsx#alert": "L4 undo over confirm: this Alert confirm stays until the store can restore (only irreversible ones get the comment)",
+    "src/components/plan/calorie-shift.tsx#lines": "fixed slot (§3.5 exception): seven equal weekday columns each show one kcal number, which shrinks (adjustsFontSizeToFit, max 1.2×) before it clips; the column’s accessibility label carries the full value",
+    "src/components/plan/strategy.tsx#lines": "fixed slots (§3.5 exception): the check-in countdown or Today/Due word sits inside the ring’s fixed inner width, and the weekly target chart labels sit in seven equal columns and fixed-height macro bars; each is one number or word that shrinks (max 1.2×) before it clips",
+    "src/components/progress/progress-screen.tsx#lines": "fixed slot (§3.5 exception): the half-width metric tile shows one value-with-unit that shrinks (max 1.3×) before it clips; the tile’s heading and caption carry the context",
     "src/components/nutrition/copy-day.tsx#eslint": "L4 long-tail strings (not in the P1.3 table; Foundation edits here are mechanical only)",
     "src/components/nutrition/quick-add.tsx#eslint": "L4 long-tail strings: Screens A replaced the uppercased macro field labels with t(); the rest of the form copy remains",
     "src/components/nutrition/time-field.tsx#eslint": "L4 long-tail strings (not in the P1.3 table; Foundation edits here are mechanical only)"

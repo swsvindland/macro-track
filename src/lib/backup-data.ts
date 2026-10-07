@@ -348,6 +348,52 @@ export function createBackup(): Backup {
   return parseBackup(JSON.stringify(snapshot));
 }
 
+/**
+ * Where a backup's rows go: a transaction on the app's database, or on the copy the vault imports
+ * a v1 backup into (src/vault-legacy.ts).
+ */
+export type BackupWriter = Pick<typeof db, "insert">;
+
+/**
+ * Inserts a backup's rows with their original ids into emptied tables, and links each weight
+ * imported from Health to its sample again.
+ */
+export function writeBackupRows(tx: BackupWriter, data: Backup["data"]) {
+  for (const row of data.goals) tx.insert(coachingGoals).values(row).run();
+  for (const row of data.checkIns) tx.insert(checkIns).values(row).run();
+  for (const row of data.entries) tx.insert(foodEntries).values(row).run();
+  for (const row of data.customFoods) tx.insert(customFoods).values(row).run();
+  for (const row of data.favorites) tx.insert(savedFoods).values(row).run();
+  for (const row of data.savedMeals) tx.insert(savedMeals).values(row).run();
+  for (const row of data.recipes) tx.insert(recipes).values(row).run();
+  for (const row of data.days) tx.insert(diaryDays).values(row).run();
+  for (const row of data.targets) tx.insert(nutritionTargets).values(row).run();
+  for (const { healthId, ...row } of data.weights) {
+    tx.insert(weightEntries)
+      .values({
+        ...row,
+        createdAt: row.createdAt ? new Date(row.createdAt) : null,
+        updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,
+      })
+      .run();
+    // A reading from Health keeps its sample, so sync neither imports it again nor writes it
+    // back and an ignored one stays ignored. Imported readings can't be edited, so the row
+    // still matches the sample's fingerprint.
+    if (healthId)
+      tx.insert(healthLinks)
+        .values({
+          key: `health:weight:${healthId}`,
+          localKind: "weight",
+          localId: row.id,
+          remoteId: healthId,
+          fingerprint: `${row.weightKg}:${row.measuredAt}`,
+          origin: "health",
+        })
+        .onConflictDoNothing()
+        .run();
+  }
+}
+
 // Caller holds the health-sync maintenance lock. All replacement writes roll back
 // together if storage fails; catalog files, photos and measurements are untouched.
 export function restoreBackup(value: unknown, recoveryUri?: string) {
@@ -355,8 +401,6 @@ export function restoreBackup(value: unknown, recoveryUri?: string) {
   db.transaction((tx) => {
     tx.delete(checkIns).run();
     tx.delete(coachingGoals).run();
-    for (const row of data.goals) tx.insert(coachingGoals).values(row).run();
-    for (const row of data.checkIns) tx.insert(checkIns).values(row).run();
     tx.delete(foodEntries).run();
     tx.delete(customFoods).run();
     tx.delete(savedFoods).run();
@@ -366,37 +410,7 @@ export function restoreBackup(value: unknown, recoveryUri?: string) {
     tx.delete(nutritionTargets).run();
     tx.delete(weightEntries).run();
     tx.delete(healthLinks).where(eq(healthLinks.localKind, "weight")).run();
-    for (const row of data.entries) tx.insert(foodEntries).values(row).run();
-    for (const row of data.customFoods) tx.insert(customFoods).values(row).run();
-    for (const row of data.favorites) tx.insert(savedFoods).values(row).run();
-    for (const row of data.savedMeals) tx.insert(savedMeals).values(row).run();
-    for (const row of data.recipes) tx.insert(recipes).values(row).run();
-    for (const row of data.days) tx.insert(diaryDays).values(row).run();
-    for (const row of data.targets) tx.insert(nutritionTargets).values(row).run();
-    for (const { healthId, ...row } of data.weights) {
-      tx.insert(weightEntries)
-        .values({
-          ...row,
-          createdAt: row.createdAt ? new Date(row.createdAt) : null,
-          updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,
-        })
-        .run();
-      // A reading from Health keeps its sample, so sync neither imports it again nor writes it
-      // back and an ignored one stays ignored. Imported readings can't be edited, so the row
-      // still matches the sample's fingerprint.
-      if (healthId)
-        tx.insert(healthLinks)
-          .values({
-            key: `health:weight:${healthId}`,
-            localKind: "weight",
-            localId: row.id,
-            remoteId: healthId,
-            fingerprint: `${row.weightKg}:${row.measuredAt}`,
-            origin: "health",
-          })
-          .onConflictDoNothing()
-          .run();
-    }
+    writeBackupRows(tx, data);
     if (recoveryUri)
       tx.insert(preferences)
         .values({ key: "recoveryBackupUri", value: recoveryUri })

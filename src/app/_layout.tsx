@@ -26,6 +26,7 @@ import { db } from "@/db";
 import { shareDatabaseCopy } from "@/lib/data-files";
 import { NutritionProvider } from "@/lib/nutrition-store";
 import { resolveLanguage, translate, type Language } from "@/lib/translations";
+import { VaultRoot } from "@/vault";
 
 import "../global.css";
 
@@ -122,6 +123,8 @@ export default function RootLayout(): JSX.Element | null {
                   <Stack.Screen name="(tabs)" />
                 </Stack>
               </NavigationTheme>
+              {/* Inside NutritionProvider: a restore refreshes the diary through it. */}
+              <VaultRoot />
             </NutritionProvider>
             <StatusBar style="auto" />
           </HeroUINativeProvider>

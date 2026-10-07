@@ -79,7 +79,7 @@
   "healthPrivacy": "Loggad mat skrivs som näring – kalorier, protein, kolhydrater, fett, fibrer och natrium – från 30 dagar innan synkningen slogs på. Vikt och längd synkas åt båda håll. Registrerat kroppsfett exporteras på båda plattformarna, midjeomkrets även till Apple Health. Övriga mått och uppskattningar stannar i appen. På iPhone läses födelsedag och kön för att fylla i ett nytt program.",
   "trendHelp": "Utjämnat dagsmedel med 7 dagars halveringstid. Tidiga trender är preliminära.",
   "bodyHelp": "Används för att uppskatta kroppsfett. Uppskattningar för vuxna. Man: hals och buk vid naveln. Kvinna: hals, naturlig midja och höfter. Spänn inte måttbandet.",
-  "localPhotos": "Foton lagras privat på enheten. Avinstallation kan radera dem.",
+  "localPhotos": "Foton lagras privat på enheten och ingår när du exporterar dina data.",
   "dateHint": "ÅÅÅÅ-MM-DD",
   "manualFat": "Uppmätt kroppsfett (%)",
   "measurements": "Kroppsmått",

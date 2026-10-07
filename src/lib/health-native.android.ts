@@ -12,6 +12,16 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
     bodyFat: "BodyFat",
     food: "Nutrition",
   } as const;
+  // A record that is already gone (deleted in Health Connect, or never in this store after a
+  // restore from another device) is deleted; any other error still fails the sync.
+  const removeIfPresent = async (deletion: () => Promise<unknown>) => {
+    try {
+      await deletion();
+    } catch (e) {
+      if (!/not found|does not exist|no such/i.test(e instanceof Error ? e.message : String(e)))
+        throw e;
+    }
+  };
   return {
     async authorize(interactive = true) {
       const permissions = ["Weight", "Height"].flatMap((recordType) =>
@@ -113,13 +123,11 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
       if (!ids[0]) throw new Error("syncFailed");
       return ids[0];
     },
-    async remove(kind, id) {
+    async remove(kind, id, clientId) {
       if (kind === "waist") throw new Error("healthUnavailable");
-      await hc.deleteRecordsByUuids(
-        kind === "weight" ? "Weight" : kind === "bodyFat" ? "BodyFat" : "Height",
-        [id],
-        []
-      );
+      const type = kind === "weight" ? "Weight" : kind === "bodyFat" ? "BodyFat" : "Height";
+      if (id) await removeIfPresent(() => hc.deleteRecordsByUuids(type, [id], []));
+      else if (clientId) await removeIfPresent(() => hc.deleteRecordsByUuids(type, [], [clientId]));
     },
     async writeFood(food) {
       const { calories, protein, carbs, fat, fiber, sodium, ...micros } = food.nutrients;
@@ -199,7 +207,7 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
       return ids[0];
     },
     async removeFood(clientId) {
-      await hc.deleteRecordsByUuids("Nutrition", [], [clientId]);
+      await removeIfPresent(() => hc.deleteRecordsByUuids("Nutrition", [], [clientId]));
     },
   };
 }

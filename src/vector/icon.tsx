@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColor } from "heroui-native";
 import { icons, type IconName, type IconSpec } from "./icons";
-import { useKit, useSignalInk } from "./provider";
+import { useKit, useSignalInk, webHidden } from "./provider";
 
 export type IconTone =
   "foreground" | "muted" | "tint" | "onSignal" | "onDanger" | "danger" | "warning" | "success";
@@ -48,6 +48,7 @@ export function Icon({
       style={spec.mirrors && isRTL ? { transform: [{ scaleX: -1 }] } : undefined}
       accessibilityElementsHidden
       importantForAccessibility="no"
+      {...webHidden}
     />
   );
 }

@@ -11,7 +11,7 @@ import { Button as HeroButton } from "heroui-native";
 import { twMerge } from "tailwind-merge";
 import { Icon, type IconTone } from "./icon";
 import type { IconName } from "./icons";
-import { useKit, useSignalBudget } from "./provider";
+import { useKit, useSignalBudget, webA11y } from "./provider";
 import { Text } from "./text";
 
 /** Pass-through a11y and press props shared by Button and IconButton (KIT §6). */
@@ -157,6 +157,7 @@ export function Button({
   disabled = false,
   className,
   accessibilityState,
+  accessibilityValue,
   children,
   ...rest
 }: ButtonProps) {
@@ -166,6 +167,7 @@ export function Button({
   const look = buttonLook(variant, { size, onSignal });
   const inactive = disabled || loading;
   const glyph = icon ? <Icon name={icon} size={17} tone={look.iconTone} /> : null;
+  const state = { ...accessibilityState, disabled: inactive, busy: loading };
   return (
     <HeroButton
       {...rest}
@@ -174,7 +176,10 @@ export function Button({
       feedbackVariant={look.feedbackVariant}
       isDisabled={inactive}
       // HeroUI sets {disabled} before spreading props; merge so a caller's state never drops it.
-      accessibilityState={{ ...accessibilityState, disabled: inactive, busy: loading }}
+      accessibilityState={state}
+      accessibilityValue={accessibilityValue}
+      // A selected button is a toggle on web (aria-selected means nothing on a button).
+      {...webA11y(state, accessibilityValue, "pressed")}
       className={twMerge(look.className, className)}
     >
       {iconPosition === "start" ? glyph : null}
@@ -210,11 +215,13 @@ export function IconButton({
   tone = "foreground",
   disabled = false,
   accessibilityState,
+  accessibilityValue,
   ...rest
 }: IconButtonProps) {
   const onSignal = useContext(OnSignal);
   useSignalBudget(variant === "primary");
   const look = iconButtonLook(variant, { tone, onSignal });
+  const state = { ...accessibilityState, disabled };
   return (
     <HeroButton
       {...rest}
@@ -222,7 +229,9 @@ export function IconButton({
       variant={look.variant}
       feedbackVariant={look.feedbackVariant}
       isDisabled={disabled}
-      accessibilityState={{ ...accessibilityState, disabled }}
+      accessibilityState={state}
+      accessibilityValue={accessibilityValue}
+      {...webA11y(state, accessibilityValue, "pressed")}
       className={look.className}
     >
       <Icon name={icon} size={20} tone={look.iconTone} />
@@ -259,12 +268,14 @@ export function LinkButton({
 }: LinkButtonProps) {
   const onSignal = useContext(OnSignal);
   const tone = onSignal ? "onSignal" : "tint";
+  const state = { ...accessibilityState, disabled };
   return (
     <Pressable
       accessibilityRole={accessibilityRole}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ ...accessibilityState, disabled }}
+      accessibilityState={state}
+      {...webA11y(state, null, accessibilityRole === "link" ? "current" : "pressed")}
       disabled={disabled}
       onPress={onPress}
       hitSlop={4}

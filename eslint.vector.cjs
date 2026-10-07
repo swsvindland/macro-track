@@ -1,5 +1,8 @@
-// Vector Kit ESLint fragment (flat config). CommonJS because every repo's eslint.config.js uses require():
+// Vector Kit ESLint fragment (flat config) for the eslint-node profile (body, lift, macro, water). CommonJS because
+// every repo's eslint.config.js uses require():
 //   module.exports = [...expoConfig, ...require("./eslint.vector.cjs"), { ignores: [...] }];
+// The oxlint-jest profile gets a generated oxlint.vector.json with the same two rules instead. The label-prop
+// literal rule moved into `vector-kit check` in 1.3.0 (it runs there for every linter).
 // Kit files (src/vector/**) are exempt: the kit's own strings live in src/vector/strings.ts. Files still listed in
 // vector.allow.json#eslintFiles are exempt until Phase 1 edits them; `vector-kit check --baseline` sets
 // VECTOR_KIT_BASELINE=1 so every app file is linted while it writes that list.
@@ -20,8 +23,6 @@ function exemptFiles() {
 
 const exempt = exemptFiles();
 const files = ["src/**/*.{js,jsx,ts,tsx}"];
-const labelProps =
-  "label|title|placeholder|accessibilityLabel|accessibilityHint|message|description|confirmLabel|loadingLabel";
 
 module.exports = [
   {
@@ -32,14 +33,6 @@ module.exports = [
       "react/jsx-no-literals": [
         "error",
         { noStrings: true, allowedStrings: ["·", "/", "–"], ignoreProps: true },
-      ],
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: `JSXAttribute[name.name=/^(${labelProps})$/] > Literal`,
-          message:
-            "[vector] Visible strings come from t(): this label prop is an untranslated literal.",
-        },
       ],
     },
   },

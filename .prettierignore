@@ -18,3 +18,14 @@ docs/design-system.md
 scripts/vector-kit.mjs
 eslint.vector.cjs
 tests/vector.test.*
+
+# Vector Vault: synced from vector-design/vault and hash-checked (vault-kit check).
+src/vault/
+src/app/vault/
+modules/vector-vault/
+plugins/with-vector-vault.js
+scripts/vault-kit.mjs
+docs/vault.md
+tests/vault.test.*
+tests/vault-harness.cjs
+tests/vault/

@@ -11,7 +11,7 @@ import Animated, {
 import { twMerge } from "tailwind-merge";
 import { Button, LinkButton } from "./button";
 import { duration, easing, useReducedMotionSafe } from "./motion";
-import { useKit, useKitStrings } from "./provider";
+import { useKit, useKitStrings, webA11y, webHidden } from "./provider";
 import { Label, Text } from "./text";
 
 const calloutTone = {
@@ -159,7 +159,11 @@ export function Meter({
       : "bg-foreground-secondary";
   // Ticks sit on a spacer row so they position from the start edge by flex as well.
   const tick = (spacer: ReactNode, color: string) => (
-    <View className="absolute inset-0 flex-row items-center" pointerEvents="none">
+    <View
+      className="absolute inset-0 flex-row items-center"
+      style={{ pointerEvents: "none" }}
+      {...webHidden}
+    >
       {spacer}
       <View
         className={twMerge("-ms-px w-0.5 rounded-mark", color)}
@@ -167,13 +171,15 @@ export function Meter({
       />
     </View>
   );
+  // RN's bridge takes integers here, so the value is a percentage and `text` carries the readout.
+  const a11yValue = { min: 0, max: 100, now: Math.round(fill), text: valueText };
   return (
     <View
       accessible
       accessibilityRole="progressbar"
       accessibilityLabel={accessibilityLabel}
-      // RN's bridge takes integers here, so the value is a percentage and `text` carries the readout.
-      accessibilityValue={{ min: 0, max: 100, now: Math.round(fill), text: valueText }}
+      accessibilityValue={a11yValue}
+      {...webA11y(null, a11yValue)}
       className="justify-center"
       style={{ minHeight: height + 4 }}
     >
@@ -200,7 +206,11 @@ export function Meter({
 /** Skeleton rows shaped like a list result: radius 2, static at 60%, no shimmer. */
 function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <View className="gap-4 opacity-60" importantForAccessibility="no-hide-descendants">
+    <View
+      className="gap-4 opacity-60"
+      importantForAccessibility="no-hide-descendants"
+      {...webHidden}
+    >
       {Array.from({ length: rows }, (_, i) => (
         <View key={i} className="gap-2">
           <View className="h-4 w-3/5 rounded-mark bg-surface-tertiary" />
@@ -309,6 +319,7 @@ function Scan() {
     <View
       className="h-px overflow-hidden"
       importantForAccessibility="no-hide-descendants"
+      {...webHidden}
       onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
     >
       <Animated.View className="h-px bg-tint" style={[{ width: segment }, style]} />

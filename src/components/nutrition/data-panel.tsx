@@ -4,6 +4,8 @@ import { Button, Callout, ErrorText, ListRow, SettingsSection } from "@/vector";
 import { shareCsv, eraseLocalData } from "@/lib/data-files";
 import { useStore } from "@/lib/store";
 import { useNutrition } from "@/lib/nutrition-store";
+import { captureBeforeErase, onLocalDataErased } from "@/vault/engine/erase";
+import { vaultSupported } from "@/vault/native";
 export function DataPanel() {
   const { refresh, t } = useStore();
   const { refresh: refreshNutrition } = useNutrition();
@@ -66,7 +68,12 @@ export function DataPanel() {
               style: "destructive",
               onPress: () =>
                 void run(async () => {
+                  // The vault keeps the Health installations this data was written under, so
+                  // turning sync back on does not import it again; it also drops its restore
+                  // copies and starts a new library.
+                  const keep = vaultSupported ? await captureBeforeErase() : null;
                   await eraseLocalData();
+                  if (keep) await onLocalDataErased(keep);
                   refresh();
                   refreshNutrition();
                   setMessage(t("erasedNote"));

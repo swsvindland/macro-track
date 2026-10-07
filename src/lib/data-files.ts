@@ -22,7 +22,7 @@ export async function shareCsv(kind: "diary" | "weight" | "targets") {
   await Sharing.shareAsync(file.uri, {
     mimeType: "text/csv",
     UTI: "public.comma-separated-values-text",
-    dialogTitle: "Export Vector Macros data",
+    dialogTitle: "Export Pendum Macros data",
   });
 }
 export async function shareDatabaseCopy() {
@@ -35,7 +35,7 @@ export async function shareDatabaseCopy() {
   await Sharing.shareAsync(file.uri, {
     mimeType: "application/vnd.sqlite3",
     UTI: "public.database",
-    dialogTitle: "Save Vector Macros database copy",
+    dialogTitle: "Save Pendum Macros database copy",
   });
 }
 export async function eraseLocalData() {

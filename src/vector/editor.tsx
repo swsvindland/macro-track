@@ -15,6 +15,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   View,
   useWindowDimensions,
@@ -200,12 +201,40 @@ function Sheet({
 }
 
 const ios = Platform.OS === "ios";
+const web = Platform.OS === "web";
+
+/**
+ * Web: react-native-web's Modal ignores presentationStyle and swipe dismissal, so the sheet is a centred dialog
+ * at most 640 wide (the `form` width) over the backdrop, 1pt border, overlay shadow, radius 4. The backdrop and
+ * Escape (onRequestClose) are the swipe and Android back: `request` applies the same holds. The Modal's own
+ * container is the dialog element (role="dialog", aria-modal), named by the Editor.
+ */
+function WebDialog({ request, children }: { request: () => void; children: ReactNode }) {
+  return (
+    <View className="flex-1 items-center justify-center p-6">
+      {/* Not a tab stop: Escape and Cancel are the keyboard's ways out. */}
+      <Pressable
+        accessibilityRole="none"
+        tabIndex={-1}
+        onPress={request}
+        className="absolute inset-0 bg-backdrop"
+      />
+      <View
+        className="w-full overflow-hidden rounded-panel border border-border bg-background shadow-overlay"
+        style={{ maxWidth: 640, maxHeight: "100%" }}
+      >
+        {children}
+      </View>
+    </View>
+  );
+}
 
 /**
  * Data entry sheet: RN Modal pageSheet with the default slide. A clean sheet swipes away; a dirty or busy one
  * resists (iOS isModalInPresentation) and ignores Android back; a `guarded` one resists and hands the attempt to
  * `close`. There is no "Discard changes?" confirm. Opening waits for a sheet that is still sliding away (iOS), so
- * one Editor can close and the next open in the same commit.
+ * one Editor can close and the next open in the same commit. On web it is a centred dialog (WebDialog) with the
+ * same header, body, footer and holds.
  */
 export function Editor({
   open,
@@ -254,6 +283,29 @@ export function Editor({
   useLayoutEffect(() => {
     if (visible) swiped.current = false;
   }, [visible, epoch]);
+  if (web) {
+    // The backdrop and Escape stand in for the swipe: a clean sheet closes, a dirty or busy one holds, and a
+    // guarded one hands the attempt to `close`.
+    const request = () => {
+      if (busy || (dirty && !guarded)) return;
+      close();
+    };
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={request}
+        onDismiss={() => settle(id)}
+        // react-native-web passes it to the role="dialog" element: the dialog's accessible name.
+        aria-label={sheet.title}
+      >
+        <WebDialog request={request}>
+          <Sheet {...sheet} busy={busy} onCancel={close} />
+        </WebDialog>
+      </Modal>
+    );
+  }
   return (
     <Modal
       key={epoch}

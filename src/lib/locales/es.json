@@ -79,7 +79,7 @@
   "healthPrivacy": "Los alimentos registrados se guardan como nutrición (calorías, proteína, carbohidratos, grasa, fibra y sodio) desde 30 días antes de activar la sincronización. El peso y la altura se sincronizan en ambos sentidos. Se exporta la grasa corporal registrada en ambas plataformas y la cintura a Apple Health. Las demás medidas y estimaciones permanecen en la app. En iPhone, se leen tu fecha de nacimiento y tu sexo para rellenar un programa nuevo.",
   "trendHelp": "Promedio diario suavizado con una semivida de 7 días. Las primeras tendencias son provisionales.",
   "bodyHelp": "Se usa para estimar la grasa corporal. Estimaciones para adultos. Masculina: cuello y abdomen al ombligo. Femenina: cuello, cintura natural y caderas. No aprietes la cinta.",
-  "localPhotos": "Las fotos se guardan en privado en este dispositivo. Desinstalar la app puede borrarlas.",
+  "localPhotos": "Las fotos se guardan en privado en este dispositivo y se incluyen al exportar tus datos.",
   "dateHint": "AAAA-MM-DD",
   "manualFat": "Grasa corporal medida (%)",
   "measurements": "Medidas",

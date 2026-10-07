@@ -1,6 +1,7 @@
 /*
-  Vector Kit 1.2.2 — src/vector/tokens.css  (lineage: SIBYL)
-  Byte-identical in body-track, lift-track, macro-track, water-track. Hash-checked by scripts/vector-kit.mjs.
+  Vector Kit 1.3.1 — src/vector/tokens.css  (lineage: SIBYL)
+  Byte-identical in body-track, lift-track, macro-track, water-track and fitness-native. Hash-checked by
+  scripts/vector-kit.mjs.
   Canonical copy: /Users/sam/Development/VectorApps/vector-design/kit/src/vector/tokens.css. Never edit in an app repo.
 
   Included from each app's kit-owned src/global.css, AFTER the HeroUI imports so these values win:
@@ -14,7 +15,9 @@
   Uniwind follows relative @imports when it collects @variant light/dark variables
   (uniwind/src/bundler/artifacts/css/themes.ts: dependency.url.startsWith('.') -> recurse), and
   Tailwind compiles them with base = dirname(global.css). Verified offline against heroui-native 1.0.8 + uniwind 1.11
-  (@tailwindcss/node 4.3.2) and heroui-native 1.0.9 + uniwind 1.12 (@tailwindcss/node 4.3.3).
+  (@tailwindcss/node 4.3.2), heroui-native 1.0.9 + uniwind 1.12 (@tailwindcss/node 4.3.3) and heroui-native 1.0.10
+  + uniwind 1.12 (fitness-native). The TOKENS block ends with a web-only block (Uniwind's `web` variant) that pins
+  HeroUI's color-mix() colours as hex for its JS colour parser on react-native-web; native never sees it.
 
   The TOKENS block is generated from src/vector/tokens.json. The COMPONENTS block is hand-written and may only
   contain plain declarations on HeroUI slot classes (Uniwind drops ios:/android:/rtl:/focus: variants inside
@@ -25,7 +28,7 @@
   the class that actually sets the property.
 */
 
-/* TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.2.2). Do not edit. */
+/* TOKENS:BEGIN — generated from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.3.1). Do not edit. */
 @theme {
   /* Families: only the bundled faces (useFonts aliases). Tailwind font-medium/semibold/bold therefore
      select a family, not a weight; weights are explicit numbers in kit components and the COMPONENTS block. */
@@ -213,6 +216,58 @@
       --chart-3: var(--foreground-secondary);
       --chart-4: var(--separator);
       --chart-5: var(--warning);
+    }
+  }
+}
+
+/* Web only (Uniwind's `web` variant; native drops it). HeroUI reads these through useThemeColor, and on web its
+   colour parser rejects the color-mix() string the browser reports (Button press highlight, Toast): the same
+   colours as hex, mixed in OKLab from tokens.json as the browser mixes them (tokens.json heroDerived). */
+@layer theme {
+  :root {
+    @variant web {
+      @variant light {
+        --color-surface-hover: #eaebec;
+        --color-background-secondary: #f4f5f6;
+        --color-background-tertiary: #eaebec;
+        --color-default-hover: #e7ebee;
+        --color-accent-hover: #22bdd6;
+        --color-success-hover: #368056;
+        --color-warning-hover: #77540e;
+        --color-danger-hover: #ab474b;
+        --color-field-border-hover: #6f7c86fa;
+        --color-default-soft: #f1f5f780;
+        --color-default-soft-hover: #f1f5f799;
+        --color-accent-soft-hover: #22d3ee33;
+        --color-danger-soft-hover: #9f303933;
+        --color-warning-soft-hover: #8a621233;
+        --color-success-soft-hover: #17724533;
+        --color-separator-secondary: #d7dadc;
+        --color-separator-tertiary: #cdd0d3;
+        --color-border-secondary: #c5c9cc;
+        --color-border-tertiary: #a7acb1;
+      }
+      @variant dark {
+        --color-surface-hover: #1c252c;
+        --color-background-secondary: #0e171e;
+        --color-background-tertiary: #151f26;
+        --color-default-hover: #1c2a33;
+        --color-accent-hover: #22bdd6;
+        --color-success-hover: #51bf7e;
+        --color-warning-hover: #bc8e37;
+        --color-danger-hover: #d67d85;
+        --color-field-border-hover: #758791fa;
+        --color-default-soft: #15232c80;
+        --color-default-soft-hover: #15232c99;
+        --color-accent-soft-hover: #22d3ee33;
+        --color-danger-soft-hover: #f08a9333;
+        --color-warning-soft-hover: #d9a44133;
+        --color-success-soft-hover: #5ad58a33;
+        --color-separator-secondary: #29333a;
+        --color-separator-tertiary: #313b41;
+        --color-border-secondary: #384147;
+        --color-border-tertiary: #515a60;
+      }
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Vector Macros",
+    "name": "Pendum Macros",
     "slug": "macro-track",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -67,8 +67,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Choose progress photos to save privately in Vector Macros.",
-          "cameraPermission": "Take progress photos to save privately in Vector Macros.",
+          "photosPermission": "Choose progress photos to save privately in Pendum Macros.",
+          "cameraPermission": "Take progress photos to save privately in Pendum Macros.",
           "microphonePermission": false
         }
       ],
@@ -95,7 +95,7 @@
         {
           "background": false,
           "NSHealthShareUsageDescription": "Import your weight and height, and read your birthday and sex to fill in your program, when you choose to sync.",
-          "NSHealthUpdateUsageDescription": "Save the food you log in Vector Macros as calories, protein, carbs, fat, fiber and sodium, along with your weight, height, waist circumference and recorded body fat, to Apple Health when you choose to sync."
+          "NSHealthUpdateUsageDescription": "Save the food you log in Pendum Macros as calories, protein, carbs, fat, fiber and sodium, along with your weight, height, waist circumference and recorded body fat, to Apple Health when you choose to sync."
         }
       ],
       "react-native-health-connect",
@@ -126,11 +126,22 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan food barcodes with Vector Macros.",
+          "cameraPermission": "Scan food barcodes with Pendum Macros.",
           "recordAudioAndroid": false
         }
       ],
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      [
+        "./plugins/with-vector-vault",
+        {
+          "app": "macro",
+          "icloud": false,
+          "google": {
+            "iosClientId": null,
+            "android": false
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

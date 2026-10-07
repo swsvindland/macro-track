@@ -72,6 +72,19 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
   // person removed the sample in the Health app.
   const removeNutrient = (id: (typeof nutrients)[number][1], syncId: string) =>
     hk.deleteObjects(id, bySyncId(syncId)).catch(() => 0);
+  // A body sample that is already gone (deleted in Health, or never in this store after a
+  // restore from another device) is deleted; any other error still fails the sync.
+  const gone = (e: unknown) => {
+    const { code, message } = (e ?? {}) as { code?: unknown; message?: unknown };
+    return /no data|errorNoData|code[ =]?11\b/i.test(`${code ?? ""} ${message ?? ""}`);
+  };
+  const removeIfPresent = async (deletion: () => Promise<unknown>) => {
+    try {
+      await deletion();
+    } catch (e) {
+      if (!gone(e)) throw e;
+    }
+  };
   return {
     async authorize(interactive = true) {
       if (interactive) await hk.requestAuthorization({ toRead: readTypes, toShare: shareTypes });
@@ -135,8 +148,10 @@ export async function getHealthAdapter(): Promise<HealthAdapter> {
       if (!result) throw new Error("syncFailed");
       return result.uuid;
     },
-    async remove(kind, id) {
-      await hk.deleteObjects(identifier(kind), { uuid: id });
+    async remove(kind, id, clientId) {
+      if (id) await removeIfPresent(() => hk.deleteObjects(identifier(kind), { uuid: id }));
+      else if (clientId)
+        await removeIfPresent(() => hk.deleteObjects(identifier(kind), bySyncId(clientId)));
     },
     async writeFood(food) {
       const date = new Date(food.eatenAt);

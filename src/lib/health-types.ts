@@ -31,7 +31,11 @@ export type HealthAdapter = {
   authorize: (interactive?: boolean) => Promise<HealthAccess>;
   read: (kinds: HealthAccess["read"]) => Promise<HealthRecord[]>;
   write: (record: HealthWrite) => Promise<string>;
-  remove: (kind: HealthKind, id: string) => Promise<void>;
+  /**
+   * Deletes a sample; one already gone counts as deleted. Without an id (a restore from the
+   * other platform clears it) the sample written under `clientId` is deleted instead.
+   */
+  remove: (kind: HealthKind, id: string, clientId?: string) => Promise<void>;
   writeFood?: (food: HealthFood) => Promise<string>;
   removeFood?: (clientId: string, id: string) => Promise<void>;
   profile?: () => Promise<HealthProfile>;

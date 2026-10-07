@@ -79,7 +79,7 @@
   "healthPrivacy": "Logged food is written as nutrition — calories, protein, carbs, fat, fiber and sodium — from 30 days before sync was turned on. Weight and height sync both ways. Recorded body fat is exported on both platforms; waist circumference is also exported to Apple Health. Other tape measurements and calculated estimates stay in the app. On iPhone, your birthday and sex are read to fill in a new program.",
   "trendHelp": "A daily average smoothed with a 7-day half-life. Early trends are provisional.",
   "bodyHelp": "Used to estimate body fat. Adult estimates. Male: neck and abdomen at the navel. Female: neck, natural waist and hips. Measure with a relaxed tape.",
-  "localPhotos": "Photos are stored privately on this device. Deleting the app may remove them.",
+  "localPhotos": "Photos are stored privately on this device and are included when you export your data.",
   "dateHint": "YYYY-MM-DD",
   "manualFat": "Measured body fat (%)",
   "measurements": "Measurements",

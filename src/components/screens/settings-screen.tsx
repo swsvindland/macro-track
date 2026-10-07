@@ -1,5 +1,4 @@
 import { DataPanel } from "@/components/nutrition/data-panel";
-import { BackupPanel } from "@/components/nutrition/backup-panel";
 import { useState, type ReactNode } from "react";
 import { Platform, View } from "react-native";
 import { router } from "expo-router";
@@ -22,6 +21,7 @@ import type { Units } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import { languages, type LanguagePreference, type Message } from "@/lib/translations";
 import { enableHealthSync, disableHealthSync } from "@/lib/health-schedule";
+import { VaultSection } from "@/vault";
 
 /** Health failures with their own explanation; anything else is reported as a failed sync. */
 const healthErrors = ["healthUnavailable", "healthWeightDenied", "syncing"] as const;
@@ -191,7 +191,7 @@ export function SettingsScreen() {
           />
         </Panel>
       </Section>
-      <BackupPanel />
+      <VaultSection />
       <DataPanel />
     </Screen>
   );

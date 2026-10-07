@@ -79,7 +79,7 @@
   "healthPrivacy": "Erfasste Lebensmittel werden als Nährwerte geschrieben – Kalorien, Eiweiß, Kohlenhydrate, Fett, Ballaststoffe und Natrium –, ab 30 Tagen vor dem Einschalten der Synchronisierung. Gewicht und Größe werden in beide Richtungen synchronisiert. Erfasstes Körperfett wird auf beiden Plattformen exportiert, der Taillenumfang auch zu Apple Health. Andere Maße und Schätzungen bleiben in der App. Auf dem iPhone werden Geburtstag und Geschlecht gelesen, um ein neues Programm vorauszufüllen.",
   "trendHelp": "Geglätteter Tagesmittelwert mit 7 Tagen Halbwertszeit. Frühe Trends sind vorläufig.",
   "bodyHelp": "Wird zur Schätzung des Körperfettanteils verwendet. Schätzungen für Erwachsene. Männer: Hals und Bauch am Nabel. Frauen: Hals, natürliche Taille und Hüfte. Maßband locker anlegen.",
-  "localPhotos": "Fotos bleiben privat auf diesem Gerät. Deinstallieren kann sie löschen.",
+  "localPhotos": "Fotos bleiben privat auf diesem Gerät und sind enthalten, wenn du deine Daten exportierst.",
   "dateHint": "JJJJ-MM-TT",
   "manualFat": "Gemessenes Körperfett (%)",
   "measurements": "Körpermaße",

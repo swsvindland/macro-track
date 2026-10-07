@@ -9,7 +9,7 @@ import Animated, {
 import { twMerge } from "tailwind-merge";
 import { isMonoSafe } from "./format";
 import { duration, easing } from "./motion";
-import { useKit, useSignalInk, type VectorKit } from "./provider";
+import { useKit, useSignalInk, webHeading, webHidden, type VectorKit } from "./provider";
 import type { ScriptClass } from "./script";
 import { fonts } from "./tokens";
 
@@ -193,6 +193,10 @@ export const Label = (p: Omit<VectorTextProps, "variant">) => (
   <Text variant="label" tone="muted" numberOfLines={1} {...p} />
 );
 
+/**
+ * `h1`–`h4` roles and a rotor heading. On web, an h1–h4 element of the same level (react-native-web renders every
+ * header as h1 without aria-level).
+ */
 export const Heading = ({
   level,
   ...p
@@ -200,6 +204,7 @@ export const Heading = ({
   <Text
     variant={(["h1", "h2", "h3", "h4"] as const)[level - 1]}
     accessibilityRole="header"
+    {...webHeading(level)}
     {...p}
   />
 );
@@ -295,6 +300,7 @@ export function Value({
         className="absolute inset-0 rounded-mark bg-accent"
         style={pulse.block}
         importantForAccessibility="no"
+        {...webHidden}
       />
       {text}
     </View>
@@ -315,6 +321,7 @@ export function Meta({ items, tone = "muted" }: { items: string[]; tone?: "muted
                 tone === "muted" ? "bg-muted" : "bg-foreground"
               )}
               importantForAccessibility="no"
+              {...webHidden}
             />
           ) : null}
           <Text variant="small" tone={tone}>

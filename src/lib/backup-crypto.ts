@@ -66,10 +66,10 @@ export async function decryptBackupText(text: string, password: string): Promise
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new Error("This is not a readable Vector Macros backup.");
+    throw new Error("This is not a readable Pendum Macros backup.");
   }
   const parsed = envelope.safeParse(raw);
-  if (!parsed.success) throw new Error("This is not a supported encrypted Vector Macros backup.");
+  if (!parsed.success) throw new Error("This is not a supported encrypted Pendum Macros backup.");
   const data = parsed.data;
   const key = await pbkdf2Async(sha256, password, hexToBytes(data.salt), {
     c: ITERATIONS,

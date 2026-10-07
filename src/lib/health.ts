@@ -33,6 +33,43 @@ export async function withHealthPaused<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * For the vault's restores: waits up to `timeoutMs` for a running sync to finish, then holds
+ * syncs off while `work` runs. The hold starts in the tick that sees sync idle, so none can
+ * start in between; past the wait it throws and nothing runs.
+ */
+export async function pauseWhenIdle<T>(work: () => Promise<T>, timeoutMs: number): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (running || maintenance) {
+    if (Date.now() >= deadline) throw new Error("syncing");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  maintenance = true;
+  try {
+    return await work();
+  } finally {
+    maintenance = false;
+  }
+}
+
+/** `healthInstallations`: a JSON list of installation ids; anything unreadable counts as empty. */
+function installations(value: string | undefined): string[] {
+  try {
+    const list: unknown = JSON.parse(value ?? "[]");
+    return Array.isArray(list) ? list.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+/** A reading's value and time as Health stores them, rounded so both platforms agree. */
+const reading = (value: number, measuredAt: string) =>
+  `${Math.round(value * 100)}:${Math.floor(Date.parse(measuredAt) / 1000)}`;
+/** The reading a `<value>:<measuredAt>` fingerprint describes (none for a tombstone). */
+function linkedReading(fingerprint: string) {
+  const at = fingerprint.indexOf(":");
+  return at < 0 ? null : reading(Number(fingerprint.slice(0, at)), fingerprint.slice(at + 1));
+}
+
+/**
  * "food" only writes the diary, for running right after a diary change; "all" also exchanges
  * body measurements and reads the profile.
  */
@@ -64,6 +101,18 @@ export async function syncHealth(
       setPref("installation", installation);
     }
     const prefix = `macro-track:${installation}:`;
+    // Every installation this data was written under (restores and erase keep the list): their
+    // samples are this app's own, never imported as outside readings. "*" stands for all.
+    const known = new Set(installations(pref("healthInstallations")));
+    if (!known.has(installation)) {
+      known.add(installation);
+      setPref("healthInstallations", JSON.stringify([...known].sort()));
+    }
+    const ownClient = (clientId?: string) =>
+      !!clientId &&
+      (known.has("*")
+        ? clientId.startsWith("macro-track:")
+        : [...known].some((id) => clientId.startsWith(`macro-track:${id}:`)));
     foodPending = false;
     if (scope === "food")
       return { imported: 0, exported: await exportFood(provider, access, prefix) };
@@ -126,8 +175,19 @@ export async function syncHealth(
         )
       )
         continue;
-      const key = `${record.kind === "weight" ? weightPrefix : prefix}${record.kind}:${record.id}`;
-      const link = links.find((l) => l.key === key);
+      // A record keeps the key it was first written under, also when a restore brought it from
+      // another installation, so Health replaces that sample instead of gaining a second one.
+      const mine = links.filter(
+        (l) =>
+          l.origin === "local" &&
+          l.localKind === record.kind &&
+          l.localId === record.id &&
+          l.localId >= 0
+      );
+      const link = mine.find((l) => l.fingerprint !== "deleted") ?? mine[0];
+      const key =
+        link?.key ??
+        `${record.kind === "weight" ? weightPrefix : prefix}${record.kind}:${record.id}`;
       const hash = fingerprint(record);
       if (link?.fingerprint === hash) continue;
       const remoteId = await provider.write({
@@ -149,10 +209,20 @@ export async function syncHealth(
       exported++;
     }
     const current = localRecords();
+    // A row a restore turned into a Health import (local ids start at 1 on every phone) is not
+    // the record this app wrote under that link: the import is never exported, so the old sample
+    // goes like a deleted record's, instead of staying in Health with nothing behind it.
+    const importRows = new Set(
+      links.filter((l) => l.origin === "health").map((l) => `${l.localKind}:${l.localId}`)
+    );
     for (const link of links.filter((l) => l.origin === "local" && l.fingerprint !== "deleted")) {
       if (link.localKind === "food" || !writable.has(link.localKind as HealthKind)) continue;
-      if (!current.some((r) => r.kind === link.localKind && r.id === link.localId)) {
-        await provider.remove(link.localKind as HealthKind, link.remoteId);
+      if (
+        importRows.has(`${link.localKind}:${link.localId}`) ||
+        !current.some((r) => r.kind === link.localKind && r.id === link.localId)
+      ) {
+        // A restore from the other platform clears the remote id; the key still names the sample.
+        await provider.remove(link.localKind as HealthKind, link.remoteId, link.key);
         db.update(healthLinks)
           .set({ fingerprint: "deleted" })
           .where(eq(healthLinks.key, link.key))
@@ -162,15 +232,42 @@ export async function syncHealth(
     exported += await exportFood(provider, access, prefix);
     await readProfile(provider);
     const external = await provider.read(access.read);
+    // Readings already imported, by kind, value and time: the same reading under another sample id
+    // (Health re-issued it, or a restore came from the other platform) links to the row, or to the
+    // deletion, it already has instead of arriving twice.
+    const readings = new Map<string, number>();
+    const remember = (kind: string, hash: string, localId: number) => {
+      const at = linkedReading(hash);
+      if (at && !readings.has(`${kind}|${at}`)) readings.set(`${kind}|${at}`, localId);
+    };
+    for (const l of links)
+      if (l.origin === "health") remember(l.localKind, l.fingerprint, l.localId);
     for (const record of external) {
       // Body measurements are export-only; never turn them into height imports.
       if (record.kind !== "weight" && record.kind !== "height") continue;
-      if (record.clientId?.startsWith(prefix) || !validHealthRecord(record)) continue;
+      if (ownClient(record.clientId) || !validHealthRecord(record)) continue;
       const key = `health:${record.kind}:${record.id}`;
       const link = db.select().from(healthLinks).where(eq(healthLinks.key, key)).get();
       const hash = fingerprint(record);
       if (link?.fingerprint === hash) continue;
-      db.transaction((tx) => {
+      const twin = link
+        ? undefined
+        : readings.get(`${record.kind}|${reading(record.value, record.measuredAt)}`);
+      if (twin !== undefined) {
+        db.insert(healthLinks)
+          .values({
+            key,
+            localKind: record.kind,
+            localId: twin,
+            remoteId: record.id,
+            fingerprint: hash,
+            origin: "health",
+          })
+          .onConflictDoNothing()
+          .run();
+        continue;
+      }
+      const rowId = db.transaction((tx) => {
         let localId = link?.localId;
         if (record.kind === "weight") {
           if (link)
@@ -206,7 +303,9 @@ export async function syncHealth(
           })
           .onConflictDoUpdate({ target: healthLinks.key, set: { fingerprint: hash } })
           .run();
+        return localId!;
       });
+      if (!link) remember(record.kind, hash, rowId);
       imported++;
     }
     setPref("lastSync", new Date().toISOString());
@@ -236,16 +335,19 @@ async function exportFood(
     setPref("healthFoodSince", since);
   }
   const entries = db.select().from(foodEntries).where(gte(foodEntries.day, since)).all();
+  // Every food link this app wrote, under any installation: an entry a restore brought keeps its
+  // key, and the removal below reaches it too.
   const links = db
     .select()
     .from(healthLinks)
     .where(eq(healthLinks.localKind, "food"))
     .all()
-    .filter((link) => link.key.startsWith(prefix));
+    .filter((link) => link.origin === "local");
   let exported = 0;
   for (const entry of entries) {
-    const key = `${prefix}food:${entry.id}`;
-    const link = links.find((l) => l.key === key);
+    const mine = links.filter((l) => l.localId === entry.id);
+    const link = mine.find((l) => l.fingerprint !== "deleted") ?? mine[0];
+    const key = link?.key ?? `${prefix}food:${entry.id}`;
     const time = entry.loggedTime ?? mealTimes[entry.meal];
     const food = {
       name: entry.food.name,

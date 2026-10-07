@@ -39,7 +39,7 @@ import { SystemState } from "./feedback";
 import { icons, type IconName } from "./icons";
 import { ActionMenu, type MenuAction } from "./list";
 import { detailHeaderOptions, isLiquidGlass, navigationTheme } from "./native";
-import { SignalBudget, useHaptics, useKit, useKitStrings } from "./provider";
+import { SignalBudget, announce, useHaptics, useKit, useKitStrings } from "./provider";
 import { Heading, Label, Note, Text } from "./text";
 import { light } from "./tokens";
 
@@ -71,11 +71,14 @@ const DockApiCtx = createContext<DockApi | null>(null);
 
 /**
  * VoiceOver / TalkBack state, kept live: Undo must not time out while a screen reader is reaching it. Apps use
- * it for the same kind of rule (hold a transient message, skip an auto-advance).
+ * it for the same kind of rule (hold a transient message, skip an auto-advance). Always false on web: a browser
+ * does not say whether a screen reader runs, and react-native-web answers true for everyone, which would keep
+ * every Undo on screen forever.
  */
 export function useScreenReader() {
   const [on, setOn] = useState(false);
   useEffect(() => {
+    if (Platform.OS === "web") return;
     let live = true;
     AccessibilityInfo.isScreenReaderEnabled()
       .then((v) => live && setOn(v))
@@ -88,9 +91,6 @@ export function useScreenReader() {
   }, []);
   return on;
 }
-
-/** Spoken on both platforms: the docked Undo strip is not a live region of its own. */
-const announce = (message: string) => AccessibilityInfo.announceForAccessibility(message);
 
 /**
  * Wraps (tabs)/_layout, or the root Stack so pushed screens get the docked Undo too: holds the Dock (tab-screen
@@ -151,8 +151,9 @@ export function useDock(node: ReactNode | null) {
 /**
  * Undo instead of confirm. Inside a DockProvider the strip stacks above the dock or footer for 6s (it stays
  * while a screen reader runs), so live controls never disappear; elsewhere it falls back to a HeroUI Toast at
- * the top edge, clear of the tab bar, footers and the keyboard. Announced on both platforms either way (the
- * toast is a live region on Android, so only iOS needs the explicit announcement there).
+ * the top edge, clear of the tab bar, footers and the keyboard. Announced on every platform either way (the
+ * toast is a live region on Android and web, so only iOS needs the explicit announcement there; the docked strip
+ * is announced through `announce`, a polite live region on web).
  */
 export function useUndo(): {
   show: (o: {
@@ -178,7 +179,8 @@ export function useUndo(): {
           return;
         }
         if (toastId.current) toast.hide(toastId.current);
-        // HeroUI's toast root is role="status" aria-live="polite": an Android live region already reads it.
+        // HeroUI's toast root is role="status" aria-live="polite": an Android live region (and a web aria-live
+        // region) already reads it, so only iOS needs the explicit announcement.
         if (Platform.OS === "ios") announce(message);
         toastId.current = toast.show({
           label: message,

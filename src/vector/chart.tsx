@@ -9,8 +9,9 @@ import Svg, { Circle, Line, Path, Rect } from "react-native-svg";
 import { twMerge } from "tailwind-merge";
 import { useCSSVariable } from "uniwind";
 import { Choices } from "./form";
+import type { Format } from "./format";
 import { Icon } from "./icon";
-import { useKit, useKitFormat, useKitStrings } from "./provider";
+import { useKit, useKitFormat, useKitStrings, webHidden } from "./provider";
 import { Label, Meta, Text, Value } from "./text";
 
 // Charts take data and translated words through props; locale and formatting come from the kit. No store, no
@@ -46,6 +47,30 @@ export function rangeStart(range: Range, to: string, first: string): string {
 export type ChartPoint = { day: string; value: number };
 /** A flat range around a series (expenditure estimate): tint at 10%, no gradient. */
 export type ChartBandPoint = { day: string; low: number; high: number };
+/**
+ * What one point stands for. `day`: a reading on that day (or an average of that day). `week` / `month` / `year`: an
+ * aggregate of the period that starts on the point's day (fitness-native's weekly, monthly and yearly averages).
+ */
+export type ChartGranularity = "day" | "week" | "month" | "year";
+
+/**
+ * The name of the period a point stands for, for the RangeSummary eyebrow while scrubbing and for summaries: the
+ * day (medium date), the week ("Sep 22 – 28, 2026", seven days from `day`), the month ("September 2026") or the year.
+ */
+export function periodLabel(format: Format, day: string, granularity: ChartGranularity = "day") {
+  const d = day.length === 10 ? new Date(`${day}T12:00:00`) : new Date(day);
+  switch (granularity) {
+    case "week":
+      return format.dateRange(d, new Date(d.getTime() + 6 * DAY), { year: true });
+    case "month":
+      return format.monthYear(d);
+    case "year":
+      return format.year(d);
+    default:
+      return format.date(d, "medium");
+  }
+}
+
 export type ChartLine = {
   points: ChartPoint[];
   /** subject: what the chart is about (2pt tint). reference: raw points, a previous period (muted). */
@@ -151,7 +176,51 @@ const dateTickOptions = {
   day: { month: "short", day: "numeric" },
   month: { month: "short" },
   year: { month: "short", year: "numeric" },
+  yearOnly: { year: "numeric" },
 } satisfies Record<string, Intl.DateTimeFormatOptions>;
+
+/**
+ * 3–4 date ticks from `start` to `end`: the first aligns to start, the last to end. With `periods` (the days of
+ * period aggregates) the ticks sit on those days, so a month or year label never falls between two points.
+ */
+export function chartDayTicks(start: string, end: string, periods: string[] = []): string[] {
+  const days = [...new Set(periods)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (days.length)
+    return [...new Set([0, 1, 2, 3].map((i) => days[Math.round(((days.length - 1) * i) / 3)]))];
+  const span = Math.max(daysBetween(start, end), 0) || 0;
+  return span > 0
+    ? [...new Set([0, 1, 2, 3].map((i) => addDays(start, Math.round((span * i) / 3))))]
+    : [start];
+}
+
+/** The first day after the period that starts on `day` (the day after it for daily points). */
+function periodEnd(day: string, granularity: ChartGranularity): string {
+  if (granularity === "day") return addDays(day, 1);
+  if (granularity === "week") return addDays(day, 7);
+  const d = new Date(Date.parse(day));
+  if (granularity === "month") d.setUTCMonth(d.getUTCMonth() + 1);
+  else d.setUTCFullYear(d.getUTCFullYear() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Where a chart of period aggregates starts: a point keyed by its period's first day still counts when its period
+ * overlaps `from` (September, keyed Sep 1, for a range from Sep 29), so the domain starts at the first such period
+ * instead of dropping it. Daily points, and periods that start on or after `from`, leave `from` as it is.
+ */
+export function chartDomainStart(
+  from: string,
+  days: string[],
+  granularity: ChartGranularity = "day"
+): string {
+  if (granularity === "day" || !from) return from;
+  let start = from;
+  for (const day of days) if (day < start && periodEnd(day, granularity) > from) start = day;
+  return start;
+}
+
+/** Chart overlays never take a touch (react-native-web wants pointerEvents as a style, not a prop). */
+const noTouch: ViewStyle = { pointerEvents: "none" };
 
 /** Axis ticks keep their slot: capped at 1.3× text size (design-system §3.5). */
 const TICK_CAP = 1.3;
@@ -198,6 +267,12 @@ export type TrendChartProps = {
   zero?: boolean;
   /** Default 200, or 260 on windows 600pt and wider. */
   height?: number;
+  /**
+   * Points are period aggregates keyed by each period's first day (weekly, monthly, yearly averages): the date
+   * ticks sit on the data's own periods and read in that period's terms (a month, a year). Name a scrubbed point
+   * with `periodLabel(format, point.day, granularity)`. Default: dated readings with evenly spaced date ticks.
+   */
+  granularity?: ChartGranularity;
   /** y tick labels, e.g. `(n) => format.number(n)`. */
   yFormat: (value: number) => string;
   /** What VoiceOver reads for the chart: range, min, max, latest and direction. */
@@ -221,6 +296,7 @@ export function TrendChart({
   minSpan = 0,
   zero = false,
   height,
+  granularity,
   yFormat,
   summary,
   onScrub,
@@ -241,12 +317,36 @@ export function TrendChart({
     ...(band?.points ?? []).map((p) => p.day),
     ...(markers?.points ?? []).map((p) => p.day),
   ]);
-  const start = from ?? domain?.[0] ?? "";
-  const end = to ?? domain?.[1] ?? start;
+  const periodic = !!granularity && granularity !== "day";
+  const requested = from ?? domain?.[0] ?? "";
+  const end = to ?? domain?.[1] ?? requested;
+  // A period that overlaps `from` is drawn from its first day (its key), so the domain reaches back to it.
+  const start = periodic
+    ? chartDomainStart(
+        requested,
+        [
+          ...lines.flatMap((l) => l.points.map((p) => p.day)),
+          ...(band?.points ?? []).map((p) => p.day),
+        ],
+        granularity
+      )
+    : requested;
   const span = Math.max(daysBetween(start, end), 0) || 0;
-  // Short day up to ~4 months, then month, plus the year past 400 days (where "Sep 24" would read as a day).
+  // Short day up to ~4 months, then month, plus the year past 400 days (where "Sep 24" would read as a day); a
+  // monthly series names months (with the year past 400 days) and a yearly one years.
   // Memoized: scrubbing re-renders on every move and Intl formatters are costly to build on Hermes.
-  const bucket = span <= 120 ? "day" : span > 400 ? "year" : "month";
+  const bucket =
+    granularity === "year"
+      ? "yearOnly"
+      : granularity === "month"
+        ? span > 400
+          ? "year"
+          : "month"
+        : span <= 120
+          ? "day"
+          : span > 400
+            ? "year"
+            : "month";
   const dateFormat = useMemo(
     () => new Intl.DateTimeFormat(format.tag, dateTickOptions[bucket]),
     [format.tag, bucket]
@@ -327,11 +427,11 @@ export function TrendChart({
     onScrub?.(null);
   };
 
-  // 3–4 date ticks: the first aligns to start, the last to end.
-  const dayTicks =
-    span > 0
-      ? [...new Set([0, 1, 2, 3].map((i) => addDays(start, Math.round((span * i) / 3))))]
-      : [start];
+  const dayTicks = chartDayTicks(
+    start,
+    end,
+    periodic ? drawn.flatMap((l) => l.points.map((p) => p.day)) : []
+  );
   const dayLabel = (day: string) =>
     dateFormat.format(day.length === 10 ? new Date(`${day}T12:00:00`) : new Date(day));
   const goalTop = goal && goalNear ? y(goal.value) : 0;
@@ -350,7 +450,7 @@ export function TrendChart({
             onResponderTerminate={release}
           >
             {plot > 0 ? (
-              <View pointerEvents="none" style={mirror}>
+              <View style={mirror ? [noTouch, mirror] : noTouch}>
                 <Svg width={plot} height={h}>
                   {ticks
                     .filter((t) => Math.abs(y(t) - floor) > 1)
@@ -490,8 +590,8 @@ export function TrendChart({
             ) : null}
             {goal && plot > 0 ? (
               <View
-                pointerEvents="none"
-                style={
+                style={[
+                  noTouch,
                   goalNear
                     ? {
                         position: "absolute",
@@ -500,8 +600,8 @@ export function TrendChart({
                       }
                     : goal.value < scale.min
                       ? { position: "absolute", end: INSET, bottom: BOTTOM + 2 }
-                      : { position: "absolute", end: INSET, top: 0 }
-                }
+                      : { position: "absolute", end: INSET, top: 0 },
+                ]}
               >
                 <GoalTag
                   label={goal.label}
@@ -510,7 +610,7 @@ export function TrendChart({
               </View>
             ) : null}
           </View>
-          <View pointerEvents="none" style={{ width: GUTTER }}>
+          <View style={[noTouch, { width: GUTTER }]}>
             {ticks.map((t) => (
               <View
                 key={`t${t}`}
@@ -534,11 +634,20 @@ export function TrendChart({
             ))}
           </View>
         </View>
-        <View pointerEvents="none" style={{ height: tickLine, marginTop: 4, marginEnd: GUTTER }}>
+        <View style={[noTouch, { height: tickLine, marginTop: 4, marginEnd: GUTTER }]}>
           {plot > 0
             ? dayTicks.map((day, i) => {
-                const edge =
-                  dayTicks.length === 1
+                // Evenly spaced day ticks pin the first and last to the edges. Period ticks sit under their own
+                // points, which need not be the domain's ends (the last month keyed Sep 1 in a range to Sep 29):
+                // centred there, or aligned to an edge when a centred label would cross it.
+                const at = x(day) - 32;
+                const edge = periodic
+                  ? at < 0
+                    ? "start"
+                    : at + 64 > plot
+                      ? "end"
+                      : "middle"
+                  : dayTicks.length === 1
                     ? "middle"
                     : i === 0
                       ? "start"
@@ -550,7 +659,7 @@ export function TrendChart({
                     ? { position: "absolute", start: 0, maxWidth: plot / 2 }
                     : edge === "end"
                       ? { position: "absolute", end: 0, maxWidth: plot / 2 }
-                      : { position: "absolute", start: x(day) - 32, width: 64 };
+                      : { position: "absolute", start: at, width: 64 };
                 return (
                   <View key={day} style={place}>
                     <Text
@@ -628,9 +737,10 @@ export function Sparkline({
       onLayout={(e) => setWidth(Math.round(e.nativeEvent.layout.width))}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
+      {...webHidden}
     >
       {width > 0 ? (
-        <View pointerEvents="none" style={isRTL ? { transform: [{ scaleX: -1 }] } : undefined}>
+        <View style={isRTL ? [noTouch, { transform: [{ scaleX: -1 }] }] : noTouch}>
           <Svg width={width} height={height}>
             {!shown.length ? (
               <Line

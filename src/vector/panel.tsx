@@ -1,7 +1,7 @@
 import { Children, createContext, isValidElement, useContext, type ReactNode } from "react";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import { twMerge } from "tailwind-merge";
-import { useKit } from "./provider";
+import { useKit, webHeading, webHidden } from "./provider";
 import { Heading, Label, Note, Text } from "./text";
 
 type PanelTone = "default" | "live" | "critical";
@@ -68,6 +68,7 @@ function PanelRoot({
         <View
           className="absolute inset-y-0 start-0 w-[3px] bg-accent"
           importantForAccessibility="no"
+          {...webHidden}
         />
       ) : null}
       {content}
@@ -127,6 +128,8 @@ function PanelHeader({
           <Label
             tone={tone === "critical" ? "danger" : "muted"}
             accessibilityRole={title ? undefined : "header"}
+            // It names the panel as a title would (Heading 3).
+            {...webHeading(title ? undefined : 3)}
             numberOfLines={wrap ? 0 : 1}
             className="shrink"
           >

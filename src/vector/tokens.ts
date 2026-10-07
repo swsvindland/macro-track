@@ -1,5 +1,5 @@
-// GENERATED from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.2.2). Do not edit.
-export const KIT_VERSION = "1.2.2";
+// GENERATED from src/vector/tokens.json by scripts/vector-kit.mjs gen (kit 1.3.1). Do not edit.
+export const KIT_VERSION = "1.3.1";
 export const light = {
   background: "#FFFFFF",
   foreground: "#15212B",

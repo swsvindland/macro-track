@@ -9,6 +9,7 @@ export {
   useIsRTL,
   useSignalInk,
   vectorHeroConfig,
+  announce,
 } from "./provider";
 export type { VectorProviderProps, VectorHaptics, VectorIconRenderer, VectorKit } from "./provider";
 export { Text, Label, Heading, Note, Value, Meta, roles, resolveRole } from "./text";
@@ -91,7 +92,14 @@ export type {
   SignalCellProps,
 } from "./form";
 export { ListRow, SettingsSection, RecordRow, RowRule, SwipeRow, ActionMenu } from "./list";
-export type { ListRowProps, RecordRowProps, SwipeAction, SwipeRowHandle, MenuAction } from "./list";
+export type {
+  ListRowProps,
+  ListRowTrailing,
+  RecordRowProps,
+  SwipeAction,
+  SwipeRowHandle,
+  MenuAction,
+} from "./list";
 export { Callout, ErrorText, Status, Meter, SystemState, ProcessLine } from "./feedback";
 export { Editor, EditorScreen, EditorPresenceProvider, useEditorPortalHost } from "./editor";
 export type { EditorProps, EditorScreenProps, EditorPresence } from "./editor";
@@ -104,11 +112,13 @@ export {
   ranges,
   rangeStart,
   daysBetween,
+  periodLabel,
 } from "./chart";
 export type {
   Range,
   ChartPoint,
   ChartBandPoint,
+  ChartGranularity,
   ChartLine,
   TrendChartProps,
   SparklineProps,
