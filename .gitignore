@@ -50,3 +50,8 @@ yarn-error.*
 targets/*/Assets.xcassets/
 modules/*/android/build/
 modules/*/ios/build/
+
+# App build artifacts (local and EAS builds)
+*.ipa
+*.apk
+*.aab
