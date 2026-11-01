@@ -74,7 +74,7 @@
     "tailwindcss": "^4.3.2",
     "uniwind": "^1.10.0",
     "victory-native": "^41.26.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/react": "~19.2.15",
